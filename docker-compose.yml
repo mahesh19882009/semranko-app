@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: rankwatch_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rankwatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rankwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: rankwatch_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./fastapi_app
+    container_name: rankcare_fastapi_api
+    restart: unless-stopped
+    environment:
+      APP_NAME: RankCare API
+      ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/rankcare
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      JWT_ACCESS_SECRET: replace-with-a-secure-secret
+      JWT_ACCESS_EXPIRES_IN_DAYS: 1
+      FRONTEND_URL: http://localhost:5173
+      SERP_API_KEY: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    command: ["python", "run.py"]
+
+  worker:
+    build:
+      context: ./fastapi_app
+    container_name: rankcare_fastapi_worker
+    restart: unless-stopped
+    environment:
+      APP_NAME: RankCare API
+      ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/rankcare
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      JWT_ACCESS_SECRET: replace-with-a-secure-secret
+      JWT_ACCESS_EXPIRES_IN_DAYS: 1
+      FRONTEND_URL: http://localhost:5173
+      SERP_API_KEY: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "-m", "app.workers.rank_worker"]
+
+volumes:
+  pgdata:
