@@ -34,7 +34,7 @@ def create_notification(
         status="UNREAD",
     )
     db.add(notification)
-    db.commit()
+    db.flush()
     db.refresh(notification)
     return model_to_dict(notification)
 

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project, RankResult
+from app.services.notification_service import create_notification
 from app.utils.serializers import model_to_dict
 
 
@@ -13,8 +14,13 @@ def create_project(db: Session, user_id: str, payload: dict) -> dict:
     if not name or not domain:
         raise ApiError(400, "Name and domain are required")
 
-    project = Project(name=name.strip(), domain=domain.strip(), userId=user_id)
+    project = Project(
+        name=name.strip(),
+        domain=domain.strip(),
+        userId=user_id,
+    )
     db.add(project)
+    db.flush()
 
     create_notification(
         db,
@@ -46,14 +52,18 @@ def get_projects(db: Session, user_id: str) -> list[dict]:
 
 
 def get_project_by_id(db: Session, user_id: str, project_id: str) -> dict:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == user_id)
+    )
     if not project:
         raise ApiError(404, "Project not found")
     return model_to_dict(project)
 
 
 def delete_project(db: Session, user_id: str, project_id: str) -> None:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == user_id)
+    )
     if not project:
         raise ApiError(404, "Project not found")
 
