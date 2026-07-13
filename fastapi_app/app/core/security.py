@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
+import secrets
+from hashlib import sha256
 
 from app.core.config import get_settings
 
@@ -24,3 +26,12 @@ def create_access_token(user_id: str, email: str) -> str:
 def decode_access_token(token: str) -> dict:
     settings = get_settings()
     return jwt.decode(token, settings.JWT_ACCESS_SECRET, algorithms=["HS256"])
+
+def generate_email_verification_token() -> tuple[str, str]:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
+    return raw_token, token_hash
+
+
+def hash_token(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()

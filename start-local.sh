@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_DIR="/Users/maheshsharma/development/rankcare-api/fastapi_app"
+PROJECT_DIR="/Users/maheshsharma/development/rankcare-api"
 
 if [ ! -d "$PROJECT_DIR" ]; then
   echo "Project directory not found: $PROJECT_DIR"
@@ -21,12 +21,12 @@ fi
 open_tab() {
   local title="$1"
   local command_to_run="$2"
-  osascript <<EOF2
+  osascript <<EOF
 tell application "Terminal"
     activate
     do script "cd ${PROJECT_DIR}; source .venv/bin/activate; ${command_to_run}"
 end tell
-EOF2
+EOF
 }
 
 if redis-cli ping >/dev/null 2>&1; then
@@ -43,11 +43,11 @@ else
 fi
 
 echo "Starting FastAPI in a new Terminal window..."
-open_tab "FastAPI" "python3 -m uvicorn app.main:app --reload --port 4000"
+open_tab "FastAPI" "python3 -m uvicorn --app-dir fastapi_app app.main:app --reload --port 4000"
 sleep 2
 
 echo "Starting RQ worker in a new Terminal window..."
-open_tab "RQ Worker" "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES rq worker rank-check"
+open_tab "RQ Worker" "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES /Users/maheshsharma/development/rankcare-api/.venv/bin/rq worker rank-check"
 
 echo "Done."
 echo "If Terminal asks for permission, click Allow."

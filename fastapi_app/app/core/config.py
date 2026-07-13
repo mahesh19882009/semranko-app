@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     FRONTEND_URL: Optional[str] = None
     SERP_API_KEY: Optional[str] = None
 
+    RESEND_API_KEY: Optional[str] = None
+    MAIL_FROM: Optional[str] = None
+    EMAIL_VERIFY_EXPIRE_HOURS: int = 24
+    GOOGLE_CLIENT_ID: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:
