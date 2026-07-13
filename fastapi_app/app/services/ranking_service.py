@@ -18,7 +18,7 @@ def run_rank_check(db: Session, user_id: str, project_id: str) -> dict:
 
     queue = get_rank_check_queue()
     payload_keywords = [model_to_dict(keyword) for keyword in keywords]
-    job = queue.enqueue("app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
+    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
 
     return {
         "queued": True,
@@ -39,7 +39,7 @@ def queue_rank_check_for_project(db: Session, project_id: str) -> dict | None:
 
     queue = get_rank_check_queue()
     payload_keywords = [model_to_dict(keyword) for keyword in keywords]
-    job = queue.enqueue("app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
+    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
 
     return {
         "queued": True,

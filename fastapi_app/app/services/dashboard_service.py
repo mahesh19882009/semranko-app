@@ -1,11 +1,12 @@
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ApiError
 from app.db.models import Audit, Project
+from app.services.plan_service import build_usage_snapshot, get_user_or_404, get_user_plan_limits
 
 
 def ensure_project_access(db: Session, user_id: str, project_id: str) -> Project:
@@ -87,13 +88,13 @@ def build_audit_summary(latest_audit) -> list[dict]:
     ]
 
 
-def build_competitor_summary(competitors: list, keywords: list) -> list[dict]:
+def build_competitor_summary(competitors: list, keywords: list, preview_limit: int) -> list[dict]:
     if not competitors:
         return []
 
     keyword_count = len(keywords) or 1
     items = []
-    for index, competitor in enumerate(competitors[:5]):
+    for index, competitor in enumerate(competitors[:preview_limit]):
         items.append(
             {
                 "id": competitor.id,
@@ -121,11 +122,13 @@ def build_reports_summary(reports: list) -> list[dict]:
 
 
 def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
+    user = get_user_or_404(db, user_id)
+    limits = get_user_plan_limits(user)
     project = ensure_project_access(db, user_id, project_id)
 
     audits = sorted(project.audits, key=lambda a: a.createdAt, reverse=True)
     reports = sorted(project.reports, key=lambda r: r.createdAt, reverse=True)
-    rank_results = sorted(project.rankResults, key=lambda r: r.checkedAt, reverse=True)
+    rank_results = sorted(project.rankResults, key=lambda r: r.checkedAt, reverse=True)[:500]
 
     latest_audit = audits[0] if audits else None
 
@@ -133,7 +136,7 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
         "totalKeywords": len(project.keywords),
         "avgRank": calculate_average_rank(rank_results),
         "estimatedTraffic": calculate_estimated_traffic(rank_results),
-        "technicalHealth": latest_audit.score if latest_audit else 0,
+        "technicalHealth": getattr(latest_audit, "score", 0) or 0,
         "backlinks": 0,
         "reportsSent": len(reports),
     }
@@ -142,6 +145,18 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
         "stats": stats,
         "rankTrend": build_rank_trend(rank_results),
         "audits": build_audit_summary(latest_audit),
-        "competitors": build_competitor_summary(project.competitors, project.keywords),
-        "reports": build_reports_summary(reports),
+        "competitors": {
+            "items": build_competitor_summary(
+                project.competitors,
+                project.keywords,
+                limits["dashboardCompetitorsPreview"],
+            ),
+            "total": len(project.competitors),
+            "previewLimit": limits["dashboardCompetitorsPreview"],
+        },
+        "reports": {
+            "items": build_reports_summary(reports),
+            "total": len(reports),
+        },
+        "usage": build_usage_snapshot(db, user),
     }

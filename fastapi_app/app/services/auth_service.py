@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import ApiError
@@ -15,6 +16,8 @@ from app.db.models import User
 from app.services import email_service
 from app.utils.serializers import model_to_dict
 
+VALID_PLAN_KEYS = {"starter", "pro", "agency"}
+
 
 def register_user(db: Session, payload: dict) -> dict:
     settings = get_settings()
@@ -22,9 +25,13 @@ def register_user(db: Session, payload: dict) -> dict:
     name = payload.get("name")
     email = payload.get("email")
     password = payload.get("password")
+    selected_plan = (payload.get("selectedPlan") or "starter").strip().lower()
 
     if not name or not email or not password:
         raise ApiError(400, "Name, email and password are required")
+
+    if selected_plan not in VALID_PLAN_KEYS:
+        selected_plan = "starter"
 
     normalized_email = email.strip().lower()
 
@@ -35,6 +42,9 @@ def register_user(db: Session, payload: dict) -> dict:
     raw_token, token_hash = generate_email_verification_token()
     expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
 
+    trial_starts_at = datetime.utcnow()
+    trial_ends_at = trial_starts_at + timedelta(days=settings.TRIAL_DAYS)
+
     user = User(
         name=name.strip(),
         email=normalized_email,
@@ -43,13 +53,17 @@ def register_user(db: Session, payload: dict) -> dict:
         emailVerificationToken=token_hash,
         emailVerificationExpiresAt=expires_at,
         authProvider="local",
+        selectedPlan=selected_plan,
+        subscriptionStatus="trialing",
+        trialStartsAt=trial_starts_at,
+        trialEndsAt=trial_ends_at,
     )
 
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    frontend_url = (settings.FRONTEND_URL).rstrip("/")
+    frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
     email_service.send_verification_email(user.email, user.name, verification_url)
@@ -58,6 +72,7 @@ def register_user(db: Session, payload: dict) -> dict:
         user,
         exclude={"passwordHash", "emailVerificationToken"}
     )
+
 
 def verify_email_token(db: Session, payload: dict) -> dict:
     token = payload.get("token")
@@ -111,12 +126,13 @@ def resend_verification_email(db: Session, payload: dict) -> dict:
     db.add(user)
     db.commit()
 
-    frontend_url = settings.FRONTEND_URL.rstrip("/")
+    frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
     email_service.send_verification_email(user.email, user.name, verification_url)
 
     return {"sent": True}
+
 
 def login_user(db: Session, payload: dict) -> dict:
     email = payload.get("email")
