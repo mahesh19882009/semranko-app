@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     GOOGLE_CLIENT_ID: Optional[str] = None
 
+    TRIAL_DAYS: int = 10
+
 
 @lru_cache
 def get_settings() -> Settings:

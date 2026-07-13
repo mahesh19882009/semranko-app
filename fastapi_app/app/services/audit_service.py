@@ -262,6 +262,8 @@ def run_project_audit(db: Session, user_id: str, project_id: str) -> dict:
         },
     )
 
+    db.commit()
+
     return get_audit_by_id(db, audit.id)
 
 

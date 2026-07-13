@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Competitor, Project
+from app.services.plan_service import ensure_competitor_limit
 from app.utils.serializers import model_to_dict
 
 
@@ -42,6 +43,8 @@ def create_competitor(db: Session, user_id: str, payload: dict) -> dict:
     )
     if existing:
         raise ApiError(409, "Competitor domain already exists for this project")
+
+    ensure_competitor_limit(db, user_id, project_id)
 
     competitor = Competitor(projectId=project_id, name=name.strip(), domain=clean_domain)
     db.add(competitor)
@@ -106,3 +109,4 @@ def delete_competitor(db: Session, user_id: str, competitor_id: str) -> None:
 
     db.execute(delete(Competitor).where(Competitor.id == competitor_id))
     db.commit()
+    

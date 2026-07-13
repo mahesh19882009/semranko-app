@@ -26,6 +26,12 @@ class User(Base):
     emailVerificationExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     authProvider: Mapped[str] = mapped_column(String, nullable=False, default="local", server_default="local")
     googleId: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
+
+    selectedPlan: Mapped[str] = mapped_column(String, nullable=False, default="starter", server_default="starter")
+    subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="trialing", server_default="trialing")
+    trialStartsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     competitorAlerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -79,6 +85,11 @@ class Keyword(Base):
 
     project: Mapped[Project] = relationship(back_populates="keywords")
     rankResults: Mapped[list["RankResult"]] = relationship(back_populates="keyword")
+
+    __table_args__ = (
+        Index("Keyword_projectId_idx", "projectId"),
+        Index("Keyword_projectId_keyword_key", "projectId", "keyword", unique=True),
+    )
 
 
 class RankResult(Base):
@@ -191,7 +202,11 @@ class Notification(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=True)
+    projectId: Mapped[Optional[str]] = mapped_column(
+        String,
+        ForeignKey("Project.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     type: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
