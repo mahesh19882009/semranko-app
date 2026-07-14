@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import db_session, get_current_user
@@ -8,6 +8,7 @@ from app.services.plan_service import (
     change_user_plan,
     get_user_or_404,
     list_available_plans,
+    validate_plan_change,
 )
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
@@ -26,6 +27,17 @@ def get_current_pricing(
     db_user = get_user_or_404(db, user["userId"])
     snapshot = build_usage_snapshot(db, db_user)
     return ok("Current pricing fetched", snapshot)
+
+
+@router.get("/downgrade-check")
+def get_downgrade_check(
+    plan: str = Query(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    db_user = get_user_or_404(db, user["userId"])
+    result = validate_plan_change(db, db_user, str(plan).strip().lower())
+    return ok("Plan change validation fetched", result)
 
 
 @router.post("/change-plan")
