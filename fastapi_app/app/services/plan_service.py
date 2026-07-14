@@ -46,6 +46,19 @@ def get_user_plan_limits(user: User) -> dict:
     return PLAN_LIMITS.get(plan_key, PLAN_LIMITS["starter"])
 
 
+def list_available_plans() -> list[dict]:
+    plans = []
+    for key, limits in PLAN_LIMITS.items():
+        plans.append(
+            {
+                "key": key,
+                "name": key.capitalize(),
+                "limits": limits,
+            }
+        )
+    return plans
+
+
 def ensure_subscription_active(user: User) -> None:
     status = (getattr(user, "subscriptionStatus", None) or "trialing").strip().lower()
 
@@ -96,6 +109,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
     return {
         "plan": get_plan_key(user),
         "subscriptionStatus": user.subscriptionStatus,
+        "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
         "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
         "usage": {
             "projects": count_user_projects(db, user.id),
@@ -109,6 +123,24 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
             "reportsPerMonth": limits["reportsPerMonth"],
         },
     }
+
+
+def change_user_plan(db: Session, user_id: str, plan_key: str) -> User:
+    normalized_plan = (plan_key or "").strip().lower()
+
+    if normalized_plan not in PLAN_LIMITS:
+        raise ApiError(400, "Invalid plan selected")
+
+    user = get_user_or_404(db, user_id)
+    user.selectedPlan = normalized_plan
+
+    if (getattr(user, "subscriptionStatus", None) or "").strip().lower() not in {"active", "trialing"}:
+        user.subscriptionStatus = "active"
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def ensure_project_limit(db: Session, user_id: str) -> None:
