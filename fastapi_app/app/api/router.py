@@ -12,6 +12,7 @@ from app.api.routes.rankings import router as rankings_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.pricing import router as pricing_router
 
 api_router = APIRouter(prefix="/api")
 
