@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     TRIAL_DAYS: int = 10
 
+    # Razorpay Configuration
+    RAZORPAY_KEY_ID: Optional[str] = None
+    RAZORPAY_KEY_SECRET: Optional[str] = None
+    RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
+
 
 @lru_cache
 def get_settings() -> Settings:
