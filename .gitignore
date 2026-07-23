@@ -1,5 +1,34 @@
-node_modules
-# Keep environment variables out of version control
-.env
+```
+# Compiled and build artifacts
+*.pyc
+__pycache__/
 
-/src/generated/prisma
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+```
