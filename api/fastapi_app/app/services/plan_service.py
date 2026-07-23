@@ -70,6 +70,8 @@ PLAN_ORDER = {
     "agency": 3,
 }
 
+TRIAL_PLAN_KEY = "starter"
+
 
 def list_available_plans() -> list[dict]:
     return [
@@ -98,18 +100,41 @@ def get_user_or_404(db: Session, user_id: str) -> User:
     return user
 
 
+def get_subscription_status(user: User) -> str:
+    raw_status = (getattr(user, "subscriptionStatus", None) or "").strip().lower()
+
+    trial_ends_at = getattr(user, "trialEndsAt", None)
+    now = datetime.utcnow()
+
+    if trial_ends_at and trial_ends_at >= now and raw_status in {"", "trialing", "active"}:
+        return "trialing"
+
+    if raw_status:
+        return raw_status
+
+    return "trialing"
+
+
 def get_plan_key(user: User) -> str:
     return (getattr(user, "selectedPlan", None) or "starter").strip().lower()
 
 
+def get_effective_plan_key(user: User) -> str:
+    status = get_subscription_status(user)
+    if status == "trialing":
+        return TRIAL_PLAN_KEY
+    selected = get_plan_key(user)
+    return selected if selected in PLAN_DEFINITIONS else TRIAL_PLAN_KEY
+
+
 def get_user_plan_limits(user: User) -> dict:
-    plan_key = get_plan_key(user)
-    plan = PLAN_DEFINITIONS.get(plan_key, PLAN_DEFINITIONS["starter"])
+    effective_plan_key = get_effective_plan_key(user)
+    plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
     return plan["limits"]
 
 
 def ensure_subscription_active(user: User) -> None:
-    status = (getattr(user, "subscriptionStatus", None) or "trialing").strip().lower()
+    status = get_subscription_status(user)
     if status not in {"trialing", "active"}:
         raise ApiError(403, "Your subscription is inactive. Please upgrade to continue.")
 
@@ -162,10 +187,14 @@ def get_user_max_competitors_per_project(db: Session, user_id: str) -> int:
 
 
 def build_usage_snapshot(db: Session, user: User) -> dict:
+    effective_plan_key = get_effective_plan_key(user)
+    selected_plan_key = get_plan_key(user)
     limits = get_user_plan_limits(user)
+
     return {
-        "plan": get_plan_key(user),
-        "subscriptionStatus": user.subscriptionStatus,
+        "plan": selected_plan_key,
+        "effectivePlan": effective_plan_key,
+        "subscriptionStatus": get_subscription_status(user),
         "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
         "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
         "trialDays": get_trial_days(),
@@ -258,6 +287,31 @@ def validate_plan_change(db: Session, user: User, target_plan_key: str) -> dict:
 
 
 def change_user_plan(db: Session, user_id: str, plan_key: str) -> User:
+    plan = (plan_key or "").strip().lower()
+    if plan not in PLAN_DEFINITIONS:
+        raise ApiError(400, "Invalid plan")
+
+    user = get_user_or_404(db, user_id)
+    validation = validate_plan_change(db, user, plan)
+
+    if validation["isDowngrade"] and not validation["allowed"]:
+        raise ApiError(409, "Downgrade not allowed until usage is reduced", validation)
+
+    user.selectedPlan = plan
+
+    now = datetime.utcnow()
+    if not user.trialStartsAt:
+        user.trialStartsAt = now
+    if not user.trialEndsAt:
+        user.trialEndsAt = now
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
     plan = (plan_key or "").strip().lower()
     if plan not in PLAN_DEFINITIONS:
         raise ApiError(400, "Invalid plan")

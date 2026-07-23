@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_DIR="/Users/maheshsharma/development/rankcare-api"
+PROJECT_DIR="/Users/maheshsharma/development/rankcare-api/api"
 
 if [ ! -d "$PROJECT_DIR" ]; then
   echo "Project directory not found: $PROJECT_DIR"
@@ -47,7 +47,7 @@ open_tab "FastAPI" "python3 -m uvicorn --app-dir fastapi_app app.main:app --relo
 sleep 2
 
 echo "Starting RQ worker in a new Terminal window..."
-open_tab "RQ Worker" "export PYTHONPATH=${PROJECT_DIR}/fastapi_app; OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES /Users/maheshsharma/development/rankcare-api/.venv/bin/rq worker rank-check"
+open_tab "RQ Worker" "export PYTHONPATH=${PROJECT_DIR}/fastapi_app; OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES /Users/maheshsharma/development/rankcare-api/api/.venv/bin/rq worker rank-check"
 
 echo "Done."
 echo "If Terminal asks for permission, click Allow."
