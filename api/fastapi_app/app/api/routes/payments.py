@@ -5,7 +5,7 @@ import json
 
 from app.db.session import get_db
 from app.api.deps import get_current_user
-from app.models.user import User
+from app.db.models import User
 from app.services.payment_service import (
     create_order,
     verify_payment_signature,
