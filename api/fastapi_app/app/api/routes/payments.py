@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any
 import json
 
-from app.core.database import get_db
+from app.db.session import get_db
 from app.services.auth_service import get_current_user
 from app.models.user import User
 from app.services.payment_service import (
