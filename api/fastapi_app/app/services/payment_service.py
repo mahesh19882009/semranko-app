@@ -2,7 +2,7 @@ import razorpay
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.models.user import User
-from app.models.subscription import Subscription
+from app.db.models.subscription import Subscription
 from app.core.config import get_settings
 from datetime import datetime, timedelta
 
