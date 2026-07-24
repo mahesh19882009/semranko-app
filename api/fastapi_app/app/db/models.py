@@ -46,6 +46,8 @@ class User(Base):
 
     projects: Mapped[list["Project"]] = relationship(back_populates="user")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
+    orders: Mapped[list["PaymentOrder"]] = relationship(back_populates="user")
+    subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
 
 
 class Project(Base):
@@ -237,5 +239,63 @@ class Notification(Base):
         Index("notification_project_id_idx_v2", "projectId"),
         Index("notification_status_idx", "status"),
         Index("notification_created_at_idx", "createdAt"),
+    )
+
+
+class PaymentOrder(Base):
+    __tablename__ = "PaymentOrder"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    razorpayOrderId: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    razorpayPaymentId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    razorpaySignature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    planId: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)  # in paise
+    currency: Mapped[str] = mapped_column(String, nullable=False, default="INR")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="created", server_default="created")
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped[User] = relationship(back_populates="orders")
+
+    __table_args__ = (
+        Index("PaymentOrder_userId_idx", "userId"),
+        Index("PaymentOrder_razorpayOrderId_idx", "razorpayOrderId"),
+    )
+
+
+class Subscription(Base):
+    __tablename__ = "Subscription"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    planId: Mapped[int] = mapped_column(Integer, nullable=False)
+    razorpayPaymentId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    razorpayOrderId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="inactive", server_default="inactive")
+    startDate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    endDate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped[User] = relationship(back_populates="subscriptions")
+
+    __table_args__ = (
+        Index("Subscription_userId_idx", "userId"),
+        Index("Subscription_status_idx", "status"),
     )
 

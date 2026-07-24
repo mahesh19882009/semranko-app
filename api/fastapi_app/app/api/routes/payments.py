@@ -30,7 +30,7 @@ async def create_payment_order(
     Create a Razorpay payment order
     
     Args:
-        plan_id: ID of the plan to purchase
+        plan_id: ID of the plan to purchase (0=starter, 1=pro, 2=agency)
         amount: Amount in paise (e.g., 50000 for ₹500)
     
     Returns:
@@ -51,7 +51,7 @@ async def create_payment_order(
                 "amount": order_data["amount"],
                 "currency": order_data["currency"],
                 "plan_id": order_data["plan_id"],
-                "key_id": settings.RAZORPAY_KEY_ID
+                "key_id": order_data.get("key_id", settings.RAZORPAY_KEY_ID or "mock_key_id")
             }
         }
     except Exception as e:
@@ -106,9 +106,9 @@ async def verify_payment(
             "message": "Payment verified and subscription activated",
             "data": {
                 "subscription_id": subscription.id,
-                "plan_id": subscription.plan_id,
+                "plan_id": subscription.planId,
                 "status": subscription.status,
-                "end_date": subscription.end_date
+                "end_date": subscription.endDate.isoformat() if subscription.endDate else None
             }
         }
     except HTTPException:

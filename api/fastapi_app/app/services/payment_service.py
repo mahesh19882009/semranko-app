@@ -1,16 +1,53 @@
 import razorpay
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
-from app.db.models import User  
+from app.db.models import User, PaymentOrder, Subscription  
 from app.core.config import get_settings
 from datetime import datetime, timedelta
+from sqlalchemy import select
 
 settings = get_settings()
 
-# Initialize Razorpay client
+# Initialize Razorpay client - will be None if keys not configured (zero-cost dev mode)
 razorpay_client = razorpay.Client(
     auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
 ) if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET else None
+
+
+def get_plan_by_id(db: Session, plan_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get plan details by ID from PLAN_DEFINITIONS
+    
+    Args:
+        db: Database session (not used but kept for consistency)
+        plan_id: ID of the plan (0=starter, 1=pro, 2=agency)
+    
+    Returns:
+        Plan details or None if invalid plan_id
+    """
+    from app.services.plan_service import PLAN_DEFINITIONS
+    
+    plan_keys = ["starter", "pro", "agency"]
+    if plan_id < 0 or plan_id >= len(plan_keys):
+        return None
+    
+    plan_key = plan_keys[plan_id]
+    plan = PLAN_DEFINITIONS.get(plan_key)
+    
+    if not plan:
+        return None
+    
+    # Return plan with additional metadata
+    return {
+        "id": plan_id,
+        "key": plan["key"],
+        "name": plan["name"],
+        "monthly_price": plan["monthlyPrice"],
+        "yearly_price": plan["yearlyPrice"],
+        "description": plan["description"],
+        "limits": plan["limits"],
+        "duration_days": 30  # Default subscription duration
+    }
 
 
 def create_order(
@@ -33,10 +70,35 @@ def create_order(
     Returns:
         Order details including order_id, amount, and status
     """
+    # Zero-cost dev mode: if Razorpay not configured, create mock order
     if not razorpay_client:
-        raise Exception("Razorpay client not initialized. Please check your API keys.")
+        # Create mock order for development
+        mock_order_id = f"mock_order_{user.id}_{int(datetime.now().timestamp())}"
+        
+        # Store mock order in database
+        order = PaymentOrder(
+            userId=user.id,
+            razorpayOrderId=mock_order_id,
+            planId=plan_id,
+            amount=amount,
+            currency=currency,
+            status="created"
+        )
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+        
+        return {
+            "order_id": mock_order_id,
+            "amount": amount,
+            "currency": currency,
+            "status": "created",
+            "plan_id": plan_id,
+            "user_id": user.id,
+            "key_id": "mock_key_id"  # Mock key for frontend
+        }
     
-    # Create Razorpay order
+    # Production mode: Create real Razorpay order
     order_data = {
         'amount': amount,  # Amount in paise
         'currency': currency,
@@ -51,8 +113,17 @@ def create_order(
     try:
         order = razorpay_client.order.create(data=order_data)
         
-        # Store order in database (optional - you can create an Order model)
-        # For now, we'll just return the order details
+        # Store order in database
+        db_order = PaymentOrder(
+            userId=user.id,
+            razorpayOrderId=order['id'],
+            planId=plan_id,
+            amount=order['amount'],
+            currency=order['currency'],
+            status=order['status']
+        )
+        db.add(db_order)
+        db.commit()
         
         return {
             "order_id": order['id'],
@@ -60,9 +131,11 @@ def create_order(
             "currency": order['currency'],
             "status": order['status'],
             "plan_id": plan_id,
-            "user_id": user.id
+            "user_id": user.id,
+            "key_id": settings.RAZORPAY_KEY_ID
         }
     except Exception as e:
+        db.rollback()
         raise Exception(f"Failed to create Razorpay order: {str(e)}")
 
 
@@ -82,8 +155,10 @@ def verify_payment_signature(
     Returns:
         True if signature is valid, False otherwise
     """
+    # Zero-cost dev mode: accept mock payments
     if not razorpay_client:
-        raise Exception("Razorpay client not initialized.")
+        # For mock orders, just verify the order_id starts with "mock_order_"
+        return order_id.startswith("mock_order_")
     
     try:
         params = {
@@ -163,50 +238,69 @@ def activate_subscription(
     Returns:
         Activated subscription object
     """
-    from app.services.plan_service import get_plan_by_id
-    
     plan = get_plan_by_id(db, plan_id)
     if not plan:
         raise Exception("Plan not found")
     
+    # Update the payment order status
+    order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+    if order:
+        order.status = "paid"
+        order.razorpayPaymentId = payment_id
+        db.add(order)
+    
     # Check if user has existing subscription
-    existing_subscription = db.query(Subscription).filter(
-        Subscription.user_id == user.id,
-        Subscription.is_active == True
-    ).first()
+    existing_subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user.id,
+            Subscription.isActive == True
+        )
+    )
     
     if existing_subscription:
         # Extend existing subscription
-        if existing_subscription.end_date and existing_subscription.end_date > datetime.utcnow():
-            new_end_date = existing_subscription.end_date + timedelta(days=plan.duration_days)
+        if existing_subscription.endDate and existing_subscription.endDate > datetime.utcnow():
+            new_end_date = existing_subscription.endDate + timedelta(days=plan["duration_days"])
         else:
-            new_end_date = datetime.utcnow() + timedelta(days=plan.duration_days)
+            new_end_date = datetime.utcnow() + timedelta(days=plan["duration_days"])
         
-        existing_subscription.plan_id = plan_id
-        existing_subscription.end_date = new_end_date
+        existing_subscription.planId = plan_id
+        existing_subscription.endDate = new_end_date
         existing_subscription.status = 'active'
+        existing_subscription.isActive = True
+        existing_subscription.razorpayPaymentId = payment_id
+        existing_subscription.razorpayOrderId = order_id
+        db.add(existing_subscription)
         db.commit()
         db.refresh(existing_subscription)
         return existing_subscription
     else:
         # Create new subscription
         subscription = Subscription(
-            user_id=user.id,
-            plan_id=plan_id,
+            userId=user.id,
+            planId=plan_id,
             status='active',
-            start_date=datetime.utcnow(),
-            end_date=datetime.utcnow() + timedelta(days=plan.duration_days),
-            razorpay_payment_id=payment_id,
-            razorpay_order_id=order_id
+            isActive=True,
+            startDate=datetime.utcnow(),
+            endDate=datetime.utcnow() + timedelta(days=plan["duration_days"]),
+            razorpayPaymentId=payment_id,
+            razorpayOrderId=order_id
         )
         
         db.add(subscription)
         db.commit()
         db.refresh(subscription)
+        
+        # Also update user's subscription status and selected plan
+        user.subscriptionStatus = "active"
+        user.selectedPlan = plan["key"]
+        db.add(user)
+        db.commit()
+        
         return subscription
 
 
-def get_subscription_status(db: Session, user_id: int) -> Optional[Dict[str, Any]]:
+def get_subscription_status(db: Session, user_id: str) -> Optional[Dict[str, Any]]:
     """
     Get current subscription status for a user
     
@@ -217,19 +311,25 @@ def get_subscription_status(db: Session, user_id: int) -> Optional[Dict[str, Any
     Returns:
         Subscription details or None
     """
-    subscription = db.query(Subscription).filter(
-        Subscription.user_id == user_id,
-        Subscription.is_active == True
-    ).first()
+    subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user_id,
+            Subscription.isActive == True
+        )
+    )
     
     if not subscription:
         return None
     
+    plan = get_plan_by_id(db, subscription.planId)
+    
     return {
-        'plan_id': subscription.plan_id,
+        'plan_id': subscription.planId,
+        'plan_key': plan['key'] if plan else 'unknown',
+        'plan_name': plan['name'] if plan else 'Unknown',
         'status': subscription.status,
-        'start_date': subscription.start_date,
-        'end_date': subscription.end_date,
-        'days_remaining': (subscription.end_date - datetime.utcnow()).days if subscription.end_date else 0,
-        'is_trial': subscription.is_trial if hasattr(subscription, 'is_trial') else False
+        'start_date': subscription.startDate,
+        'end_date': subscription.endDate,
+        'days_remaining': (subscription.endDate - datetime.utcnow()).days if subscription.endDate else 0,
+        'is_trial': False
     }
