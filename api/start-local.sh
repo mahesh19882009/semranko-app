@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_DIR="/Users/maheshsharma/development/rankcare-api/api"
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_DIR="$SCRIPT_DIR"
 
-if [ ! -d "$PROJECT_DIR" ]; then
-  echo "Project directory not found: $PROJECT_DIR"
-  exit 1
+echo "RankCare API Starter"
+echo "===================="
+echo "Project Directory: $PROJECT_DIR"
+echo ""
+
+# Check virtual environment
+if [ ! -d "$PROJECT_DIR/.venv" ]; then
+  echo "Creating virtual environment..."
+  python3 -m venv "$PROJECT_DIR/.venv"
 fi
 
 if [ ! -f "$PROJECT_DIR/.venv/bin/activate" ]; then
@@ -13,42 +21,113 @@ if [ ! -f "$PROJECT_DIR/.venv/bin/activate" ]; then
   exit 1
 fi
 
+# Activate virtual environment
+source "$PROJECT_DIR/.venv/bin/activate"
+
+# Install dependencies if needed
+if [ ! -f "$PROJECT_DIR/.venv/.dependencies_installed" ]; then
+  echo "Installing Python dependencies..."
+  pip install --upgrade pip
+  if [ -f "$PROJECT_DIR/requirements.txt" ]; then
+    pip install -r "$PROJECT_DIR/requirements.txt"
+  fi
+  touch "$PROJECT_DIR/.venv/.dependencies_installed"
+fi
+
+# Check Redis
 if ! command -v redis-cli >/dev/null 2>&1; then
-  echo "redis-cli not found. Install Redis first."
+  echo "redis-cli not found. Please install Redis first."
+  echo "On Ubuntu/Debian: sudo apt-get install redis-server"
+  echo "On macOS: brew install redis"
   exit 1
 fi
 
-open_tab() {
-  local title="$1"
-  local command_to_run="$2"
-  osascript <<EOF
-tell application "Terminal"
-    activate
-    do script "cd ${PROJECT_DIR}; source .venv/bin/activate; ${command_to_run}"
-end tell
-EOF
+# Function to check if a port is in use
+is_port_in_use() {
+  nc -z localhost "$1" 2>/dev/null
+  return $?
 }
 
+# Start Redis if not running
 if redis-cli ping >/dev/null 2>&1; then
-  echo "Redis is already running."
+  echo "✓ Redis is already running"
 else
   if command -v redis-server >/dev/null 2>&1; then
-    echo "Starting Redis in a new Terminal window..."
-    open_tab "Redis" "redis-server"
+    echo "Starting Redis server..."
+    redis-server --daemonize yes
     sleep 2
+    if redis-cli ping >/dev/null 2>&1; then
+      echo "✓ Redis started successfully"
+    else
+      echo "✗ Failed to start Redis"
+      exit 1
+    fi
   else
-    echo "redis-server not found. Install Redis first."
+    echo "redis-server not found. Please install Redis first."
     exit 1
   fi
 fi
 
-echo "Starting FastAPI in a new Terminal window..."
-open_tab "FastAPI" "python3 -m uvicorn --app-dir fastapi_app app.main:app --reload --port 4000"
+echo ""
+echo "Starting services (Press Ctrl+C to stop all)..."
+echo ""
+
+# Cleanup function
+cleanup() {
+  echo ""
+  echo "Stopping all services..."
+  if [ ! -z "$FASTAPI_PID" ]; then
+    kill $FASTAPI_PID 2>/dev/null || true
+  fi
+  if [ ! -z "$WORKER_PID" ]; then
+    kill $WORKER_PID 2>/dev/null || true
+  fi
+  # Don't stop Redis as it might be used by other applications
+  echo "Services stopped."
+  exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# Start FastAPI in background
+echo "Starting FastAPI server on http://localhost:4000..."
+cd "$PROJECT_DIR"
+export PYTHONPATH="$PROJECT_DIR/fastapi_app:$PYTHONPATH"
+python3 -m uvicorn --app-dir fastapi_app app.main:app --reload --host 0.0.0.0 --port 4000 &
+FASTAPI_PID=$!
 sleep 2
 
-echo "Starting RQ worker in a new Terminal window..."
-open_tab "RQ Worker" "export PYTHONPATH=${PROJECT_DIR}/fastapi_app; OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES /Users/maheshsharma/development/rankcare-api/api/.venv/bin/rq worker rank-check"
+# Check if FastAPI started successfully
+if ! kill -0 $FASTAPI_PID 2>/dev/null; then
+  echo "✗ Failed to start FastAPI server"
+  exit 1
+fi
+echo "✓ FastAPI server started (PID: $FASTAPI_PID)"
 
-echo "Done."
-echo "If Terminal asks for permission, click Allow."
-echo "Use Ctrl+C in each Terminal window to stop the processes."
+# Start RQ worker in background
+echo "Starting RQ worker..."
+export PYTHONPATH="$PROJECT_DIR/fastapi_app:$PYTHONPATH"
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+"$PROJECT_DIR/.venv/bin/rq" worker rank-check &
+WORKER_PID=$!
+sleep 1
+
+# Check if worker started successfully
+if ! kill -0 $WORKER_PID 2>/dev/null; then
+  echo "✗ Failed to start RQ worker"
+  exit 1
+fi
+echo "✓ RQ worker started (PID: $WORKER_PID)"
+
+echo ""
+echo "=========================================="
+echo "✓ All services are running!"
+echo "=========================================="
+echo "FastAPI: http://localhost:4000"
+echo "API Docs: http://localhost:4000/docs"
+echo ""
+echo "Press Ctrl+C to stop all services"
+echo ""
+
+# Wait for processes
+wait

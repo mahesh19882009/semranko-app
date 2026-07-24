@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -7,6 +7,8 @@ import {
   fetchCurrentPricing,
   fetchPricingPlans,
 } from "../features/pricing/pricingSlice";
+import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
+import { initRazorpayCheckout } from "../lib/api";
 import { isAuthenticated } from "../utils/auth";
 import { PLAN_COMPARISON, PLANS } from "../config/pricing";
 
@@ -14,6 +16,13 @@ const PLAN_ORDER = {
   starter: 1,
   pro: 2,
   agency: 3,
+};
+
+// Plan amounts in paise (₹1 = 100 paise)
+const PLAN_AMOUNTS = {
+  starter: { monthly: 1900, yearly: 1500 },
+  pro: { monthly: 4900, yearly: 3900 },
+  agency: { monthly: 9900, yearly: 7900 },
 };
 
 const formatDate = (value) => {
@@ -57,6 +66,9 @@ export default function PricingPage() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const authenticated = isAuthenticated();
+  
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [selectedBillingCycle, setSelectedBillingCycle] = useState("monthly");
 
   const {
     plans,
@@ -118,12 +130,75 @@ export default function PricingPage() {
 
     if (normalizedPlanKey === currentPlan || changingPlan) return;
 
+    // For now, just change plan (free mode)
+    // In production, this would trigger payment
     dispatch(changePlan(normalizedPlanKey))
       .unwrap()
       .then(() => {
         dispatch(fetchCurrentPricing());
       })
       .catch(() => {});
+  };
+
+  const handleUpgradeWithPayment = async (planKey, billingCycle = "monthly") => {
+    if (!authenticated) {
+      navigate(`/register?plan=${planKey}`);
+      return;
+    }
+
+    if (isProcessingPayment) return;
+
+    const planIndex = { starter: 0, pro: 1, agency: 2 }[planKey];
+    const amount = PLAN_AMOUNTS[planKey]?.[billingCycle] || 0;
+
+    try {
+      setIsProcessingPayment(true);
+      
+      // Create payment order
+      const orderData = await createPaymentOrderApi(planIndex, amount);
+      
+      if (!orderData) {
+        throw new Error("Failed to create payment order");
+      }
+
+      // Initialize Razorpay checkout
+      await initRazorpayCheckout({
+        order_id: orderData.order_id,
+        amount: orderData.amount,
+        currency: orderData.currency || "INR",
+        key_id: orderData.key_id,
+        onPaymentSuccess: async (response) => {
+          try {
+            // Verify payment on backend
+            await verifyPaymentApi(
+              response.razorpay_order_id,
+              response.razorpay_payment_id,
+              response.razorpay_signature,
+              planIndex
+            );
+            
+            // Refresh pricing data
+            dispatch(fetchCurrentPricing());
+            
+            alert("Payment successful! Your subscription has been activated.");
+          } catch (error) {
+            console.error("Payment verification failed:", error);
+            alert("Payment verification failed. Please contact support with your payment ID: " + response.razorpay_payment_id);
+          } finally {
+            setIsProcessingPayment(false);
+          }
+        },
+        onPaymentError: (error) => {
+          console.error("Payment failed:", error);
+          alert("Payment failed or was cancelled. Please try again.");
+          setIsProcessingPayment(false);
+        },
+      });
+    } catch (error) {
+      console.error("Payment initialization failed:", error);
+      alert("Failed to initialize payment. Please try again.");
+      setIsProcessingPayment(false);
+    }
   };
 
   return (
@@ -226,8 +301,33 @@ export default function PricingPage() {
           <div className="text-center">
             <h2 className="text-3xl font-bold text-slate-900">Plans</h2>
             <p className="mt-3 text-slate-600">
-              Manual plan switching is enabled for now while payment integration is pending.
+              Choose the perfect plan for your SEO needs. Start with a free trial, upgrade anytime.
             </p>
+            
+            {/* Billing cycle toggle */}
+            {authenticated && (
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <span className={`text-sm ${selectedBillingCycle === "monthly" ? "font-semibold text-indigo-600" : "text-slate-500"}`}>
+                  Monthly
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBillingCycle(selectedBillingCycle === "monthly" ? "yearly" : "monthly")}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                    selectedBillingCycle === "yearly" ? "bg-indigo-600" : "bg-slate-300"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
+                      selectedBillingCycle === "yearly" ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+                <span className={`text-sm ${selectedBillingCycle === "yearly" ? "font-semibold text-indigo-600" : "text-slate-500"}`}>
+                  Yearly <span className="text-xs text-green-600">(Save 20%)</span>
+                </span>
+              </div>
+            )}
           </div>
 
           {loadingPlans || (authenticated && loadingCurrent) ? (
@@ -250,6 +350,12 @@ export default function PricingPage() {
                   validation?.allowed === false;
 
                 const violations = showDowngradeWarning ? validation?.violations || [] : [];
+                
+                // Calculate price based on billing cycle
+                const price = selectedBillingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+                const priceInPaise = selectedBillingCycle === "yearly" 
+                  ? PLAN_AMOUNTS[targetPlan]?.yearly 
+                  : PLAN_AMOUNTS[targetPlan]?.monthly;
 
                 return (
                   <article
@@ -275,7 +381,7 @@ export default function PricingPage() {
 
                     {"monthlyPrice" in plan ? (
                       <div className="mt-6 flex items-end gap-2">
-                        <span className="text-4xl font-bold text-slate-900">${plan.monthlyPrice}</span>
+                        <span className="text-4xl font-bold text-slate-900">${price}</span>
                         <span className="pb-1 text-sm text-slate-500">/ month</span>
                       </div>
                     ) : null}
@@ -302,26 +408,41 @@ export default function PricingPage() {
                       </div>
                     ) : null}
 
-                    <button
-                      type="button"
-                      onClick={() => handleSelectPlan(targetPlan)}
-                      disabled={isCurrent || changingPlan || showDowngradeWarning}
-                      className={`mt-5 w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                        isCurrent || showDowngradeWarning
-                          ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                          : "bg-indigo-600 text-white hover:bg-indigo-700"
-                      }`}
-                    >
-                      {isCurrent
-                        ? "Current Plan"
-                        : changingPlan && authenticated
-                        ? "Updating..."
-                        : showDowngradeWarning
-                        ? "Resolve limits first"
-                        : authenticated
-                        ? `Switch to ${plan.name}`
-                        : `Start ${plan.name} Trial`}
-                    </button>
+                    <div className="mt-5 space-y-3">
+                      {/* Free plan switch (for trial/downgrade) */}
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPlan(targetPlan)}
+                        disabled={isCurrent || changingPlan || showDowngradeWarning}
+                        className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                          isCurrent || showDowngradeWarning
+                            ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        {isCurrent
+                          ? "Current Plan"
+                          : changingPlan && authenticated
+                          ? "Updating..."
+                          : showDowngradeWarning
+                          ? "Resolve limits first"
+                          : authenticated
+                          ? `Switch to ${plan.name} (Free)`
+                          : `Start ${plan.name} Trial`}
+                      </button>
+                      
+                      {/* Paid upgrade button */}
+                      {authenticated && !isCurrent && !isLowerPlan && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpgradeWithPayment(targetPlan, selectedBillingCycle)}
+                          disabled={isProcessingPayment}
+                          className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-400"
+                        >
+                          {isProcessingPayment ? "Processing..." : `Upgrade - $${price}/mo`}
+                        </button>
+                      )}
+                    </div>
                   </article>
                 );
               })}
