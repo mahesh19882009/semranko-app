@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     FRONTEND_URL: Optional[str] = None
     SERP_API_KEY: Optional[str] = None
+    SERP_API_LOGIN: Optional[str] = None  # DataForSEO API login (email)
 
     RESEND_API_KEY: Optional[str] = None
     MAIL_FROM: Optional[str] = None
