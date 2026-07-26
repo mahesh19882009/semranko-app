@@ -1,4 +1,4 @@
-import { NavLink, Link } from 'react-router-dom';
+import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChartLine,
@@ -19,6 +19,8 @@ const navItems = [
 ];
 
 function Sidebar() {
+  const navigate = useNavigate();
+
   return (
     <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
       <Link to="/" className="flex items-center gap-3 border-b border-slate-200 px-6 py-5 cursor-pointer transition hover:bg-brand-700 hover:text-white">
@@ -57,7 +59,10 @@ function Sidebar() {
         <p className="mt-2 text-sm text-slate-300">
           White-label reporting, more tracked keywords, and client workspaces.
         </p>
-        <button className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900">
+        <button
+          onClick={() => navigate('/pricing')}
+          className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+        >
           Explore plans
         </button>
       </div>

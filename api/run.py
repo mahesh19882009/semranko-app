@@ -1,6 +1,10 @@
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fastapi_app'))
+
 import uvicorn
 
-from app.core.config import get_settings
+from app.core.config import get_settings 
 
 
 if __name__ == "__main__":

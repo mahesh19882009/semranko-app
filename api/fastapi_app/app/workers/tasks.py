@@ -4,6 +4,8 @@ from typing import Optional
 import requests
 from requests.auth import HTTPBasicAuth
 import json
+from app.services.dataforseo_client import DataForSEOClient
+from app.db.models import Backlink
 
 from sqlalchemy import delete
 
@@ -12,6 +14,7 @@ from app.db.session import SessionLocal
 from app.core.config import get_settings
 
 settings = get_settings()
+LOCATION_CODES = {"India": 2356, "United States": 2840, "United Kingdom": 2826, "Global": 2840}
 
 
 def fake_rank_lookup(keyword: dict, domain: str) -> dict:
@@ -301,7 +304,7 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -
     rows = []
     for keyword in keywords:
         # Try real SERP API first (DataForSEO or SerpAPI), fallback to mock data
-        result = serp_api_rank_lookup(keyword, domain)
+        result = dataforseo_rank_lookup(keyword, domain)
         if result is None:
             result = fake_rank_lookup(keyword, domain)
         
@@ -338,3 +341,4 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -
         raise
     finally:
         db.close()
+

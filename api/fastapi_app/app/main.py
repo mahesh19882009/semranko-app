@@ -10,31 +10,32 @@ from app.jobs.rank_scheduler import start_scheduler, stop_scheduler
 
 settings = get_settings()
 
-fastapi_app = FastAPI(title=settings.APP_NAME)
-
 origins = [settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"]
 
-register_exception_handlers(fastapi_app)
+# Properly add CORS middleware
+app = FastAPI(title=settings.APP_NAME)
 
-@fastapi_app.on_event("startup")
-def on_startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    start_scheduler()
+register_exception_handlers(app)
 
-@fastapi_app.on_event("shutdown")
-def on_shutdown() -> None:
-    stop_scheduler()
-
-@fastapi_app.get("/health")
-def health_check() -> dict:
-    return {"success": True, "message": "API is running"}
-
-fastapi_app.include_router(api_router)
-
-app = CORSMiddleware(
-    app=fastapi_app,
+app.add_middleware(
+    CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def on_startup() -> None:
+    Base.metadata.create_all(bind=engine)
+    start_scheduler()
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    stop_scheduler()
+
+@app.get("/health")
+def health_check() -> dict:
+    return {"success": True, "message": "API is running"}
+
+app.include_router(api_router)

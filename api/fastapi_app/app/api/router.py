@@ -12,8 +12,8 @@ from app.api.routes.rankings import router as rankings_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.search import router as search_router
 from app.api.routes.settings import router as settings_router
-from app.api.routes.pricing import router as pricing_router
 from app.api.routes.payments import router as payments_router
+from app.api.routes import backlinks
 
 api_router = APIRouter(prefix="/api")
 
@@ -30,3 +30,4 @@ api_router.include_router(notifications_router)
 api_router.include_router(search_router)
 api_router.include_router(pricing_router)
 api_router.include_router(payments_router)
+api_router.include_router(backlinks.router)

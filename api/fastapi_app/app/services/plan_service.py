@@ -11,8 +11,8 @@ PLAN_DEFINITIONS = {
     "starter": {
         "key": "starter",
         "name": "Starter",
-        "monthlyPrice": 19,
-        "yearlyPrice": 15,
+        "monthlyPrice": 1999,
+        "yearlyPrice": 1499,
         "description": "Best for freelancers and small websites starting SEO tracking.",
         "highlighted": False,
         "cta": "Start Starter Trial",
@@ -29,8 +29,8 @@ PLAN_DEFINITIONS = {
     "pro": {
         "key": "pro",
         "name": "Pro",
-        "monthlyPrice": 49,
-        "yearlyPrice": 39,
+        "monthlyPrice": 4999,
+        "yearlyPrice": 3999,
         "description": "Ideal for growing businesses that need stronger reporting and tracking.",
         "highlighted": True,
         "cta": "Start Pro Trial",
@@ -47,8 +47,8 @@ PLAN_DEFINITIONS = {
     "agency": {
         "key": "agency",
         "name": "Agency",
-        "monthlyPrice": 99,
-        "yearlyPrice": 79,
+        "monthlyPrice": 9999,
+        "yearlyPrice": 7999,
         "description": "Built for agencies handling multiple clients and white-label style delivery.",
         "highlighted": False,
         "cta": "Start Agency Trial",
@@ -198,6 +198,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
         "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
         "trialDays": get_trial_days(),
+        "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
         "usage": {
             "projects": count_user_projects(db, user.id),
             "keywords": count_user_keywords(db, user.id),

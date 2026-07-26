@@ -1,10 +1,15 @@
 import razorpay
+import uuid
+import logging
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription
 from app.core.config import get_settings
 from datetime import datetime, timedelta
 from sqlalchemy import select
+from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -50,93 +55,50 @@ def get_plan_by_id(db: Session, plan_id: int) -> Optional[Dict[str, Any]]:
     }
 
 
-def create_order(
-    db: Session, 
-    user: User, 
-    plan_id: int, 
-    amount: int, 
-    currency: str = "INR"
-) -> Dict[str, Any]:
-    """
-    Create a Razorpay order for subscription payment
-    
-    Args:
-        db: Database session
-        user: Current user
-        plan_id: ID of the plan being purchased
-        amount: Amount in paise (e.g., 50000 for ₹500)
-        currency: Currency code (default: INR)
-    
-    Returns:
-        Order details including order_id, amount, and status
-    """
-    # Zero-cost dev mode: if Razorpay not configured, create mock order
-    if not razorpay_client:
-        # Create mock order for development
-        mock_order_id = f"mock_order_{user.id}_{int(datetime.now().timestamp())}"
-        
-        # Store mock order in database
-        order = PaymentOrder(
-            userId=user.id,
-            razorpayOrderId=mock_order_id,
-            planId=plan_id,
-            amount=amount,
-            currency=currency,
-            status="created"
-        )
-        db.add(order)
-        db.commit()
-        db.refresh(order)
-        
+def create_order(amount: int, currency: str = "INR", force_mock: bool = False) -> dict:
+    # Check if credentials are actually present and not just empty strings
+    has_credentials = (
+        settings.RAZORPAY_KEY_ID and 
+        settings.RAZORPAY_KEY_SECRET and 
+        settings.RAZORPAY_KEY_ID != "your_razorpay_key_id" and 
+        settings.RAZORPAY_KEY_SECRET != "your_razorpay_secret"
+    )
+
+    # If force_mock is True or credentials are missing, use mock mode
+    if force_mock or not has_credentials:
+        logger.warning("Using MOCK payment mode.")
         return {
-            "order_id": mock_order_id,
+            "id": f"order_mock_{uuid.uuid4()}", 
+            "amount": amount, 
+            "currency": currency,
+            "key": settings.RAZORPAY_KEY_ID if settings.RAZORPAY_KEY_ID else "rzp_test_mock_key",
+            "mock": True
+        }
+
+    # Real Razorpay order creation
+    try:
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        order_data = {
             "amount": amount,
             "currency": currency,
-            "status": "created",
-            "plan_id": plan_id,
-            "user_id": user.id,
-            "key_id": "mock_key_id"  # Mock key for frontend
+            "receipt": f"rcpt_{uuid.uuid4().hex[:24]}"
         }
-    
-    # Production mode: Create real Razorpay order
-    order_data = {
-        'amount': amount,  # Amount in paise
-        'currency': currency,
-        'receipt': f"order_rcptid_{user.id}_{datetime.now().timestamp()}",
-        'notes': {
-            'user_id': str(user.id),
-            'plan_id': str(plan_id),
-            'email': user.email
-        }
-    }
-    
-    try:
-        order = razorpay_client.order.create(data=order_data)
+        order_data["notes"] = {"environment": "test" if "test" in settings.RAZORPAY_KEY_ID else "live"}
         
-        # Store order in database
-        db_order = PaymentOrder(
-            userId=user.id,
-            razorpayOrderId=order['id'],
-            planId=plan_id,
-            amount=order['amount'],
-            currency=order['currency'],
-            status=order['status']
-        )
-        db.add(db_order)
-        db.commit()
-        
+        order = client.order.create(data=order_data)
+        logger.info(f"Razorpay order created: {order['id']}")
         return {
-            "order_id": order['id'],
-            "amount": order['amount'],
-            "currency": order['currency'],
-            "status": order['status'],
-            "plan_id": plan_id,
-            "user_id": user.id,
-            "key_id": settings.RAZORPAY_KEY_ID
+            "id": order["id"], 
+            "amount": order["amount"], 
+            "currency": order["currency"],
+            "key": settings.RAZORPAY_KEY_ID
         }
+    except razorpay.errors.BadRequestError as e:
+        logger.error(f"Razorpay BadRequest: {str(e)} - Check your Key/Secret or Amount format.")
+        raise HTTPException(status_code=400, detail=f"Invalid Razorpay config: {str(e)}")
     except Exception as e:
-        db.rollback()
-        raise Exception(f"Failed to create Razorpay order: {str(e)}")
+        logger.error(f"Razorpay unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Payment service unavailable")
 
 
 def verify_payment_signature(
@@ -157,8 +119,11 @@ def verify_payment_signature(
     """
     # Zero-cost dev mode: accept mock payments
     if not razorpay_client:
-        # For mock orders, just verify the order_id starts with "mock_order_"
-        return order_id.startswith("mock_order_")
+        return order_id.startswith("order_mock_")
+    
+    # Also accept mock orders even with real keys (for dev-mode skip payment)
+    if order_id.startswith("order_mock_"):
+        return True
     
     try:
         params = {
@@ -220,7 +185,7 @@ def handle_webhook(payload: Dict[str, Any], signature: str) -> Optional[Dict[str
 
 def activate_subscription(
     db: Session,
-    user: User,
+    user_id: str,
     plan_id: int,
     payment_id: str,
     order_id: str
@@ -230,10 +195,10 @@ def activate_subscription(
     
     Args:
         db: Database session
-        user: User object
+        user_id: User ID
         plan_id: ID of the purchased plan
-        payment_id: Razorpay payment ID
-        order_id: Razorpay order ID
+        payment_id: Razorpay payment ID (or mock payment ID for dev mode)
+        order_id: Razorpay order ID (or mock order ID for dev mode)
     
     Returns:
         Activated subscription object
@@ -242,7 +207,12 @@ def activate_subscription(
     if not plan:
         raise Exception("Plan not found")
     
-    # Update the payment order status
+    # Get user object
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise Exception("User not found")
+    
+    # Update the payment order status (only if it exists in database)
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
     if order:
         order.status = "paid"
@@ -252,7 +222,7 @@ def activate_subscription(
     # Check if user has existing subscription
     existing_subscription = db.scalar(
         select(Subscription).where(
-            Subscription.userId == user.id,
+            Subscription.userId == user_id,
             Subscription.isActive == True
         )
     )
@@ -271,13 +241,19 @@ def activate_subscription(
         existing_subscription.razorpayPaymentId = payment_id
         existing_subscription.razorpayOrderId = order_id
         db.add(existing_subscription)
+        
+        # Also update user's subscription status and selected plan
+        user.subscriptionStatus = "active"
+        user.selectedPlan = plan["key"]
+        db.add(user)
+        
         db.commit()
         db.refresh(existing_subscription)
         return existing_subscription
     else:
         # Create new subscription
         subscription = Subscription(
-            userId=user.id,
+            userId=user_id,
             planId=plan_id,
             status='active',
             isActive=True,

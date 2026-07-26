@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:4000/api';
+const API_BASE_URL = '/api';
 
 // Razorpay configuration - will be loaded from backend
 let razorpayKey = null;
@@ -159,6 +159,9 @@ export async function initRazorpayCheckout(options) {
     });
   }
 
+  // Track whether payment was already handled to prevent ondismiss from firing error
+  let paymentHandled = false;
+
   const razorpayOptions = {
     key: key_id,
     amount: amount,
@@ -167,20 +170,23 @@ export async function initRazorpayCheckout(options) {
     description: 'SEO Rank Tracking Subscription',
     order_id: order_id,
     handler: function (response) {
-      // Payment successful
+      // Mark payment as handled so ondismiss doesn't trigger error
+      paymentHandled = true;
+      // Payment successful - call the success callback
       onPaymentSuccess(response);
     },
     prefill: {
-      name: '',
-      email: '',
-      contact: '',
+      name: options.prefill?.name || '',
+      email: options.prefill?.email || '',
+      contact: options.prefill?.contact || '',
     },
     theme: {
       color: '#4F46E5',
     },
     modal: {
       ondismiss: function () {
-        if (onPaymentError) {
+        // Only call error callback if payment wasn't already handled
+        if (!paymentHandled && onPaymentError) {
           onPaymentError({ error: { description: 'Payment cancelled by user' } });
         }
       },
@@ -190,6 +196,7 @@ export async function initRazorpayCheckout(options) {
   const rzp = new window.Razorpay(razorpayOptions);
   
   rzp.on('payment.failed', function (response) {
+    paymentHandled = true;
     if (onPaymentError) {
       onPaymentError(response.error);
     }

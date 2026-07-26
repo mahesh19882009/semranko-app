@@ -28,17 +28,21 @@ export const createPaymentOrderApi = async (planId, amount) => {
   const response = await apiRequest(`/payments/create-order?plan_id=${planId}&amount=${amount}`, {
     method: "POST",
   });
-  return response.data || null;
+  // Backend returns the order data directly (not wrapped in { success, message, data })
+  return response || null;
 };
 
 export const verifyPaymentApi = async (orderId, paymentId, signature, planId) => {
-  const response = await apiRequest(
-    `/payments/verify-payment?order_id=${encodeURIComponent(orderId)}&payment_id=${encodeURIComponent(paymentId)}&signature=${encodeURIComponent(signature)}&plan_id=${planId}`,
-    {
-      method: "POST",
-    }
-  );
-  return response.data || null;
+  const response = await apiRequest("/payments/verify-payment", {
+    method: "POST",
+    body: JSON.stringify({
+      razorpay_order_id: orderId,
+      razorpay_payment_id: paymentId,
+      razorpay_signature: signature,
+      plan_id: planId,
+    }),
+  });
+  return response || null;
 };
 
 export const getSubscriptionStatusApi = async () => {

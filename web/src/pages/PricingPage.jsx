@@ -11,18 +11,21 @@ import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pri
 import { initRazorpayCheckout } from "../lib/api";
 import { isAuthenticated } from "../utils/auth";
 import { PLAN_COMPARISON, PLANS } from "../config/pricing";
+import ConfirmModal from "../components/ConfirmModal";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCreditCard,
+  faShieldHalved,
+  faXmark,
+  faCircleCheck,
+  faCircleExclamation,
+  faWallet,
+} from "@fortawesome/free-solid-svg-icons";
 
 const PLAN_ORDER = {
   starter: 1,
   pro: 2,
   agency: 3,
-};
-
-// Plan amounts in paise (₹1 = 100 paise)
-const PLAN_AMOUNTS = {
-  starter: { monthly: 1900, yearly: 1500 },
-  pro: { monthly: 4900, yearly: 3900 },
-  agency: { monthly: 9900, yearly: 7900 },
 };
 
 const formatDate = (value) => {
@@ -70,6 +73,17 @@ export default function PricingPage() {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [selectedBillingCycle, setSelectedBillingCycle] = useState("monthly");
 
+  // Confirmation Modal state for plan switches/upgrades
+  const [pendingPlanAction, setPendingPlanAction] = useState(null);
+
+  // Mock Razorpay Checkout UI Modal state (used in dev mode when keys are missing)
+  const [mockPaymentSession, setMockPaymentSession] = useState(null);
+  const [isSubmittingMockPayment, setIsSubmittingMockPayment] = useState(false);
+
+  // Inline Success & Error banners
+  const [successMessage, setSuccessMessage] = useState(null);
+  const [paymentError, setPaymentError] = useState(null);
+
   const {
     plans,
     current,
@@ -94,6 +108,7 @@ export default function PricingPage() {
   const limits = current?.limits || {};
   const resolvedTrialDays = current?.trialDays ?? trialDays ?? 10;
   const daysLeft = getDaysLeft(current?.trialEndsAt);
+  const userCreditBalance = current?.creditBalance || 0;
 
   useEffect(() => {
     if (!authenticated || !currentPlan || !displayPlans.length) return;
@@ -120,8 +135,9 @@ export default function PricingPage() {
     return "Manage your current plan, monitor usage, and switch plans when needed.";
   }, [authenticated, current?.subscriptionStatus, daysLeft, resolvedTrialDays]);
 
-  const handleSelectPlan = (planKey) => {
-    const normalizedPlanKey = (planKey || "").toLowerCase();
+  // Request Confirmation for Free Plan Switch / Downgrade
+  const handleRequestSelectPlan = (plan) => {
+    const normalizedPlanKey = (plan.key || "").toLowerCase();
 
     if (!authenticated) {
       navigate(`/register?plan=${normalizedPlanKey}`);
@@ -130,17 +146,24 @@ export default function PricingPage() {
 
     if (normalizedPlanKey === currentPlan || changingPlan) return;
 
-    // For now, just change plan (free mode)
-    // In production, this would trigger payment
-    dispatch(changePlan(normalizedPlanKey))
-      .unwrap()
-      .then(() => {
-        dispatch(fetchCurrentPricing());
-      })
-      .catch(() => {});
+    setSuccessMessage(null);
+    setPaymentError(null);
+
+    const validation = changePlanValidation?.[normalizedPlanKey];
+    const estimatedCredit = validation?.estimatedCredit || 0;
+
+    setPendingPlanAction({
+      type: "downgrade",
+      planKey: normalizedPlanKey,
+      planName: plan.name,
+      estimatedCredit,
+    });
   };
 
-  const handleUpgradeWithPayment = async (planKey, billingCycle = "monthly") => {
+  // Request Confirmation for Paid Plan Upgrade
+  const handleRequestUpgradeWithPayment = (plan, billingCycle = "monthly") => {
+    const planKey = (plan.key || "").toLowerCase();
+
     if (!authenticated) {
       navigate(`/register?plan=${planKey}`);
       return;
@@ -148,8 +171,49 @@ export default function PricingPage() {
 
     if (isProcessingPayment) return;
 
+    const price = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+    const priceInPaise = Math.round(price * 100);
+    const appliedCredit = Math.min(price, userCreditBalance);
+    const netPrice = Math.max(0, price - appliedCredit);
+
+    setSuccessMessage(null);
+    setPaymentError(null);
+    setPendingPlanAction({
+      type: "upgrade",
+      planKey,
+      planName: plan.name,
+      billingCycle,
+      price,
+      appliedCredit,
+      netPrice,
+      amount: priceInPaise,
+    });
+  };
+
+  // Confirmed in Modal -> Execute Action
+  const handleConfirmPlanAction = async () => {
+    if (!pendingPlanAction) return;
+
+    const action = pendingPlanAction;
+    setPendingPlanAction(null);
+
+    if (action.type === "downgrade") {
+      dispatch(changePlan(action.planKey))
+        .unwrap()
+        .then(() => {
+          dispatch(fetchCurrentPricing());
+          setSuccessMessage(`Successfully switched to the ${action.planName} plan. Any unused days on your previous plan have been credited to your Account Balance.`);
+        })
+        .catch((err) => {
+          setPaymentError(err || "Failed to switch plan.");
+        });
+    } else if (action.type === "upgrade") {
+      executeUpgradeWithPayment(action.planKey, action.billingCycle, action.planName, action.price, action.amount, action.appliedCredit);
+    }
+  };
+
+  const executeUpgradeWithPayment = async (planKey, billingCycle, planName, price, amount, creditApplied = 0) => {
     const planIndex = { starter: 0, pro: 1, agency: 2 }[planKey];
-    const amount = PLAN_AMOUNTS[planKey]?.[billingCycle] || 0;
 
     try {
       setIsProcessingPayment(true);
@@ -161,44 +225,109 @@ export default function PricingPage() {
         throw new Error("Failed to create payment order");
       }
 
-      // Initialize Razorpay checkout
-      await initRazorpayCheckout({
-        order_id: orderData.order_id,
-        amount: orderData.amount,
-        currency: orderData.currency || "INR",
-        key_id: orderData.key_id,
-        onPaymentSuccess: async (response) => {
-          try {
-            // Verify payment on backend
-            await verifyPaymentApi(
-              response.razorpay_order_id,
-              response.razorpay_payment_id,
-              response.razorpay_signature,
-              planIndex
-            );
-            
-            // Refresh pricing data
-            dispatch(fetchCurrentPricing());
-            
-            alert("Payment successful! Your subscription has been activated.");
-          } catch (error) {
-            console.error("Payment verification failed:", error);
-            alert("Payment verification failed. Please contact support with your payment ID: " + response.razorpay_payment_id);
-          } finally {
+      // 100% Covered by Account Credit Balance
+      if (orderData.is_fully_credited) {
+        dispatch(fetchCurrentPricing());
+        setSuccessMessage(`Plan upgraded to ${planName}! Applied ₹${orderData.credit_applied} account credit (Remaining balance: ₹${orderData.remaining_credit}).`);
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      if (orderData.is_mock) {
+        // DEVELOPMENT MODE (No Razorpay keys configured): Show Mock Razorpay Checkout UI Modal
+        setMockPaymentSession({
+          orderData,
+          planKey,
+          planIndex,
+          planName,
+          price,
+          amount: orderData.net_amount || amount,
+          netPrice: (orderData.net_amount ? orderData.net_amount / 100 : price),
+          creditApplied: orderData.credit_applied || creditApplied,
+          billingCycle,
+        });
+        setIsProcessingPayment(false);
+      } else {
+        // PRODUCTION / TEST MODE with Razorpay Keys: Initialize official Razorpay Checkout SDK
+        await initRazorpayCheckout({
+          order_id: orderData.order_id,
+          amount: orderData.net_amount || amount,
+          currency: orderData.currency || "INR",
+          key_id: orderData.key_id,
+          prefill: {
+            name: current?.user?.name || "RankCare User",
+            email: current?.user?.email || "",
+            contact: "9999999999",
+          },
+          onPaymentSuccess: async (response) => {
+            try {
+              await verifyPaymentApi(
+                response.razorpay_order_id,
+                response.razorpay_payment_id,
+                response.razorpay_signature,
+                planIndex,
+                orderData.credit_applied || creditApplied
+              );
+              
+              dispatch(fetchCurrentPricing());
+              setSuccessMessage(`Payment successful! Your ${planName} subscription has been activated.`);
+            } catch (error) {
+              console.error("Payment verification failed:", error);
+              setPaymentError("Payment verification failed. Please contact support with payment ID: " + response.razorpay_payment_id);
+            } finally {
+              setIsProcessingPayment(false);
+            }
+          },
+          onPaymentError: (error) => {
+            console.error("Payment failed:", error);
+            const desc = error?.description || error?.reason || "Payment failed or was cancelled.";
+            setPaymentError(`${desc} (Test Tip: In Razorpay test mode, choose Netbanking or UPI vpa "success@razorpay" to complete test payment).`);
             setIsProcessingPayment(false);
-          }
-        },
-        onPaymentError: (error) => {
-          console.error("Payment failed:", error);
-          alert("Payment failed or was cancelled. Please try again.");
-          setIsProcessingPayment(false);
-        },
-      });
+          },
+        });
+      }
     } catch (error) {
       console.error("Payment initialization failed:", error);
-      alert("Failed to initialize payment. Please try again.");
+      setPaymentError("Failed to initialize payment: " + (error.message || "Unknown error"));
       setIsProcessingPayment(false);
     }
+  };
+
+  // Called from Mock Razorpay Checkout UI Modal on "Complete Test Payment"
+  const handleSimulateMockPayment = async () => {
+    if (!mockPaymentSession || isSubmittingMockPayment) return;
+
+    const { orderData, planIndex, planName, creditApplied } = mockPaymentSession;
+    const orderSuffix = (orderData.order_id || "").split("_").pop() || "dev";
+    const mockPaymentId = "mock_pay_" + orderSuffix;
+    const mockSignature = "mock_sig_" + orderSuffix;
+
+    try {
+      setIsSubmittingMockPayment(true);
+      await verifyPaymentApi(
+        orderData.order_id,
+        mockPaymentId,
+        mockSignature,
+        planIndex,
+        creditApplied
+      );
+
+      dispatch(fetchCurrentPricing());
+      setSuccessMessage(`Payment successful! Your ${planName} subscription has been activated.`);
+      setMockPaymentSession(null);
+    } catch (error) {
+      console.error("Mock payment verification failed:", error);
+      setPaymentError("Payment verification failed: " + (error.message || "Unknown error"));
+    } finally {
+      setIsSubmittingMockPayment(false);
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handleCancelMockPayment = () => {
+    setMockPaymentSession(null);
+    setIsProcessingPayment(false);
+    setPaymentError("Payment process was cancelled.");
   };
 
   return (
@@ -230,9 +359,33 @@ export default function PricingPage() {
             </div>
           ) : null}
 
-          {error ? (
-            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
+          {/* Success Banner */}
+          {successMessage ? (
+            <div className="mt-6 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800 shadow-sm text-left">
+              <FontAwesomeIcon icon={faCircleCheck} className="text-lg text-emerald-600 shrink-0" />
+              <div className="flex-1 font-medium">{successMessage}</div>
+              <button
+                type="button"
+                onClick={() => setSuccessMessage(null)}
+                className="text-emerald-600 hover:text-emerald-800"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+          ) : null}
+
+          {/* Error Banner */}
+          {paymentError || error ? (
+            <div className="mt-6 flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800 shadow-sm text-left">
+              <FontAwesomeIcon icon={faCircleExclamation} className="text-lg text-rose-600 shrink-0" />
+              <div className="flex-1 font-medium">{paymentError || error}</div>
+              <button
+                type="button"
+                onClick={() => setPaymentError(null)}
+                className="text-rose-600 hover:text-rose-800"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
             </div>
           ) : null}
         </div>
@@ -240,7 +393,15 @@ export default function PricingPage() {
         {authenticated ? (
           <div className="mt-12 grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-lg font-semibold text-slate-900">Current subscription</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-900">Current subscription</h2>
+                {userCreditBalance > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    <FontAwesomeIcon icon={faWallet} />
+                    Account Credit: ₹{userCreditBalance.toLocaleString('en-IN')}
+                  </span>
+                )}
+              </div>
               <dl className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <dt className="text-sm text-slate-500">Plan</dt>
@@ -255,15 +416,15 @@ export default function PricingPage() {
                   </dd>
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4">
-                  <dt className="text-sm text-slate-500">Trial ends</dt>
+                  <dt className="text-sm text-slate-500">Trial / Renewal ends</dt>
                   <dd className="mt-1 text-lg font-semibold text-slate-900">
                     {formatDate(current?.trialEndsAt)}
                   </dd>
                 </div>
                 <div className="rounded-2xl bg-slate-50 p-4">
-                  <dt className="text-sm text-slate-500">Trial length</dt>
-                  <dd className="mt-1 text-lg font-semibold text-slate-900">
-                    {resolvedTrialDays} days
+                  <dt className="text-sm text-slate-500">Account Balance</dt>
+                  <dd className="mt-1 text-lg font-semibold text-emerald-600">
+                    ₹{userCreditBalance.toLocaleString('en-IN')}
                   </dd>
                 </div>
               </dl>
@@ -351,11 +512,8 @@ export default function PricingPage() {
 
                 const violations = showDowngradeWarning ? validation?.violations || [] : [];
                 
-                // Calculate price based on billing cycle
+                // Calculate price based on billing cycle (in INR ₹)
                 const price = selectedBillingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
-                const priceInPaise = selectedBillingCycle === "yearly" 
-                  ? PLAN_AMOUNTS[targetPlan]?.yearly 
-                  : PLAN_AMOUNTS[targetPlan]?.monthly;
 
                 return (
                   <article
@@ -381,7 +539,7 @@ export default function PricingPage() {
 
                     {"monthlyPrice" in plan ? (
                       <div className="mt-6 flex items-end gap-2">
-                        <span className="text-4xl font-bold text-slate-900">${price}</span>
+                        <span className="text-4xl font-bold text-slate-900">₹{price.toLocaleString('en-IN')}</span>
                         <span className="pb-1 text-sm text-slate-500">/ month</span>
                       </div>
                     ) : null}
@@ -409,37 +567,53 @@ export default function PricingPage() {
                     ) : null}
 
                     <div className="mt-5 space-y-3">
-                      {/* Free plan switch (for trial/downgrade) */}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectPlan(targetPlan)}
-                        disabled={isCurrent || changingPlan || showDowngradeWarning}
-                        className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                          isCurrent || showDowngradeWarning
-                            ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                        }`}
-                      >
-                        {isCurrent
-                          ? "Current Plan"
-                          : changingPlan && authenticated
-                          ? "Updating..."
-                          : showDowngradeWarning
-                          ? "Resolve limits first"
-                          : authenticated
-                          ? `Switch to ${plan.name} (Free)`
-                          : `Start ${plan.name} Trial`}
-                      </button>
+                      {/* Free plan switch (for downgrades only) */}
+                      {authenticated && isLowerPlan && !showDowngradeWarning && (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestSelectPlan(plan)}
+                          disabled={changingPlan}
+                          className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                            changingPlan
+                              ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          }`}
+                        >
+                          {changingPlan ? "Updating..." : `Switch to ${plan.name}`}
+                        </button>
+                      )}
                       
                       {/* Paid upgrade button */}
                       {authenticated && !isCurrent && !isLowerPlan && (
                         <button
                           type="button"
-                          onClick={() => handleUpgradeWithPayment(targetPlan, selectedBillingCycle)}
+                          onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
                           disabled={isProcessingPayment}
                           className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-400"
                         >
-                          {isProcessingPayment ? "Processing..." : `Upgrade - $${price}/mo`}
+                          {isProcessingPayment ? "Processing..." : `Upgrade - ₹${price.toLocaleString('en-IN')}/mo`}
+                        </button>
+                      )}
+                      
+                      {/* Start trial button for non-authenticated users */}
+                      {!authenticated && (
+                        <button
+                          type="button"
+                          onClick={() => handleRequestSelectPlan(plan)}
+                          className="w-full rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
+                        >
+                          {`Start ${plan.name} Trial`}
+                        </button>
+                      )}
+                      
+                      {/* Current plan indicator */}
+                      {isCurrent && (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 cursor-not-allowed"
+                        >
+                          Current Plan
                         </button>
                       )}
                     </div>
@@ -478,6 +652,137 @@ export default function PricingPage() {
           </div>
         </div>
       </section>
+
+      {/* Confirmation Modal for Plan Switches & Upgrades */}
+      <ConfirmModal
+        open={Boolean(pendingPlanAction)}
+        title={
+          pendingPlanAction?.type === "upgrade"
+            ? `Upgrade to ${pendingPlanAction?.planName}`
+            : `Switch to ${pendingPlanAction?.planName}`
+        }
+        message={
+          pendingPlanAction?.type === "upgrade"
+            ? `Are you sure you want to upgrade to ${pendingPlanAction?.planName} (₹${pendingPlanAction?.price.toLocaleString('en-IN')}/${pendingPlanAction?.billingCycle === "yearly" ? "yr" : "mo"})?${
+                pendingPlanAction?.appliedCredit > 0
+                  ? ` (Account Credit applied: -₹${pendingPlanAction?.appliedCredit.toLocaleString('en-IN')} -> Net Payable: ₹${pendingPlanAction?.netPrice.toLocaleString('en-IN')})`
+                  : ''
+              }`
+            : `Are you sure you want to switch your plan to ${pendingPlanAction?.planName}? Any unused days on your active plan will be prorated and credited to your Account Balance.`
+        }
+        confirmText={
+          pendingPlanAction?.type === "upgrade" ? "Proceed to Payment" : "Confirm Plan Switch"
+        }
+        cancelText="Cancel"
+        tone={pendingPlanAction?.type === "upgrade" ? "info" : "warning"}
+        loading={changingPlan || isProcessingPayment}
+        onConfirm={handleConfirmPlanAction}
+        onClose={() => setPendingPlanAction(null)}
+      />
+
+      {/* Mock Razorpay Checkout UI Modal for Development Mode (when keys missing) */}
+      {mockPaymentSession && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6 sm:px-6">
+          <button
+            type="button"
+            aria-label="Close mock payment screen"
+            onClick={handleCancelMockPayment}
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-[2px] transition"
+          />
+
+          <div className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            {/* Razorpay Brand Header */}
+            <div className="bg-indigo-600 px-6 py-5 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white font-bold">
+                  <FontAwesomeIcon icon={faCreditCard} className="text-lg" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base leading-tight">Razorpay Checkout</h3>
+                  <p className="text-xs text-indigo-200 flex items-center gap-1 mt-0.5">
+                    <FontAwesomeIcon icon={faShieldHalved} className="text-[10px]" />
+                    Development Mock UI
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelMockPayment}
+                className="rounded-lg p-1.5 text-indigo-200 hover:bg-white/10 hover:text-white transition"
+              >
+                <FontAwesomeIcon icon={faXmark} className="text-lg" />
+              </button>
+            </div>
+
+            {/* Order Info */}
+            <div className="p-6">
+              <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Merchant</span>
+                  <span className="font-semibold text-slate-900">RankCare SEO Suite</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Plan</span>
+                  <span className="font-semibold text-slate-900">
+                    {mockPaymentSession.planName} ({mockPaymentSession.billingCycle})
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Order ID</span>
+                  <span className="font-mono text-xs font-medium text-slate-600">
+                    {mockPaymentSession.orderData.order_id}
+                  </span>
+                </div>
+                {mockPaymentSession.creditApplied > 0 && (
+                  <div className="flex justify-between text-sm text-emerald-600 font-medium">
+                    <span>Credit Applied</span>
+                    <span>-₹{mockPaymentSession.creditApplied.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+                <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                  <span className="font-medium text-slate-700">Net Payable Amount</span>
+                  <span className="text-2xl font-bold text-indigo-600">
+                    ₹{mockPaymentSession.netPrice.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dev notice */}
+              <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                <span className="font-semibold">Dev Mode Note:</span> Razorpay API keys are not set in .env. Click below to simulate completing the checkout process.
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleSimulateMockPayment}
+                  disabled={isSubmittingMockPayment}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white shadow-soft transition hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {isSubmittingMockPayment ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      Verifying Payment...
+                    </>
+                  ) : (
+                    `Complete Test Payment (₹${mockPaymentSession.netPrice.toLocaleString('en-IN')})`
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCancelMockPayment}
+                  disabled={isSubmittingMockPayment}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

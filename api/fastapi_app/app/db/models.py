@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, JSON
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -31,6 +31,7 @@ class User(Base):
     subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="trialing", server_default="trialing")
     trialStartsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
 
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -73,6 +74,7 @@ class Project(Base):
     audits: Mapped[list["Audit"]] = relationship(back_populates="project")
     reports: Mapped[list["Report"]] = relationship(back_populates="project")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="project")
+    backlinks: Mapped[list["Backlink"]] = relationship(back_populates="project")
 
 
 class Keyword(Base):
@@ -299,3 +301,16 @@ class Subscription(Base):
         Index("Subscription_status_idx", "status"),
     )
 
+class Backlink(Base):
+    __tablename__ = "Backlink"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
+    sourceUrl: Mapped[str] = mapped_column(Text, nullable=False)
+    sourceDomain: Mapped[str] = mapped_column(String, nullable=False)
+    anchor: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domainRank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    firstSeen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    project: Mapped[Project] = relationship(back_populates="backlinks")
+    __table_args__ = (Index("Backlink_projectId_idx", "projectId"),)
