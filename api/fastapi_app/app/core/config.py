@@ -11,6 +11,8 @@ FREE_PLAN_LIMITS = {
     "reports_per_month": 2
 }
 
+GST_RATE = 0.18
+
 class Settings(BaseSettings):
     # App Basics
     APP_NAME: str = "RankCare API"
@@ -46,15 +48,19 @@ class Settings(BaseSettings):
     # Redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
     
     @computed_field
     @property
     def REDIS_URL(self) -> str:
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/0"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
     
     # Email
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM: str = "noreply@rankcare.com"
+    EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     
     # Razorpay
     RAZORPAY_KEY_ID: Optional[str] = None

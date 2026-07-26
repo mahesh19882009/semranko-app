@@ -106,14 +106,22 @@ export const deleteKeywordById = createAsyncThunk(
       const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
 
       if (isSameProject(selectedProjectId, projectId)) {
-        await Promise.all([
-          thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
-          thunkAPI.dispatch(fetchRankingsByProject(projectId)),
-          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
-        ]);
+        try {
+          await Promise.all([
+            thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
+            thunkAPI.dispatch(fetchRankingsByProject(projectId)),
+            thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+          ]);
+        } catch (refreshError) {
+          console.warn('Failed to refresh data after keyword delete:', refreshError);
+        }
       }
 
-      await thunkAPI.dispatch(fetchCurrentPricing());
+      try {
+        await thunkAPI.dispatch(fetchCurrentPricing());
+      } catch (refreshError) {
+        console.warn('Failed to refresh pricing after keyword delete:', refreshError);
+      }
 
       return {
         projectId,
@@ -139,10 +147,14 @@ export const deleteRankingById = createAsyncThunk(
       const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
 
       if (isSameProject(selectedProjectId, projectId)) {
-        await Promise.all([
-          thunkAPI.dispatch(fetchRankingsByProject(projectId)),
-          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
-        ]);
+        try {
+          await Promise.all([
+            thunkAPI.dispatch(fetchRankingsByProject(projectId)),
+            thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+          ]);
+        } catch (refreshError) {
+          console.warn('Failed to refresh data after ranking delete:', refreshError);
+        }
       }
 
       return {
@@ -169,15 +181,19 @@ export const clearProjectRankings = createAsyncThunk(
       const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
 
       if (isSameProject(selectedProjectId, projectId)) {
-        await Promise.all([
-          thunkAPI.dispatch(fetchRankingsByProject(projectId)),
-          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
-        ]);
+        try {
+          await Promise.all([
+            thunkAPI.dispatch(fetchRankingsByProject(projectId)),
+            thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+          ]);
+        } catch (refreshError) {
+          console.warn('Failed to refresh data after clearing rankings:', refreshError);
+        }
       }
 
       return {
         projectId,
-        message: response.message || 'Project rankings cleared successfully',
+        message: response.message || 'Rankings cleared successfully',
       };
     } catch (error) {
       return thunkAPI.rejectWithValue({
@@ -406,21 +422,23 @@ const keywordsSlice = createSlice({
         state.actionMessage = null;
       })
       .addCase(deleteKeywordById.fulfilled, (state, action) => {
+        state.deletingKeyword = false;
+        
         if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
           return;
         }
 
-        state.deletingKeyword = false;
         state.actionMessage = action.payload.message;
       })
       .addCase(deleteKeywordById.rejected, (state, action) => {
+        state.deletingKeyword = false;
+        
         const projectId = action.payload?.projectId;
 
         if (projectId && !isSameProject(state.currentProjectId, projectId)) {
           return;
         }
 
-        state.deletingKeyword = false;
         state.error = action.payload?.message || 'Failed to delete keyword';
       })
 
@@ -430,21 +448,23 @@ const keywordsSlice = createSlice({
         state.actionMessage = null;
       })
       .addCase(deleteRankingById.fulfilled, (state, action) => {
+        state.deletingRanking = false;
+        
         if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
           return;
         }
 
-        state.deletingRanking = false;
         state.actionMessage = action.payload.message;
       })
       .addCase(deleteRankingById.rejected, (state, action) => {
+        state.deletingRanking = false;
+        
         const projectId = action.payload?.projectId;
 
         if (projectId && !isSameProject(state.currentProjectId, projectId)) {
           return;
         }
 
-        state.deletingRanking = false;
         state.error = action.payload?.message || 'Failed to delete ranking';
       })
 
@@ -454,21 +474,23 @@ const keywordsSlice = createSlice({
         state.actionMessage = null;
       })
       .addCase(clearProjectRankings.fulfilled, (state, action) => {
+        state.clearingRankings = false;
+        
         if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
           return;
         }
 
-        state.clearingRankings = false;
         state.actionMessage = action.payload.message;
       })
       .addCase(clearProjectRankings.rejected, (state, action) => {
+        state.clearingRankings = false;
+        
         const projectId = action.payload?.projectId;
 
         if (projectId && !isSameProject(state.currentProjectId, projectId)) {
           return;
         }
 
-        state.clearingRankings = false;
         state.error = action.payload?.message || 'Failed to clear rankings';
       })
 

@@ -83,10 +83,10 @@ const pricingSlice = createSlice({
         state.loadingPlans = true;
         state.error = null;
       })
-      .addCase(fetchPricingPlans.fulfilled, (state, action) => {
-        state.loadingPlans = false;
-        state.plans = action.payload?.plans || [];
-        state.trialDays = action.payload?.trialDays || 10;
+       .addCase(fetchPricingPlans.fulfilled, (state, action) => {
+         state.loadingPlans = false;
+         state.plans = action.payload?.data || [];
+         state.trialDays = action.payload?.trialDays || 10;
       })
       .addCase(fetchPricingPlans.rejected, (state, action) => {
         state.loadingPlans = false;

@@ -7,6 +7,7 @@ import {
   faBug,
   faUsersViewfinder,
   faFileLines,
+  faFileInvoiceDollar,
 } from '@fortawesome/free-solid-svg-icons';
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/app/audit', label: 'Audit', icon: faBug },
   { to: '/app/competitors', label: 'Competitors', icon: faUsersViewfinder },
   { to: '/app/reports', label: 'Reports', icon: faFileLines },
+  { to: '/app/billing', label: 'Billing', icon: faFileInvoiceDollar },
 ];
 
 function Sidebar() {

@@ -1,15 +1,75 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from typing import Dict, Any
 
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.db.models import User, Subscription
 from app.services.payment_service import create_order, verify_payment_signature, activate_subscription
-from app.core.config import FREE_PLAN_LIMITS, get_settings
+from app.services.plan_service import PLAN_DEFINITIONS
+from app.core.config import FREE_PLAN_LIMITS, GST_RATE, get_settings
+
+from decimal import Decimal, ROUND_HALF_UP
+
+from app.schemas.common import ok
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+
+PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency"}
+GST_RATE = Decimal(str(GST_RATE))
+PLAN_KEY_PRICES = {
+    "starter": {"monthly": 1999, "yearly": 1499},
+    "pro":     {"monthly": 4999, "yearly": 3999},
+    "agency":  {"monthly": 9999, "yearly": 7999},
+}
+
+def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
+    """Convert a PaymentOrder row into a structured invoice dict with GST breakdown.
+    Failed transactions don't get invoice numbers."""
+    plan_key = PLAN_ID_TO_KEY.get(order.planId, "starter")
+    plan = PLAN_DEFINITIONS.get(plan_key, {})
+
+    # Net amount actually paid by user (after credit deduction) in INR
+    net_inr = Decimal(str(order.amount or 0)) / Decimal("100")
+    
+    # Credit applied in INR
+    credit_inr = Decimal(str(getattr(order, "credit_applied_paise", 0) or 0)) / Decimal("100")
+    
+    # Gross plan price (net paid + credit applied)
+    gross_inr = net_inr + credit_inr
+
+    # Only calculate GST for successful transactions
+    if order.status in ["paid", "captured"]:
+        base_inr   = (net_inr / (Decimal("1") + GST_RATE)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        gst_inr    = (net_inr - base_inr).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        base_inr = Decimal("0")
+        gst_inr = Decimal("0")
+
+    # Only assign invoice_id for successful transactions
+    invoice_id = order.id if order.status in ["paid", "captured"] else None
+
+    return {
+        "invoice_id":   invoice_id,
+        "order_id":     order.razorpayOrderId,
+        "payment_id":   order.razorpayPaymentId,
+        "plan_key":     plan_key,
+        "plan_name":    plan_key.capitalize(),
+        "status":       order.status,
+        "currency":     order.currency,
+        "base_amount":  float(base_inr),
+        "gst_amount":   float(gst_inr),
+        "gst_rate":     18,
+        "credit_applied": float(credit_inr),
+        "total_amount": float(net_inr),
+        "gross_amount": float(gross_inr),
+        "date":         order.createdAt.isoformat() if order.createdAt else None,
+        "user_name":    user_name,
+        "user_email":   user_email,
+    }
+
 
 @router.post("/create-order")
 async def create_payment_order(
@@ -26,20 +86,64 @@ async def create_payment_order(
         raise HTTPException(status_code=400, detail="Amount must be greater than 0")
     
     try:
+        from app.db.models import PaymentOrder as PO
+        from datetime import datetime, timedelta
+
+        # Calculate prorated amount for upgrades
+        existing_subscription = db.query(Subscription).filter(
+            Subscription.userId == current_user.id,
+            Subscription.isActive == True
+        ).first()
+        
+        prorated_discount_paise = 0
+        if existing_subscription and existing_subscription.endDate:
+            # Calculate remaining days in current subscription
+            remaining_days = (existing_subscription.endDate - datetime.utcnow()).days
+            if remaining_days > 0:
+                # Get current plan price
+                current_plan_id = existing_subscription.planId
+                current_plan_key = PLAN_ID_TO_KEY.get(current_plan_id, "starter")
+                current_plan_price = PLAN_KEY_PRICES.get(current_plan_key, {}).get("monthly", 1999)
+                
+                # Calculate daily rate and remaining value
+                daily_rate = current_plan_price / 30  # Assuming 30-day month
+                remaining_value = daily_rate * remaining_days
+                
+                # Convert to paise and apply as discount
+                prorated_discount_paise = int(round(remaining_value * 100))
+        
+        # Apply prorated discount to amount
+        amount_after_proration = max(0, amount - prorated_discount_paise)
+        
         # Check credit balance
         available_credit = float(getattr(current_user, "creditBalance", 0.0) or 0.0)
         available_credit_paise = int(round(available_credit * 100))
-        applied_credit_paise = min(amount, available_credit_paise)
-        net_amount_paise = amount - applied_credit_paise
+        applied_credit_paise = min(amount_after_proration, available_credit_paise)
+        net_amount_paise = amount_after_proration - applied_credit_paise
 
-        # 100% Credit Coverage Case
+        # 100% Credit Coverage Case — paid entirely by account credit
         if net_amount_paise == 0:
+            pay_id = f"pay_credit_{uuid.uuid4().hex[:8]}"
             order_id = f"order_credit_{uuid.uuid4().hex[:16]}"
+
+            credit_order = PO(
+                userId=current_user.id,
+                razorpayOrderId=order_id,
+                razorpayPaymentId=pay_id,
+                planId=plan_id,
+                amount=0,
+                credit_applied_paise=amount,
+                currency="INR",
+                status="paid",
+            )
+            db.add(credit_order)
+            db.flush()
+
             subscription = activate_subscription(
                 db=db,
                 user_id=current_user.id,
                 plan_id=plan_id,
-                payment_id=f"pay_credit_{uuid.uuid4().hex[:8]}",
+                payment_id=pay_id,
                 order_id=order_id
             )
             credit_deducted = round(applied_credit_paise / 100.0, 2)
@@ -50,6 +154,8 @@ async def create_payment_order(
             return {
                 "order_id": order_id,
                 "amount": amount,
+                "prorated_discount": round(prorated_discount_paise / 100.0, 2),
+                "amount_after_proration": round(amount_after_proration / 100.0, 2),
                 "net_amount": 0,
                 "currency": "INR",
                 "key_id": "rzp_credit",
@@ -65,10 +171,25 @@ async def create_payment_order(
         force_mock = getattr(settings, "RAZORPAY_FORCE_MOCK", False)
         
         order = create_order(amount=net_amount_paise, currency="INR", force_mock=force_mock)
-        
+
+        # Save PaymentOrder record with status=created (pending verification)
+        payment_order = PO(
+            userId=current_user.id,
+            razorpayOrderId=order["id"],
+            planId=plan_id,
+            amount=net_amount_paise,
+            credit_applied_paise=applied_credit_paise,
+            currency=order["currency"],
+            status="created",
+        )
+        db.add(payment_order)
+        db.commit()
+
         return {
             "order_id": order["id"],
             "amount": amount,
+            "prorated_discount": round(prorated_discount_paise / 100.0, 2),
+            "amount_after_proration": round(amount_after_proration / 100.0, 2),
             "net_amount": net_amount_paise,
             "currency": order["currency"],
             "key_id": order["key"],
@@ -113,6 +234,14 @@ async def verify_payment(
         )
         
         if not is_valid:
+            # Mark payment order as failed
+            from app.db.models import PaymentOrder as PO
+            payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
+            if payment_order:
+                payment_order.status = "failed"
+                payment_order.razorpayPaymentId = razorpay_payment_id
+                db.add(payment_order)
+                db.commit()
             raise HTTPException(status_code=400, detail="Invalid payment signature")
         
         subscription = activate_subscription(
@@ -128,17 +257,24 @@ async def verify_payment(
             db.add(current_user)
             db.commit()
         
-        return {
-            "message": "Payment verified successfully",
+        return ok("Payment verified successfully", {
             "subscription": {
                 "id": subscription.id,
                 "status": subscription.status,
                 "plan_id": subscription.planId
             }
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
+        # Mark payment order as failed on any other error
+        from app.db.models import PaymentOrder as PO
+        payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
+        if payment_order:
+            payment_order.status = "failed"
+            payment_order.razorpayPaymentId = razorpay_payment_id
+            db.add(payment_order)
+            db.commit()
         raise HTTPException(status_code=500, detail=f"Payment verification failed: {str(e)}")
 
 @router.get("/current-plan")
@@ -155,15 +291,15 @@ async def get_current_plan(
     ).first()
     
     if not subscription:
-        return {
+        return ok("Free plan", {
             "plan_name": "Free",
             "plan_id": None,
             "status": "free",
             "limits": FREE_PLAN_LIMITS
-        }
+        })
     
     # Return basic plan info.
-    return {
+    return ok("Current plan", {
         "plan_name": "Pro", 
         "plan_id": subscription.id, 
         "status": subscription.status,
@@ -175,7 +311,7 @@ async def get_current_plan(
             "competitors": 10,
             "reports": 20
         }
-    }
+    })
 
 @router.post("/cancel-subscription")
 async def cancel_subscription(
@@ -197,7 +333,7 @@ async def cancel_subscription(
     subscription.status = "cancelled"
     db.commit()
     
-    return {"message": "Subscription cancelled successfully"}
+    return ok("Subscription cancelled successfully", None)
 
 @router.post("/reactivate-subscription")
 async def reactivate_subscription(
@@ -220,4 +356,40 @@ async def reactivate_subscription(
     subscription.status = "active"
     db.commit()
     
-    return {"message": "Subscription reactivated successfully"}
+    return ok("Subscription reactivated successfully", None)
+
+
+@router.get("/invoices")
+async def get_invoices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Return all payment invoices for the current user with GST breakdown.
+    Failed transactions are included but without invoice numbers.
+    Also returns the current account credit balance.
+    """
+    from app.db.models import PaymentOrder as PO
+
+    orders = (
+        db.query(PO)
+        .filter(PO.userId == current_user.id)
+        .order_by(PO.createdAt.desc())
+        .all()
+    )
+
+    invoices = [
+        _build_invoice(o, current_user.name, current_user.email)
+        for o in orders
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "invoices": invoices,
+            "credit_balance": float(getattr(current_user, "creditBalance", 0.0) or 0.0),
+            "pendingPlanChange": getattr(current_user, "pendingPlanChange", None),
+            "user_name": current_user.name,
+            "user_email": current_user.email,
+        }
+    }

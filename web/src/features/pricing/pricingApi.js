@@ -2,7 +2,7 @@ import { apiRequest } from "../../lib/api";
 
 export const fetchPlansApi = async () => {
   const response = await apiRequest("/pricing/plans");
-  return response.data || { trialDays: 10, plans: [] };
+  return response || { success: true, data: [], message: "Plans fetched" };
 };
 
 export const fetchCurrentPricingApi = async () => {
@@ -32,7 +32,7 @@ export const createPaymentOrderApi = async (planId, amount) => {
   return response || null;
 };
 
-export const verifyPaymentApi = async (orderId, paymentId, signature, planId) => {
+export const verifyPaymentApi = async (orderId, paymentId, signature, planId, creditApplied = 0) => {
   const response = await apiRequest("/payments/verify-payment", {
     method: "POST",
     body: JSON.stringify({
@@ -40,6 +40,7 @@ export const verifyPaymentApi = async (orderId, paymentId, signature, planId) =>
       razorpay_payment_id: paymentId,
       razorpay_signature: signature,
       plan_id: planId,
+      credit_applied: creditApplied,
     }),
   });
   return response || null;
@@ -48,4 +49,9 @@ export const verifyPaymentApi = async (orderId, paymentId, signature, planId) =>
 export const getSubscriptionStatusApi = async () => {
   const response = await apiRequest("/payments/subscription-status");
   return response.data || null;
+};
+
+export const fetchInvoicesApi = async () => {
+  const response = await apiRequest("/payments/invoices");
+  return response.data || { invoices: [], credit_balance: 0 };
 };

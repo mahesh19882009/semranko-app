@@ -5,6 +5,8 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription
 from app.core.config import get_settings
+from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER
+from app.services.notification_service import create_notification
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from fastapi import HTTPException
@@ -117,13 +119,13 @@ def verify_payment_signature(
     Returns:
         True if signature is valid, False otherwise
     """
-    # Zero-cost dev mode: accept mock payments
+    # Zero-cost dev mode: accept mock payments only when no real client exists
     if not razorpay_client:
         return order_id.startswith("order_mock_")
     
-    # Also accept mock orders even with real keys (for dev-mode skip payment)
+    # Real Razorpay keys configured: reject mock orders
     if order_id.startswith("order_mock_"):
-        return True
+        return False
     
     try:
         params = {
@@ -212,12 +214,25 @@ def activate_subscription(
     if not user:
         raise Exception("User not found")
     
-    # Update the payment order status (only if it exists in database)
+    # Upsert PaymentOrder: mark existing as paid, or create it if somehow missing
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
     if order:
         order.status = "paid"
         order.razorpayPaymentId = payment_id
         db.add(order)
+    else:
+        # Fallback: create the PaymentOrder record if it wasn't saved during create-order
+        fallback_order = PaymentOrder(
+            userId=user_id,
+            razorpayOrderId=order_id,
+            razorpayPaymentId=payment_id,
+            planId=plan_id,
+            amount=0,
+            credit_applied_paise=0,
+            currency="INR",
+            status="paid",
+        )
+        db.add(fallback_order)
     
     # Check if user has existing subscription
     existing_subscription = db.scalar(
@@ -227,28 +242,47 @@ def activate_subscription(
         )
     )
     
+    # Clear any pending plan change when user pays for an upgrade
+    # The paid plan takes precedence over any scheduled changes
+    effective_plan_id = plan_id
+    effective_plan_key = plan["key"]
+    pending_plan = getattr(user, "pendingPlanChange", None)
+    
+    if pending_plan:
+        user.pendingPlanChange = None
+    
     if existing_subscription:
-        # Extend existing subscription
-        if existing_subscription.endDate and existing_subscription.endDate > datetime.utcnow():
-            new_end_date = existing_subscription.endDate + timedelta(days=plan["duration_days"])
-        else:
-            new_end_date = datetime.utcnow() + timedelta(days=plan["duration_days"])
-        
-        existing_subscription.planId = plan_id
-        existing_subscription.endDate = new_end_date
+        existing_subscription.planId = effective_plan_id
         existing_subscription.status = 'active'
         existing_subscription.isActive = True
         existing_subscription.razorpayPaymentId = payment_id
         existing_subscription.razorpayOrderId = order_id
+        
+        if existing_subscription.endDate and existing_subscription.endDate > datetime.utcnow():
+            new_end_date = existing_subscription.endDate
+        else:
+            new_end_date = datetime.utcnow() + timedelta(days=plan["duration_days"])
+        
+        existing_subscription.endDate = new_end_date
         db.add(existing_subscription)
         
-        # Also update user's subscription status and selected plan
         user.subscriptionStatus = "active"
-        user.selectedPlan = plan["key"]
+        user.selectedPlan = effective_plan_key
         db.add(user)
         
         db.commit()
         db.refresh(existing_subscription)
+        
+        create_notification(
+            db,
+            user_id=user_id,
+            title="Subscription renewed",
+            message=f"Your {plan['name']} subscription has been renewed.",
+            type="plan_change",
+            severity="info",
+        )
+        db.commit()
+        
         return existing_subscription
     else:
         # Create new subscription
@@ -271,6 +305,16 @@ def activate_subscription(
         user.subscriptionStatus = "active"
         user.selectedPlan = plan["key"]
         db.add(user)
+        db.commit()
+        
+        create_notification(
+            db,
+            user_id=user_id,
+            title="Welcome to RankCare",
+            message=f"Your {plan['name']} subscription is now active.",
+            type="plan_change",
+            severity="info",
+        )
         db.commit()
         
         return subscription

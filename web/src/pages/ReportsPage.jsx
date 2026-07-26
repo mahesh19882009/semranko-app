@@ -365,7 +365,7 @@ export default function ReportsPage() {
             </button>
           </div>
         </div>
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-2 mb-3 text-sm text-slate-500">
           Usage: {reportsUsed} / {reportLimit} reports used this month.
         </p>
 

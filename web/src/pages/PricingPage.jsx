@@ -20,6 +20,7 @@ import {
   faCircleCheck,
   faCircleExclamation,
   faWallet,
+  faClock,
 } from "@fortawesome/free-solid-svg-icons";
 
 const PLAN_ORDER = {
@@ -27,6 +28,8 @@ const PLAN_ORDER = {
   pro: 2,
   agency: 3,
 };
+
+const GST_RATE = 0.18;
 
 const formatDate = (value) => {
   if (!value) return "—";
@@ -149,14 +152,10 @@ export default function PricingPage() {
     setSuccessMessage(null);
     setPaymentError(null);
 
-    const validation = changePlanValidation?.[normalizedPlanKey];
-    const estimatedCredit = validation?.estimatedCredit || 0;
-
     setPendingPlanAction({
       type: "downgrade",
       planKey: normalizedPlanKey,
       planName: plan.name,
-      estimatedCredit,
     });
   };
 
@@ -172,9 +171,10 @@ export default function PricingPage() {
     if (isProcessingPayment) return;
 
     const price = billingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
-    const priceInPaise = Math.round(price * 100);
-    const appliedCredit = Math.min(price, userCreditBalance);
-    const netPrice = Math.max(0, price - appliedCredit);
+    const totalPrice = price * (1 + GST_RATE);
+    const priceInPaise = Math.round(totalPrice * 100);
+    const appliedCredit = Math.min(totalPrice, userCreditBalance);
+    const netPrice = Math.max(0, totalPrice - appliedCredit);
 
     setSuccessMessage(null);
     setPaymentError(null);
@@ -183,7 +183,7 @@ export default function PricingPage() {
       planKey,
       planName: plan.name,
       billingCycle,
-      price,
+      price: totalPrice,
       appliedCredit,
       netPrice,
       amount: priceInPaise,
@@ -202,10 +202,10 @@ export default function PricingPage() {
         .unwrap()
         .then(() => {
           dispatch(fetchCurrentPricing());
-          setSuccessMessage(`Successfully switched to the ${action.planName} plan. Any unused days on your previous plan have been credited to your Account Balance.`);
+          setSuccessMessage(`Your plan will be changed to ${action.planName} at the end of your current billing period.`);
         })
         .catch((err) => {
-          setPaymentError(err || "Failed to switch plan.");
+          setPaymentError(err?.message || "Failed to schedule plan change.");
         });
     } else if (action.type === "upgrade") {
       executeUpgradeWithPayment(action.planKey, action.billingCycle, action.planName, action.price, action.amount, action.appliedCredit);
@@ -228,7 +228,10 @@ export default function PricingPage() {
       // 100% Covered by Account Credit Balance
       if (orderData.is_fully_credited) {
         dispatch(fetchCurrentPricing());
-        setSuccessMessage(`Plan upgraded to ${planName}! Applied ₹${orderData.credit_applied} account credit (Remaining balance: ₹${orderData.remaining_credit}).`);
+        const proratedMsg = orderData.prorated_discount > 0 
+          ? ` Prorated discount: ₹${orderData.prorated_discount.toLocaleString('en-IN')}.` 
+          : '';
+        setSuccessMessage(`Plan upgraded to ${planName}!${proratedMsg} Applied ₹${orderData.credit_applied} account credit (Remaining balance: ₹${orderData.remaining_credit}).`);
         setIsProcessingPayment(false);
         return;
       }
@@ -244,6 +247,7 @@ export default function PricingPage() {
           amount: orderData.net_amount || amount,
           netPrice: (orderData.net_amount ? orderData.net_amount / 100 : price),
           creditApplied: orderData.credit_applied || creditApplied,
+          proratedDiscount: orderData.prorated_discount || 0,
           billingCycle,
         });
         setIsProcessingPayment(false);
@@ -270,7 +274,10 @@ export default function PricingPage() {
               );
               
               dispatch(fetchCurrentPricing());
-              setSuccessMessage(`Payment successful! Your ${planName} subscription has been activated.`);
+              const proratedMsg = orderData.prorated_discount > 0 
+                ? ` Prorated discount: ₹${orderData.prorated_discount.toLocaleString('en-IN')}.` 
+                : '';
+              setSuccessMessage(`Payment successful! Your ${planName} subscription has been activated.${proratedMsg}`);
             } catch (error) {
               console.error("Payment verification failed:", error);
               setPaymentError("Payment verification failed. Please contact support with payment ID: " + response.razorpay_payment_id);
@@ -341,6 +348,16 @@ export default function PricingPage() {
             Simple plans for growing SEO teams
           </h1>
           <p className="mt-4 text-lg text-slate-600">{heroText}</p>
+
+          {/* Pending Plan Change Banner */}
+          {current?.pendingPlanChange && (
+            <div className="mt-6 flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800 shadow-sm text-left">
+              <FontAwesomeIcon icon={faClock} className="text-lg text-amber-600 shrink-0" />
+              <div className="flex-1 font-medium">
+                Your plan will change to {PLANS.find(p => p.key === current.pendingPlanChange)?.name || current.pendingPlanChange} at the end of your current billing period.
+              </div>
+            </div>
+          )}
 
           {!authenticated ? (
             <div className="mt-8 flex flex-wrap justify-center gap-3">
@@ -606,16 +623,25 @@ export default function PricingPage() {
                         </button>
                       )}
                       
-                      {/* Current plan indicator */}
-                      {isCurrent && (
-                        <button
-                          type="button"
-                          disabled
-                          className="w-full rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 cursor-not-allowed"
-                        >
-                          Current Plan
-                        </button>
-                      )}
+                       {/* Current plan indicator / Activate for trial users */}
+                       {isCurrent && current?.subscriptionStatus === "trialing" ? (
+                         <button
+                           type="button"
+                           onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
+                           disabled={isProcessingPayment}
+                           className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-400"
+                         >
+                           {isProcessingPayment ? "Processing..." : `Activate ${plan.name} Plan`}
+                         </button>
+                       ) : isCurrent ? (
+                         <button
+                           type="button"
+                           disabled
+                           className="w-full rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 cursor-not-allowed"
+                         >
+                           Current Plan
+                         </button>
+                       ) : null}
                     </div>
                   </article>
                 );
@@ -663,12 +689,12 @@ export default function PricingPage() {
         }
         message={
           pendingPlanAction?.type === "upgrade"
-            ? `Are you sure you want to upgrade to ${pendingPlanAction?.planName} (₹${pendingPlanAction?.price.toLocaleString('en-IN')}/${pendingPlanAction?.billingCycle === "yearly" ? "yr" : "mo"})?${
+            ? `Are you sure you want to upgrade to ${pendingPlanAction?.planName} (₹${pendingPlanAction?.price.toLocaleString('en-IN')}/${pendingPlanAction?.billingCycle === "yearly" ? "yr" : "mo"} incl. GST)?${
                 pendingPlanAction?.appliedCredit > 0
                   ? ` (Account Credit applied: -₹${pendingPlanAction?.appliedCredit.toLocaleString('en-IN')} -> Net Payable: ₹${pendingPlanAction?.netPrice.toLocaleString('en-IN')})`
-                  : ''
+                   : ''
               }`
-            : `Are you sure you want to switch your plan to ${pendingPlanAction?.planName}? Any unused days on your active plan will be prorated and credited to your Account Balance.`
+            : `Are you sure you want to switch your plan to ${pendingPlanAction?.planName}? The change will take effect at the end of your current billing period.`
         }
         confirmText={
           pendingPlanAction?.type === "upgrade" ? "Proceed to Payment" : "Confirm Plan Switch"

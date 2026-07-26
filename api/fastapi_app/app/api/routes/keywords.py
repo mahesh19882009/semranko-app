@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import db_session, get_current_user
+from app.schemas.common import ok
 from app.services.keyword_service import add_keyword, delete_keyword, get_project_keywords
 
 router = APIRouter(prefix="/keywords", tags=["keywords"])
@@ -28,4 +29,4 @@ def list_keywords(project_id: str, user: dict = Depends(get_current_user), db: S
 @router.delete("/{keyword_id}")
 def remove_keyword(keyword_id: str, user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> dict:
     delete_keyword(db, user["userId"], keyword_id)
-    return {"success": True, "message": "Keyword deleted successfully"}
+    return ok("Keyword deleted successfully", None)

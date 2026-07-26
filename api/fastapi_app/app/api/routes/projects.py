@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
-from app.services.project_service import create_project, delete_project, get_project_by_id, get_projects
+from app.services.project_service import create_project, delete_project, get_project_by_id, get_projects, update_project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -31,7 +31,13 @@ def get_one(project_id: str, user: dict = Depends(get_current_user), db: Session
     return ok("Project fetched", project)
 
 
+@router.put("/{project_id}")
+def update_one(project_id: str, payload: dict = Body(...), user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> dict:
+    project = update_project(db, user["userId"], project_id, payload)
+    return ok("Project updated successfully", project)
+
+
 @router.delete("/{project_id}")
 def remove_project(project_id: str, user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> dict:
     delete_project(db, user["userId"], project_id)
-    return {"success": True, "message": "Project deleted successfully"}
+    return ok("Project deleted successfully", None)

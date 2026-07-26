@@ -21,6 +21,7 @@ import AuditPage from "./pages/AuditPage";
 import CompetitorsPage from "./pages/CompetitorsPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotificationsPage from "./pages/NotificationsPage";
+import BillingPage from "./pages/BillingPage";
 
 function App() {
   return (
@@ -88,6 +89,7 @@ function App() {
         <Route path="competitors" element={<CompetitorsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="billing" element={<BillingPage />} />
       </Route>
 
       <Route path="/dashboard" element={<Navigate to="/app" replace />} />
@@ -98,6 +100,7 @@ function App() {
       <Route path="/competitors" element={<Navigate to="/app/competitors" replace />} />
       <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
       <Route path="/notifications" element={<Navigate to="/app/notifications" replace />} />
+      <Route path="/billing" element={<Navigate to="/app/billing" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

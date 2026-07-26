@@ -32,6 +32,7 @@ class User(Base):
     trialStartsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    pendingPlanChange: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -253,7 +254,8 @@ class PaymentOrder(Base):
     razorpayPaymentId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     razorpaySignature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     planId: Mapped[int] = mapped_column(Integer, nullable=False)
-    amount: Mapped[int] = mapped_column(Integer, nullable=False)  # in paise
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)  # in paise, net amount actually paid
+    credit_applied_paise: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # in paise
     currency: Mapped[str] = mapped_column(String, nullable=False, default="INR")
     status: Mapped[str] = mapped_column(String, nullable=False, default="created", server_default="created")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())

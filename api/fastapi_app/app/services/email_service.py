@@ -16,7 +16,7 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
         return
 
     resend.api_key = settings.RESEND_API_KEY
-    sender = settings.MAIL_FROM or "onboarding@resend.dev"
+    sender = settings.EMAIL_FROM or "onboarding@resend.dev"
     subject = f"Verify your email - {datetime.utcnow().isoformat()}"
 
     try:
