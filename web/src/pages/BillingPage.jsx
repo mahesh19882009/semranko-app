@@ -288,24 +288,6 @@ export default function BillingPage() {
               Across {invoices.filter(i => ["paid", "captured"].includes(i.status?.toLowerCase())).length} payment(s)
             </p>
           </div>
-
-          {/* GST Paid */}
-          <div className="rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 to-white p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white">
-                <FontAwesomeIcon icon={faTag} />
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">
-                  GST Paid (18%)
-                </p>
-                <p className="text-2xl font-bold text-slate-900">{fmt(totalGST)}</p>
-              </div>
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Integrated Goods &amp; Services Tax (IGST) @ 18%
-            </p>
-          </div>
         </div>
 
         {/* Invoice Table */}
@@ -392,7 +374,7 @@ export default function BillingPage() {
                         {fmt(inv.total_amount)}
                       </td>
                       <td className="px-6 py-4">
-                        <StatusBadge status={["paid", "captured"].includes(inv.status) ? 'Paid' : 'Failed'} />
+                        <StatusBadge status={inv.status} />
                       </td>
                       <td className="px-6 py-4">
                         {["paid", "captured"].includes(inv.status?.toLowerCase()) ? (
