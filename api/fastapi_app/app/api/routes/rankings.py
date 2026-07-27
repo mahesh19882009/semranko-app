@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -7,6 +7,7 @@ from app.schemas.common import ok
 from app.services.ranking_service import (
     delete_project_rankings,
     delete_ranking,
+    delete_rankings_bulk,
     get_project_rankings,
     run_rank_check,
 )
@@ -49,6 +50,17 @@ def clear_rankings_by_project(
 ) -> dict:
     delete_project_rankings(db, user["userId"], project_id)
     return ok("Project rankings cleared successfully", None)
+
+
+@router.delete("/bulk")
+def bulk_delete_rankings(
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    ranking_ids = payload.get("ranking_ids", [])
+    deleted = delete_rankings_bulk(db, user["userId"], ranking_ids)
+    return ok(f"Deleted {deleted} rankings", None)
 
 
 @router.delete("/{ranking_id}")

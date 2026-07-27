@@ -19,6 +19,8 @@ const initialState = {
   deletingKeyword: false,
   deletingRanking: false,
   clearingRankings: false,
+  deletingBulkKeywords: false,
+  deletingBulkRankings: false,
 
   error: null,
   actionMessage: null,
@@ -199,6 +201,116 @@ export const clearProjectRankings = createAsyncThunk(
       return thunkAPI.rejectWithValue({
         projectId,
         message: error.message || 'Failed to clear rankings',
+      });
+    }
+  }
+);
+
+export const bulkAddKeywords = createAsyncThunk(
+  'keywords/bulkAddKeywords',
+  async ({ projectId, keywords }, thunkAPI) => {
+    try {
+      const response = await apiRequest(`/keywords/${projectId}/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ keywords }),
+      });
+
+      const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
+
+      if (isSameProject(selectedProjectId, projectId)) {
+        await Promise.all([
+          thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
+          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+        ]);
+      }
+
+      await thunkAPI.dispatch(fetchCurrentPricing());
+
+      return {
+        projectId,
+        message: response.message || 'Keywords added successfully',
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue({
+        projectId,
+        message: error.message || 'Failed to add keywords',
+      });
+    }
+  }
+);
+
+export const bulkDeleteKeywords = createAsyncThunk(
+  'keywords/bulkDeleteKeywords',
+  async ({ projectId, keywordIds }, thunkAPI) => {
+    try {
+      const response = await apiRequest(`/keywords/bulk`, {
+        method: 'DELETE',
+        body: JSON.stringify({ keyword_ids: keywordIds }),
+      });
+
+      const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
+
+      if (isSameProject(selectedProjectId, projectId)) {
+        try {
+          await Promise.all([
+            thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
+            thunkAPI.dispatch(fetchRankingsByProject(projectId)),
+            thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+          ]);
+        } catch (refreshError) {
+          console.warn('Failed to refresh data after bulk keyword delete:', refreshError);
+        }
+      }
+
+      try {
+        await thunkAPI.dispatch(fetchCurrentPricing());
+      } catch (refreshError) {
+        console.warn('Failed to refresh pricing after bulk keyword delete:', refreshError);
+      }
+
+      return {
+        projectId,
+        message: response.message || 'Keywords deleted successfully',
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue({
+        projectId,
+        message: error.message || 'Failed to delete keywords',
+      });
+    }
+  }
+);
+
+export const bulkDeleteRankings = createAsyncThunk(
+  'keywords/bulkDeleteRankings',
+  async ({ projectId, rankingIds }, thunkAPI) => {
+    try {
+      const response = await apiRequest(`/rankings/bulk`, {
+        method: 'DELETE',
+        body: JSON.stringify({ ranking_ids: rankingIds }),
+      });
+
+      const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;
+
+      if (isSameProject(selectedProjectId, projectId)) {
+        try {
+          await Promise.all([
+            thunkAPI.dispatch(fetchRankingsByProject(projectId)),
+            thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+          ]);
+        } catch (refreshError) {
+          console.warn('Failed to refresh data after bulk ranking delete:', refreshError);
+        }
+      }
+
+      return {
+        projectId,
+        message: response.message || 'Rankings deleted successfully',
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue({
+        projectId,
+        message: error.message || 'Failed to delete rankings',
       });
     }
   }
@@ -392,12 +504,12 @@ const keywordsSlice = createSlice({
         state.error = action.payload?.message || 'Failed to fetch rankings';
       })
 
-      .addCase(addKeywordToProject.pending, (state) => {
+      .addCase(bulkAddKeywords.pending, (state) => {
         state.adding = true;
         state.error = null;
         state.actionMessage = null;
       })
-      .addCase(addKeywordToProject.fulfilled, (state, action) => {
+      .addCase(bulkAddKeywords.fulfilled, (state, action) => {
         if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
           return;
         }
@@ -405,7 +517,7 @@ const keywordsSlice = createSlice({
         state.adding = false;
         state.actionMessage = action.payload.message;
       })
-      .addCase(addKeywordToProject.rejected, (state, action) => {
+      .addCase(bulkAddKeywords.rejected, (state, action) => {
         const projectId = action.payload?.projectId;
 
         if (projectId && !isSameProject(state.currentProjectId, projectId)) {
@@ -413,7 +525,33 @@ const keywordsSlice = createSlice({
         }
 
         state.adding = false;
-        state.error = action.payload?.message || 'Failed to add keyword';
+        state.error = action.payload?.message || 'Failed to add keywords';
+      })
+
+      .addCase(bulkDeleteKeywords.pending, (state) => {
+        state.deletingBulkKeywords = true;
+        state.error = null;
+        state.actionMessage = null;
+      })
+      .addCase(bulkDeleteKeywords.fulfilled, (state, action) => {
+        state.deletingBulkKeywords = false;
+
+        if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
+          return;
+        }
+
+        state.actionMessage = action.payload.message;
+      })
+      .addCase(bulkDeleteKeywords.rejected, (state, action) => {
+        state.deletingBulkKeywords = false;
+
+        const projectId = action.payload?.projectId;
+
+        if (projectId && !isSameProject(state.currentProjectId, projectId)) {
+          return;
+        }
+
+        state.error = action.payload?.message || 'Failed to delete keywords';
       })
 
       .addCase(deleteKeywordById.pending, (state) => {
@@ -440,6 +578,32 @@ const keywordsSlice = createSlice({
         }
 
         state.error = action.payload?.message || 'Failed to delete keyword';
+      })
+
+      .addCase(bulkDeleteRankings.pending, (state) => {
+        state.deletingBulkRankings = true;
+        state.error = null;
+        state.actionMessage = null;
+      })
+      .addCase(bulkDeleteRankings.fulfilled, (state, action) => {
+        state.deletingBulkRankings = false;
+
+        if (!isSameProject(state.currentProjectId, action.payload.projectId)) {
+          return;
+        }
+
+        state.actionMessage = action.payload.message;
+      })
+      .addCase(bulkDeleteRankings.rejected, (state, action) => {
+        state.deletingBulkRankings = false;
+
+        const projectId = action.payload?.projectId;
+
+        if (projectId && !isSameProject(state.currentProjectId, projectId)) {
+          return;
+        }
+
+        state.error = action.payload?.message || 'Failed to delete rankings';
       })
 
       .addCase(deleteRankingById.pending, (state) => {

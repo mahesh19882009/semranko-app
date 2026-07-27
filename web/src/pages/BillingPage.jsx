@@ -330,72 +330,74 @@ export default function BillingPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500">
-                    <tr>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Date</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Invoice</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Plan</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Credit</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Paid</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Action</th>
-                    </tr>
-                  </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {invoices.map((inv) => (
-                    <tr key={inv.order_id} className="hover:bg-slate-50 transition">
-                      <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                        {fmtDate(inv.date)}
-                      </td>
-                      <td className="px-6 py-4">
-                        {inv.invoice_id ? (
-                          <>
-                            <p className="font-mono text-xs text-slate-500">
-                              INV-{inv.invoice_id.slice(-8).toUpperCase()}
-                            </p>
-                            <p className="font-mono text-[11px] text-slate-400 mt-0.5">
-                              {inv.order_id}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="font-mono text-xs text-slate-400">—</p>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
-                          {inv.plan_name}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-emerald-700 font-medium">
-                        {(inv.credit_applied || 0) > 0 ? `-${fmt(inv.credit_applied)}` : "—"}
-                      </td>
-                      <td className="px-6 py-4 font-bold text-slate-900">
-                        {fmt(inv.total_amount)}
-                      </td>
-                      <td className="px-6 py-4">
-                        <StatusBadge status={inv.status} />
-                      </td>
-                      <td className="px-6 py-4">
-                        {["paid", "captured"].includes(inv.status?.toLowerCase()) ? (
-                          <button
-                            type="button"
-                            onClick={() => printInvoice(inv)}
-                            title="Download / Print Invoice"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
-                          >
-                            <FontAwesomeIcon icon={faDownload} />
-                            PDF
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="min-w-full text-left text-sm">
+                    <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Date</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Invoice</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Plan</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Credit</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Paid</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 font-semibold text-xs uppercase tracking-wider">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {invoices.map((inv) => (
+                        <tr key={inv.order_id} className="hover:bg-slate-50 transition">
+                          <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
+                            {fmtDate(inv.date)}
+                          </td>
+                          <td className="px-6 py-4">
+                            {inv.invoice_id ? (
+                              <>
+                                <p className="font-mono text-xs text-slate-500">
+                                  INV-{inv.invoice_id.slice(-8).toUpperCase()}
+                                </p>
+                                <p className="font-mono text-[11px] text-slate-400 mt-0.5">
+                                  {inv.order_id}
+                                </p>
+                              </>
+                            ) : (
+                              <p className="font-mono text-xs text-slate-400">—</p>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700">
+                              {inv.plan_name}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-emerald-700 font-medium">
+                            {(inv.credit_applied || 0) > 0 ? `-${fmt(inv.credit_applied)}` : "—"}
+                          </td>
+                          <td className="px-6 py-4 font-bold text-slate-900">
+                            {fmt(inv.total_amount)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <StatusBadge status={inv.status} />
+                          </td>
+                          <td className="px-6 py-4">
+                            {["paid", "captured"].includes(inv.status?.toLowerCase()) ? (
+                              <button
+                                type="button"
+                                onClick={() => printInvoice(inv)}
+                                title="Download / Print Invoice"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                              >
+                                <FontAwesomeIcon icon={faDownload} />
+                                PDF
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
           )}
         </div>
 

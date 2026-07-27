@@ -1,4 +1,4 @@
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChartLine,
@@ -8,6 +8,7 @@ import {
   faUsersViewfinder,
   faFileLines,
   faFileInvoiceDollar,
+  faBars,
 } from '@fortawesome/free-solid-svg-icons';
 
 const navItems = [
@@ -20,54 +21,86 @@ const navItems = [
   { to: '/app/billing', label: 'Billing', icon: faFileInvoiceDollar },
 ];
 
-function Sidebar() {
-  const navigate = useNavigate();
-
+function Sidebar({ open, onToggle }) {
   return (
-    <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-      <Link to="/" className="flex items-center gap-3 border-b border-slate-200 px-6 py-5 cursor-pointer transition hover:bg-brand-700 hover:text-white">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-soft">
-          <FontAwesomeIcon icon={faChartLine} className="text-lg" />
-        </div>
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Helping Suite</p>
-          <h1 className="text-lg font-bold text-slate-900">RankCare</h1>
-        </div>
-      </Link>
+    <aside
+      className={`shrink-0 relative border-r border-slate-200 bg-white transition-all duration-300 ${
+        open ? 'w-72' : 'w-16'
+      } hidden lg:flex lg:flex-col`}
+    >
+      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-5">
+        <Link
+          to="/"
+          className={`flex items-center gap-3 overflow-hidden transition hover:bg-brand-700 hover:text-white ${
+            open ? 'px-2' : 'justify-center px-0'
+          }`}
+        >
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-soft">
+            <FontAwesomeIcon icon={faChartLine} className="text-lg" />
+          </div>
+          {open && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Helping Suite</p>
+              <h1 className="text-lg font-bold text-slate-900">RankCare</h1>
+            </div>
+          )}
+        </Link>
+      </div>
 
-      <nav className="flex-1 space-y-2 px-4 py-6">
+      <nav className="flex-1 space-y-2 px-3 py-6">
         {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/app'}
             className={({ isActive }) =>
-              `flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition ${
+              `flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition ${
                 isActive
                   ? 'bg-brand-50 text-brand-700'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`
+              } ${!open ? 'justify-center' : ''}`
             }
+            title={!open ? item.label : undefined}
           >
             <FontAwesomeIcon icon={item.icon} className="w-4" />
-            <span>{item.label}</span>
+            {open && <span>{item.label}</span>}
           </NavLink>
         ))}
       </nav>
 
-      <div className="m-4 rounded-3xl bg-slate-900 p-5 text-white">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Upgrade</p>
-        <h3 className="mt-2 text-lg font-semibold">Agency mode</h3>
-        <p className="mt-2 text-sm text-slate-300">
-          White-label reporting, more tracked keywords, and client workspaces.
-        </p>
-        <button
-          onClick={() => navigate('/pricing')}
-          className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-        >
-          Explore plans
-        </button>
+      <div className={`m-4 rounded-3xl bg-slate-900 p-5 text-white transition-all ${!open ? 'p-3' : ''}`}>
+        {open ? (
+          <>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Upgrade</p>
+            <h3 className="mt-2 text-lg font-semibold">Agency mode</h3>
+            <p className="mt-2 text-sm text-slate-300">
+              White-label reporting, more tracked keywords, and client workspaces.
+            </p>
+            <button
+              onClick={() => window.location.href = '/pricing'}
+              className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+            >
+              Explore plans
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => window.location.href = '/pricing'}
+            className="flex w-full items-center justify-center text-white"
+            title="Upgrade"
+          >
+            <FontAwesomeIcon icon={faFileInvoiceDollar} />
+          </button>
+        )}
       </div>
+
+      <button
+        onClick={onToggle}
+        className="absolute bottom-4 -right-3 z-10 hidden h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm lg:flex"
+        title={open ? 'Collapse sidebar' : 'Expand sidebar'}
+      >
+        <FontAwesomeIcon icon={open ? faBars : faBars} className="text-xs text-slate-600" />
+      </button>
     </aside>
   );
 }

@@ -243,12 +243,15 @@ def activate_subscription(
     )
     
     # Clear any pending plan change when user pays for an upgrade
-    # The paid plan takes precedence over any scheduled changes
+    # The pending plan takes precedence and is applied at activation time
     effective_plan_id = plan_id
     effective_plan_key = plan["key"]
     pending_plan = getattr(user, "pendingPlanChange", None)
     
     if pending_plan:
+        plan_map = {"starter": 0, "pro": 1, "agency": 2}
+        effective_plan_id = plan_map[pending_plan]
+        effective_plan_key = pending_plan
         user.pendingPlanChange = None
     
     if existing_subscription:
@@ -288,7 +291,7 @@ def activate_subscription(
         # Create new subscription
         subscription = Subscription(
             userId=user_id,
-            planId=plan_id,
+            planId=effective_plan_id,
             status='active',
             isActive=True,
             startDate=datetime.utcnow(),
@@ -303,7 +306,7 @@ def activate_subscription(
         
         # Also update user's subscription status and selected plan
         user.subscriptionStatus = "active"
-        user.selectedPlan = plan["key"]
+        user.selectedPlan = effective_plan_key
         db.add(user)
         db.commit()
         

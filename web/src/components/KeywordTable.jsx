@@ -1,9 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { faTrashCan, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faTrashCan,
+  faTriangleExclamation,
+  faUpload,
+} from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from './ConfirmModal';
 import {
-  addKeywordToProject,
+  bulkAddKeywords,
+  bulkDeleteKeywords,
+  bulkDeleteRankings,
   clearKeywordMessage,
   clearProjectRankings,
   deleteKeywordById,
@@ -28,17 +35,23 @@ function KeywordTable() {
     deletingKeyword,
     deletingRanking,
     clearingRankings,
+    deletingBulkKeywords,
+    deletingBulkRankings,
     error,
     actionMessage,
   } = useSelector((state) => state.keywords);
 
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
+  const pricingCurrent = useSelector((state) => state.pricing.current);
 
-  const [formData, setFormData] = useState({
-    keyword: '',
-    location: 'India',
-    device: 'desktop',
-  });
+  const [keywordText, setKeywordText] = useState('');
+  const [location, setLocation] = useState('India');
+  const [device, setDevice] = useState('desktop');
+  const [csvPreview, setCsvPreview] = useState([]);
+  const [showCsvConfirm, setShowCsvConfirm] = useState(false);
+
+  const [selectedKeywords, setSelectedKeywords] = useState([]);
+  const [selectedRankings, setSelectedRankings] = useState([]);
 
   const [confirmState, setConfirmState] = useState({
     open: false,
@@ -51,20 +64,22 @@ function KeywordTable() {
     onConfirm: null,
   });
 
+  const isBulkLoading = deletingBulkKeywords || deletingBulkRankings || clearingRankings;
+
+  const keywordLimitRemaining = (pricingCurrent?.limits?.keywords || 0) - (pricingCurrent?.usage?.keywords || 0);
+
   const filteredKeywords = useMemo(() => {
     return (keywords || []).filter((row) => {
-      const keyword = (row.keyword || '').toLowerCase();
-      const searchText = (search || '').toLowerCase();
-      return keyword.includes(searchText);
+      const kw = (row.keyword || '').toLowerCase();
+      return kw.includes((search || '').toLowerCase());
     });
   }, [keywords, search]);
 
   const filteredRankings = useMemo(() => {
     return (rankings || [])
       .filter((row) => {
-        const keyword = (row.keywordText || '').toLowerCase();
-        const searchText = (search || '').toLowerCase();
-        return keyword.includes(searchText);
+        const kw = (row.keywordText || '').toLowerCase();
+        return kw.includes((search || '').toLowerCase());
       })
       .sort((a, b) => {
         if (sortBy === 'position') return (a.position ?? 9999) - (b.position ?? 9999);
@@ -77,8 +92,6 @@ function KeywordTable() {
         return 0;
       });
   }, [rankings, search, sortBy]);
-
-  const isConfirmLoading = deletingKeyword || deletingRanking || clearingRankings;
 
   const openConfirmModal = ({
     title,
@@ -102,8 +115,7 @@ function KeywordTable() {
   };
 
   const closeConfirmModal = () => {
-    if (isConfirmLoading) return;
-
+    if (isBulkLoading) return;
     setConfirmState({
       open: false,
       title: '',
@@ -116,42 +128,36 @@ function KeywordTable() {
     });
   };
 
-  const handleChange = (e) => {
+  const handleBulkKeywordConfirm = async () => {
+    if (!selectedProjectId) return;
     dispatch(clearKeywordMessage());
-    setFormData((prev) => ({
-      ...prev,
-      [e.target.name]: e.target.value,
-    }));
-  };
-
-  const handleAddKeyword = async (e) => {
-    e.preventDefault();
-
-    if (!selectedProjectId || !formData.keyword.trim()) return;
-
     const resultAction = await dispatch(
-      addKeywordToProject({
+      bulkDeleteKeywords({
         projectId: selectedProjectId,
-        payload: {
-          keyword: formData.keyword.trim(),
-          location: formData.location,
-          device: formData.device,
-        },
+        keywordIds: selectedKeywords,
       })
     );
 
-    if (addKeywordToProject.fulfilled.match(resultAction)) {
-      setFormData((prev) => ({
-        ...prev,
-        keyword: '',
-      }));
+    if (bulkDeleteKeywords.fulfilled.match(resultAction)) {
+      setSelectedKeywords([]);
+      closeConfirmModal();
     }
   };
 
-  const handleRunRankCheck = async () => {
+  const handleBulkRankingConfirm = async () => {
     if (!selectedProjectId) return;
     dispatch(clearKeywordMessage());
-    await dispatch(runRankCheck(selectedProjectId));
+    const resultAction = await dispatch(
+      bulkDeleteRankings({
+        projectId: selectedProjectId,
+        rankingIds: selectedRankings,
+      })
+    );
+
+    if (bulkDeleteRankings.fulfilled.match(resultAction)) {
+      setSelectedRankings([]);
+      closeConfirmModal();
+    }
   };
 
   const handleDeleteKeyword = (keywordRow) => {
@@ -227,6 +233,134 @@ function KeywordTable() {
     });
   };
 
+  const handleAddKeywords = async (e) => {
+    e.preventDefault();
+    if (!selectedProjectId || !keywordText.trim()) return;
+
+    const parsed = keywordText
+      .split(',')
+      .map((kw) => kw.trim())
+      .filter((kw) => kw.length > 0);
+
+    if (parsed.length === 0) return;
+
+    if (parsed.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
+      dispatch(clearKeywordMessage());
+      openConfirmModal({
+        title: 'Keyword limit exceeded',
+        message: `You can only add ${keywordLimitRemaining} more keywords.`,
+        description: 'Upgrade your plan to add more keywords.',
+        confirmText: 'Upgrade plan',
+        tone: 'warning',
+        icon: faTriangleExclamation,
+        onConfirm: () => {
+          closeConfirmModal();
+          window.location.href = '/app/billing';
+        },
+      });
+      return;
+    }
+
+    const resultAction = await dispatch(
+      bulkAddKeywords({
+        projectId: selectedProjectId,
+        keywords: parsed,
+      })
+    );
+
+    if (bulkAddKeywords.fulfilled.match(resultAction)) {
+      setKeywordText('');
+    }
+  };
+
+  const handleCsvChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const lines = text.split('\n').filter((line) => line.trim());
+      const keywords = lines.map((line) => line.split(',')[0].trim()).filter((kw) => kw.length > 0);
+      setCsvPreview(keywords);
+      setShowCsvConfirm(true);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleCsvConfirm = async () => {
+    setShowCsvConfirm(false);
+    if (!selectedProjectId || csvPreview.length === 0) return;
+
+    if (csvPreview.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
+      dispatch(clearKeywordMessage());
+      openConfirmModal({
+        title: 'Keyword limit exceeded',
+        message: `You can only add ${keywordLimitRemaining} more keywords.`,
+        description: 'Upgrade your plan to add more keywords.',
+        confirmText: 'Upgrade plan',
+        tone: 'warning',
+        icon: faTriangleExclamation,
+        onConfirm: () => {
+          closeConfirmModal();
+          window.location.href = '/app/billing';
+        },
+      });
+      return;
+    }
+
+    const resultAction = await dispatch(
+      bulkAddKeywords({
+        projectId: selectedProjectId,
+        keywords: csvPreview,
+      })
+    );
+
+    if (bulkAddKeywords.fulfilled.match(resultAction)) {
+      setCsvPreview([]);
+    }
+  };
+
+  const handleRunRankCheck = async () => {
+    if (!selectedProjectId) return;
+    dispatch(clearKeywordMessage());
+    await dispatch(runRankCheck(selectedProjectId));
+  };
+
+  const toggleKeyword = (id) => {
+    setSelectedKeywords((prev) =>
+      prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAllKeywords = () => {
+    const allFilteredIds = filteredKeywords.map((k) => k.id);
+    const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedKeywords.includes(id));
+
+    if (allSelected) {
+      setSelectedKeywords([]);
+    } else {
+      setSelectedKeywords(allFilteredIds);
+    }
+  };
+
+  const toggleRanking = (id) => {
+    setSelectedRankings((prev) =>
+      prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAllRankings = () => {
+    const allFilteredIds = filteredRankings.map((r) => r.id);
+    const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedRankings.includes(id));
+
+    if (allSelected) {
+      setSelectedRankings([]);
+    } else {
+      setSelectedRankings(allFilteredIds);
+    }
+  };
+
   if (!selectedProjectId) {
     return (
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
@@ -242,51 +376,58 @@ function KeywordTable() {
       <div className="space-y-6">
         <section className="rounded-3xl border border-slate-200 bg-white shadow-soft">
           <div className="border-b border-slate-200 p-5">
-            <h3 className="text-lg font-semibold text-slate-900">Add keyword</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Add keywords</h3>
             <p className="mt-1 text-sm text-slate-500">
               Add keywords for the selected project before running rank checks.
             </p>
           </div>
 
-          <form
-            onSubmit={handleAddKeyword}
-            className="grid gap-4 p-5 lg:grid-cols-[2fr_1fr_1fr_auto]"
-          >
-            <input
-              type="text"
-              name="keyword"
-              value={formData.keyword}
-              onChange={handleChange}
-              placeholder="Enter keyword"
+          <form onSubmit={handleAddKeywords} className="grid gap-4 p-5">
+            <textarea
+              value={keywordText}
+              onChange={(e) => setKeywordText(e.target.value)}
+              placeholder="Enter keywords separated by commas"
+              rows={3}
               className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
             />
 
-            <input
-              type="text"
-              name="location"
-              value={formData.location}
-              onChange={handleChange}
-              placeholder="Location"
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
-            />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Location"
+                className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+              />
 
-            <select
-              name="device"
-              value={formData.device}
-              onChange={handleChange}
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
-            >
-              <option value="desktop">Desktop</option>
-              <option value="mobile">Mobile</option>
-            </select>
+              <select
+                value={device}
+                onChange={(e) => setDevice(e.target.value)}
+                className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+              >
+                <option value="desktop">Desktop</option>
+                <option value="mobile">Mobile</option>
+              </select>
 
-            <button
-              type="submit"
-              disabled={adding}
-              className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {adding ? 'Adding...' : 'Add Keyword'}
-            </button>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                <FontAwesomeIcon icon={faUpload} />
+                <span>CSV</span>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleCsvChange}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={adding || !keywordText.trim()}
+                className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {adding ? 'Adding...' : 'Add Keywords'}
+              </button>
+            </div>
           </form>
 
           {actionMessage && (
@@ -320,13 +461,47 @@ function KeywordTable() {
             />
           </div>
 
+          {selectedKeywords.length > 0 && (
+            <div className="border-b border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium text-rose-700">
+                {selectedKeywords.length} selected
+              </span>
+              <button
+                onClick={() => {
+                  openConfirmModal({
+                    title: 'Delete selected keywords',
+                    message: `Delete ${selectedKeywords.length} selected keywords?`,
+                    description: 'This action cannot be undone.',
+                    confirmText: 'Delete selected',
+                    tone: 'danger',
+                    icon: faTrashCan,
+                    onConfirm: handleBulkKeywordConfirm,
+                  });
+                }}
+                disabled={isBulkLoading}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                Delete selected
+              </button>
+            </div>
+          )}
+
           {loadingKeywords ? (
             <div className="p-5 text-sm text-slate-500">Loading keywords...</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-left">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
-                  <tr>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="min-w-full text-left">
+                  <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                    <tr>
+                    <th className="px-5 py-4 w-12">
+                      <input
+                        type="checkbox"
+                        checked={filteredKeywords.length > 0 && selectedKeywords.length === filteredKeywords.length}
+                        onChange={toggleAllKeywords}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                    </th>
                     <th className="px-5 py-4">Keyword</th>
                     <th className="px-5 py-4">Device</th>
                     <th className="px-5 py-4">Location</th>
@@ -337,6 +512,14 @@ function KeywordTable() {
                 <tbody>
                   {filteredKeywords.map((row) => (
                     <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-5 py-4 w-12">
+                        <input
+                          type="checkbox"
+                          checked={selectedKeywords.includes(row.id)}
+                          onChange={() => toggleKeyword(row.id)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      </td>
                       <td className="px-5 py-4 font-semibold text-slate-900">
                         {row.keyword || '-'}
                       </td>
@@ -363,13 +546,19 @@ function KeywordTable() {
 
                   {filteredKeywords.length === 0 && (
                     <tr>
-                      <td colSpan="5" className="px-5 py-10 text-center text-sm text-slate-500">
+                      <td colSpan="6" className="px-5 py-10 text-center text-sm text-slate-500">
                         No keywords added yet.
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+          )}
+          {filteredRankings.length > 0 && (
+            <div className="border-t border-slate-200 px-5 py-3 text-center text-xs text-slate-400">
+              Showing {filteredRankings.length} ranking{filteredRankings.length === 1 ? '' : 's'}
             </div>
           )}
         </section>
@@ -412,15 +601,49 @@ function KeywordTable() {
             </div>
           </div>
 
+          {selectedRankings.length > 0 && (
+            <div className="border-b border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium text-rose-700">
+                {selectedRankings.length} selected
+              </span>
+              <button
+                onClick={() => {
+                  openConfirmModal({
+                    title: 'Delete selected rankings',
+                    message: `Delete ${selectedRankings.length} selected ranking results?`,
+                    description: 'This action cannot be undone.',
+                    confirmText: 'Delete selected',
+                    tone: 'danger',
+                    icon: faTrashCan,
+                    onConfirm: handleBulkRankingConfirm,
+                  });
+                }}
+                disabled={isBulkLoading}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                Delete selected
+              </button>
+            </div>
+          )}
+
           {loadingRankings ? (
             <div className="p-5 text-sm text-slate-500">
               Running rank check and waiting for results...
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-left">
-                <thead className="bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
-                  <tr>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="min-w-full text-left">
+                  <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                    <tr>
+                    <th className="px-5 py-4 w-12">
+                      <input
+                        type="checkbox"
+                        checked={filteredRankings.length > 0 && selectedRankings.length === filteredRankings.length}
+                        onChange={toggleAllRankings}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                    </th>
                     <th className="px-5 py-4">Keyword</th>
                     <th className="px-5 py-4">URL</th>
                     <th className="px-5 py-4">Position</th>
@@ -433,6 +656,14 @@ function KeywordTable() {
                 <tbody>
                   {filteredRankings.map((row) => (
                     <tr key={row.id} className="border-t border-slate-100">
+                      <td className="px-5 py-4 w-12">
+                        <input
+                          type="checkbox"
+                          checked={selectedRankings.includes(row.id)}
+                          onChange={() => toggleRanking(row.id)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      </td>
                       <td className="px-5 py-4 font-semibold text-slate-900">
                         {row.keywordText || '-'}
                       </td>
@@ -463,13 +694,19 @@ function KeywordTable() {
 
                   {filteredRankings.length === 0 && (
                     <tr>
-                      <td colSpan="7" className="px-5 py-10 text-center text-sm text-slate-500">
+                      <td colSpan="8" className="px-5 py-10 text-center text-sm text-slate-500">
                         No rankings available yet. Add a keyword and run rank check.
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+          )}
+          {filteredRankings.length > 0 && (
+            <div className="border-t border-slate-200 px-5 py-3 text-center text-xs text-slate-400">
+              Showing {filteredRankings.length} ranking{filteredRankings.length === 1 ? '' : 's'}
             </div>
           )}
         </section>
@@ -484,10 +721,33 @@ function KeywordTable() {
         cancelText="Cancel"
         tone={confirmState.tone}
         icon={confirmState.icon}
-        loading={isConfirmLoading}
+        loading={isBulkLoading}
         onConfirm={confirmState.onConfirm}
         onClose={closeConfirmModal}
       />
+
+      {showCsvConfirm && (
+        <ConfirmModal
+          open={showCsvConfirm}
+          title="Confirm CSV import"
+          message={`Import ${csvPreview.length} keywords from CSV?`}
+          description={
+            keywordLimitRemaining < csvPreview.length
+              ? `Warning: You can only add ${keywordLimitRemaining} more keywords.`
+              : 'This will add the keywords to the current project.'
+          }
+          confirmText="Import"
+          cancelText="Cancel"
+          tone={keywordLimitRemaining < csvPreview.length ? 'warning' : 'info'}
+          icon={faUpload}
+          loading={adding}
+          onConfirm={handleCsvConfirm}
+          onClose={() => {
+            setShowCsvConfirm(false);
+            setCsvPreview([]);
+          }}
+        />
+      )}
     </>
   );
 }

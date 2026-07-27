@@ -1,4 +1,4 @@
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -84,6 +84,21 @@ def get_project_rankings(db: Session, user_id: str, project_id: str) -> list[dic
         .order_by(desc(RankResult.checkedAt))
     ).all()
     return [model_to_dict(item) for item in rows]
+
+
+def delete_rankings_bulk(db: Session, user_id: str, ranking_ids: list[str]) -> int:
+    count = 0
+    for ranking_id in ranking_ids:
+        ranking = db.scalar(
+            select(RankResult)
+            .join(Project, Project.id == RankResult.projectId)
+            .where(RankResult.id == ranking_id, Project.userId == user_id)
+        )
+        if ranking:
+            db.execute(delete(RankResult).where(RankResult.id == ranking_id))
+            count += 1
+    db.commit()
+    return count
 
 
 def delete_ranking(db: Session, user_id: str, ranking_id: str) -> None:

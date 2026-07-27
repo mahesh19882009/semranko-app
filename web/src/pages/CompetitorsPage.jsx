@@ -420,145 +420,147 @@ export default function Competitors() {
             </div>
           ) : (
             <div className="mt-6 overflow-x-auto">
-              <table className="min-w-full">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left text-sm text-slate-500">
-                    <th className="py-3 pr-4 font-medium">Name</th>
-                    <th className="py-3 pr-4 font-medium">Domain</th>
-                    <th className="py-3 pr-4 font-medium">Updated</th>
-                    <th className="py-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {competitors.map((item) => {
-                    const isEditing = String(editingId) === String(item.id);
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-sm text-slate-500 sticky top-0 bg-slate-50">
+                      <th className="py-3 pr-4 font-medium">Name</th>
+                      <th className="py-3 pr-4 font-medium">Domain</th>
+                      <th className="py-3 pr-4 font-medium">Updated</th>
+                      <th className="py-3 font-medium">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {competitors.map((item) => {
+                      const isEditing = String(editingId) === String(item.id);
 
-                    return (
-                      <tr key={item.id} className="border-b border-slate-100 text-sm">
-                        <td className="py-3 pr-4 align-top">
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <label
-                                htmlFor={`edit-name-${item.id}`}
-                                className="sr-only"
-                              >
-                                Edit competitor name
-                              </label>
-                              <input
-                                id={`edit-name-${item.id}`}
-                                type="text"
-                                value={editingForm.name}
-                                onChange={(e) =>
-                                  setEditingForm((prev) => ({
-                                    ...prev,
-                                    name: e.target.value,
-                                  }))
-                                }
-                                disabled={updating}
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50"
-                              />
-                            </div>
-                          ) : (
-                            <span className="font-medium text-slate-900">{item.name}</span>
-                          )}
-                        </td>
-
-                        <td className="py-3 pr-4 align-top">
-                          {isEditing ? (
-                            <div className="space-y-2">
-                              <label
-                                htmlFor={`edit-domain-${item.id}`}
-                                className="sr-only"
-                              >
-                                Edit competitor domain
-                              </label>
-                              <input
-                                id={`edit-domain-${item.id}`}
-                                type="text"
-                                value={editingForm.domain}
-                                onChange={(e) =>
-                                  setEditingForm((prev) => ({
-                                    ...prev,
-                                    domain: e.target.value,
-                                  }))
-                                }
-                                disabled={updating}
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50"
-                              />
-                            </div>
-                          ) : (
-                            <a
-                              href={getDomainUrl(item.domain)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 text-slate-700 hover:text-slate-900"
-                            >
-                              <Globe size={16} className="text-slate-400" />
-                              <span className="underline underline-offset-2">
-                                {item.domain}
-                              </span>
-                            </a>
-                          )}
-                        </td>
-
-                        <td className="py-3 pr-4 align-top text-slate-500">
-                          {item.updatedAt
-                            ? new Date(item.updatedAt).toLocaleDateString()
-                            : '-'}
-                        </td>
-
-                        <td className="py-3 align-top">
-                          <div className="flex flex-wrap items-center gap-2">
+                      return (
+                        <tr key={item.id} className="border-b border-slate-100 text-sm">
+                          <td className="py-3 pr-4 align-top">
                             {isEditing ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={handleSaveEdit}
-                                  disabled={updating || deleting || adding}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-2 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              <div className="space-y-2">
+                                <label
+                                  htmlFor={`edit-name-${item.id}`}
+                                  className="sr-only"
                                 >
-                                  <Check size={15} />
-                                  {updating ? 'Saving...' : 'Save'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={cancelEdit}
+                                  Edit competitor name
+                                </label>
+                                <input
+                                  id={`edit-name-${item.id}`}
+                                  type="text"
+                                  value={editingForm.name}
+                                  onChange={(e) =>
+                                    setEditingForm((prev) => ({
+                                      ...prev,
+                                      name: e.target.value,
+                                    }))
+                                  }
                                   disabled={updating}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  <X size={15} />
-                                  Cancel
-                                </button>
-                              </>
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50"
+                                />
+                              </div>
                             ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => startEdit(item)}
-                                  disabled={isBusy}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  <Pencil size={15} />
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDelete(item)}
-                                  disabled={isBusy}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-3 py-2 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  <Trash2 size={15} />
-                                  Delete
-                                </button>
-                              </>
+                              <span className="font-medium text-slate-900">{item.name}</span>
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          </td>
+
+                          <td className="py-3 pr-4 align-top">
+                            {isEditing ? (
+                              <div className="space-y-2">
+                                <label
+                                  htmlFor={`edit-domain-${item.id}`}
+                                  className="sr-only"
+                                >
+                                  Edit competitor domain
+                                </label>
+                                <input
+                                  id={`edit-domain-${item.id}`}
+                                  type="text"
+                                  value={editingForm.domain}
+                                  onChange={(e) =>
+                                    setEditingForm((prev) => ({
+                                      ...prev,
+                                      domain: e.target.value,
+                                    }))
+                                  }
+                                  disabled={updating}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50"
+                                />
+                              </div>
+                            ) : (
+                              <a
+                                href={getDomainUrl(item.domain)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 text-slate-700 hover:text-slate-900"
+                              >
+                                <Globe size={16} className="text-slate-400" />
+                                <span className="underline underline-offset-2">
+                                  {item.domain}
+                                </span>
+                              </a>
+                            )}
+                          </td>
+
+                          <td className="py-3 pr-4 align-top text-slate-500">
+                            {item.updatedAt
+                              ? new Date(item.updatedAt).toLocaleDateString()
+                              : '-'}
+                          </td>
+
+                          <td className="py-3 align-top">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveEdit}
+                                    disabled={updating || deleting || adding}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-2 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Check size={15} />
+                                    {updating ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={cancelEdit}
+                                    disabled={updating}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <X size={15} />
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => startEdit(item)}
+                                    disabled={isBusy}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Pencil size={15} />
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDelete(item)}
+                                    disabled={isBusy}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-3 py-2 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Trash2 size={15} />
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </section>
