@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { getAccessToken, setAccessToken, setStoredUser } from "../utils/auth";
+import { apiRequest } from "../lib/api";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -36,19 +37,10 @@ function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:4000/api/auth/login", {
+      const data = await apiRequest("/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(form),
       });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Login failed");
-      }
 
       setAccessToken(data.data.accessToken);
       setStoredUser(data.data.user);
@@ -93,6 +85,11 @@ function LoginPage() {
             value={form.password}
             onChange={handleChange}
           />
+          <div style={styles.forgotPasswordContainer}>
+            <Link to="/forgot-password" style={styles.forgotPasswordLink}>
+              Forgot password?
+            </Link>
+          </div>
 
           {error ? <p style={styles.error}>{error}</p> : null}
           {error === "Please verify your email before logging in" ? (
@@ -191,6 +188,14 @@ const styles = {
     marginTop: "18px",
     fontSize: "14px",
     color: "#667085",
+  },
+  forgotPasswordContainer: {
+    textAlign: "right",
+  },
+  forgotPasswordLink: {
+    fontSize: "14px",
+    color: "#667085",
+    textDecoration: "none",
   },
 };
 

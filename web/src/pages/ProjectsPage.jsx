@@ -5,6 +5,7 @@ import ConfirmModal from '../components/ConfirmModal';
 import {
   createProject,
   deleteProjectById,
+  updateProject,
 } from '../features/projects/projectsSlice';
 import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 import Alert from '../components/ui/Alert';
@@ -12,12 +13,13 @@ import Alert from '../components/ui/Alert';
 function ProjectsPage() {
   const dispatch = useDispatch();
 
-  const { list: projects, loading, creating, deleting, error, actionMessage } = useSelector((state) => state.projects);
+  const { list: projects, loading, creating, updating, deleting, error, actionMessage } = useSelector((state) => state.projects);
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const projectLimitReached = (pricingCurrent?.usage?.projects || 0) >= (pricingCurrent?.limits?.projects || 0);
 
   const [showForm, setShowForm] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
+  const [projectToEdit, setProjectToEdit] = useState(null);
 
   const [form, setForm] = useState({
     name: '',
@@ -40,6 +42,42 @@ function ProjectsPage() {
 
     if (createProject.fulfilled.match(resultAction)) {
       await dispatch(fetchCurrentPricing());
+      setForm({
+        name: '',
+        domain: '',
+        device: 'desktop',
+        location: 'India',
+      });
+      setShowForm(false);
+    }
+  };
+
+  const handleEditProject = (project) => {
+    setProjectToEdit(project);
+    setForm({
+      name: project.name,
+      domain: project.domain,
+      device: 'desktop',
+      location: 'India',
+    });
+    setShowForm(true);
+  };
+
+  const handleUpdateProject = async (e) => {
+    e.preventDefault();
+
+    const resultAction = await dispatch(
+      updateProject({
+        projectId: projectToEdit.id,
+        payload: {
+          name: form.name,
+          domain: form.domain,
+        },
+      })
+    );
+
+    if (updateProject.fulfilled.match(resultAction)) {
+      setProjectToEdit(null);
       setForm({
         name: '',
         domain: '',
@@ -99,7 +137,7 @@ function ProjectsPage() {
 
         {showForm && (
           <form
-            onSubmit={handleSubmit}
+            onSubmit={projectToEdit ? handleUpdateProject : handleSubmit}
             className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-5 md:grid-cols-2"
           >
             <input
@@ -141,13 +179,29 @@ function ProjectsPage() {
               className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
             />
 
-            <div className="md:col-span-2">
+            <div className="md:col-span-2 flex gap-3">
               <button
                 type="submit"
-                disabled={creating || projectLimitReached}
+                disabled={creating || updating || projectLimitReached}
                 className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
               >
-                {creating ? 'Creating...' : 'Create project'}
+                {creating ? 'Creating...' : updating ? 'Updating...' : projectToEdit ? 'Update project' : 'Create project'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  setProjectToEdit(null);
+                  setForm({
+                    name: '',
+                    domain: '',
+                    device: 'desktop',
+                    location: 'India',
+                  });
+                }}
+                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
               </button>
             </div>
           </form>
@@ -181,7 +235,7 @@ function ProjectsPage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <div key={project.id} className="space-y-3">
-                <ProjectCard project={project} />
+                <ProjectCard project={project} onEdit={handleEditProject} />
                 <button
                   onClick={() => handleDeleteProject(project)}
                   disabled={deleting}

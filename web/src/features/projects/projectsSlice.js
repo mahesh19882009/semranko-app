@@ -44,6 +44,7 @@ const initialState = {
   selectedProjectId: getStoredSelectedProjectId(),
   loading: false,
   creating: false,
+  updating: false,
   deleting: false,
   error: null,
   actionMessage: null,
@@ -95,6 +96,25 @@ export const deleteProjectById = createAsyncThunk(
       };
     } catch (error) {
       return thunkAPI.rejectWithValue(error.message || 'Failed to delete project');
+    }
+  }
+);
+
+export const updateProject = createAsyncThunk(
+  'projects/updateProject',
+  async ({ projectId, payload }, thunkAPI) => {
+    try {
+      const response = await apiRequest(`/projects/${projectId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+
+      return {
+        project: response.data,
+        message: response.message || 'Project updated successfully',
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue(error.message || 'Failed to update project');
     }
   }
 );
@@ -158,6 +178,26 @@ const projectsSlice = createSlice({
       .addCase(createProject.rejected, (state, action) => {
         state.creating = false;
         state.error = action.payload || 'Failed to create project';
+      })
+
+      .addCase(updateProject.pending, (state) => {
+        state.updating = true;
+        state.error = null;
+        state.actionMessage = null;
+      })
+      .addCase(updateProject.fulfilled, (state, action) => {
+        state.updating = false;
+        const index = state.list.findIndex(
+          (project) => String(project.id) === String(action.payload.project.id)
+        );
+        if (index !== -1) {
+          state.list[index] = action.payload.project;
+        }
+        state.actionMessage = action.payload.message;
+      })
+      .addCase(updateProject.rejected, (state, action) => {
+        state.updating = false;
+        state.error = action.payload || 'Failed to update project';
       })
 
       .addCase(deleteProjectById.pending, (state) => {

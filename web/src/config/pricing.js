@@ -4,8 +4,8 @@ export const PLANS = [
   {
     key: "starter",
     name: "Starter",
-    monthlyPrice: 19,
-    yearlyPrice: 15,
+    monthlyPrice: 1999,
+    yearlyPrice: 1499,
     description: "Best for freelancers and small websites starting SEO tracking.",
     highlighted: false,
     cta: "Start Starter Trial",
@@ -28,8 +28,8 @@ export const PLANS = [
   {
     key: "pro",
     name: "Pro",
-    monthlyPrice: 49,
-    yearlyPrice: 39,
+    monthlyPrice: 4999,
+    yearlyPrice: 3999,
     description: "Ideal for growing businesses that need stronger reporting and tracking.",
     highlighted: true,
     cta: "Start Pro Trial",
@@ -52,8 +52,8 @@ export const PLANS = [
   {
     key: "agency",
     name: "Agency",
-    monthlyPrice: 99,
-    yearlyPrice: 79,
+    monthlyPrice: 9999,
+    yearlyPrice: 7999,
     description: "Built for agencies handling multiple clients and white-label style delivery.",
     highlighted: false,
     cta: "Start Agency Trial",

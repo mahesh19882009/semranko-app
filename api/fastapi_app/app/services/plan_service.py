@@ -3,16 +3,17 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import GST_RATE, get_settings
+from app.services.notification_service import create_notification
 from app.core.errors import ApiError
-from app.db.models import Competitor, Keyword, Project, Report, User
+from app.db.models import Competitor, Keyword, Project, Report, Subscription, User
 
 PLAN_DEFINITIONS = {
     "starter": {
         "key": "starter",
         "name": "Starter",
-        "monthlyPrice": 19,
-        "yearlyPrice": 15,
+        "monthlyPrice": 1999,
+        "yearlyPrice": 1499,
         "description": "Best for freelancers and small websites starting SEO tracking.",
         "highlighted": False,
         "cta": "Start Starter Trial",
@@ -29,8 +30,8 @@ PLAN_DEFINITIONS = {
     "pro": {
         "key": "pro",
         "name": "Pro",
-        "monthlyPrice": 49,
-        "yearlyPrice": 39,
+        "monthlyPrice": 4999,
+        "yearlyPrice": 3999,
         "description": "Ideal for growing businesses that need stronger reporting and tracking.",
         "highlighted": True,
         "cta": "Start Pro Trial",
@@ -47,8 +48,8 @@ PLAN_DEFINITIONS = {
     "agency": {
         "key": "agency",
         "name": "Agency",
-        "monthlyPrice": 99,
-        "yearlyPrice": 79,
+        "monthlyPrice": 9999,
+        "yearlyPrice": 7999,
         "description": "Built for agencies handling multiple clients and white-label style delivery.",
         "highlighted": False,
         "cta": "Start Agency Trial",
@@ -106,7 +107,7 @@ def get_subscription_status(user: User) -> str:
     trial_ends_at = getattr(user, "trialEndsAt", None)
     now = datetime.utcnow()
 
-    if trial_ends_at and trial_ends_at >= now and raw_status in {"", "trialing", "active"}:
+    if trial_ends_at and trial_ends_at >= now and raw_status in {"", "trialing"}:
         return "trialing"
 
     if raw_status:
@@ -198,6 +199,8 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
         "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
         "trialDays": get_trial_days(),
+        "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
+        "pendingPlanChange": getattr(user, "pendingPlanChange", None),
         "usage": {
             "projects": count_user_projects(db, user.id),
             "keywords": count_user_keywords(db, user.id),
@@ -297,13 +300,26 @@ def change_user_plan(db: Session, user_id: str, plan_key: str) -> User:
     if validation["isDowngrade"] and not validation["allowed"]:
         raise ApiError(409, "Downgrade not allowed until usage is reduced", validation)
 
-    user.selectedPlan = plan
+    if validation["isDowngrade"]:
+        user.pendingPlanChange = plan
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        create_notification(
+            db,
+            user_id=user.id,
+            title="Plan downgrade scheduled",
+            message=f"Your plan will be changed to {PLAN_DEFINITIONS[plan]['name']} at the end of your current billing period.",
+            type="plan_change",
+            severity="info",
+        )
+        db.commit()
+        
+        return user
 
-    now = datetime.utcnow()
-    if not user.trialStartsAt:
-        user.trialStartsAt = now
-    if not user.trialEndsAt:
-        user.trialEndsAt = now
+    user.selectedPlan = plan
+    user.subscriptionStatus = "active"
 
     db.add(user)
     db.commit()
@@ -324,12 +340,6 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
 
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
-
-    now = datetime.utcnow()
-    if not user.trialStartsAt:
-        user.trialStartsAt = now
-    if not user.trialEndsAt:
-        user.trialEndsAt = now
 
     db.add(user)
     db.commit()

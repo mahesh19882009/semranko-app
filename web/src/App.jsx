@@ -13,14 +13,23 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
 import ResendVerificationPage from "./pages/ResendVerificationPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import KeywordsPage from "./pages/KeywordsPage";
+import KeywordResearchPage from "./pages/KeywordResearchPage";
 import ReportsPage from "./pages/ReportsPage";
 import AuditPage from "./pages/AuditPage";
 import CompetitorsPage from "./pages/CompetitorsPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotificationsPage from "./pages/NotificationsPage";
+import BillingPage from "./pages/BillingPage";
+import ApiKeysPage from "./pages/ApiKeysPage";
+import ScheduledReportsPage from "./pages/ScheduledReportsPage";
+import TeamsPage from "./pages/TeamsPage";
+import WhiteLabelPage from "./pages/WhiteLabelPage";
+import AgencyDashboardPage from "./pages/AgencyDashboardPage";
 
 function App() {
   return (
@@ -71,6 +80,22 @@ function App() {
           </PublicLayout>
         }
       />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicLayout>
+            <ForgotPasswordPage />
+          </PublicLayout>
+        }
+      />
+      <Route
+        path="/reset-password"
+        element={
+          <PublicLayout>
+            <ResetPasswordPage />
+          </PublicLayout>
+        }
+      />
 
       <Route
         path="/app"
@@ -83,11 +108,18 @@ function App() {
         <Route index element={<DashboardPage />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="keywords" element={<KeywordsPage />} />
+        <Route path="keyword-research" element={<KeywordResearchPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="competitors" element={<CompetitorsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
+        <Route path="billing" element={<BillingPage />} />
+        <Route path="api-keys" element={<ApiKeysPage />} />
+        <Route path="scheduled-reports" element={<ScheduledReportsPage />} />
+        <Route path="white-label" element={<WhiteLabelPage />} />
+        <Route path="teams" element={<TeamsPage />} />
+        <Route path="agency-dashboard" element={<AgencyDashboardPage />} />
       </Route>
 
       <Route path="/dashboard" element={<Navigate to="/app" replace />} />
@@ -98,6 +130,7 @@ function App() {
       <Route path="/competitors" element={<Navigate to="/app/competitors" replace />} />
       <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
       <Route path="/notifications" element={<Navigate to="/app/notifications" replace />} />
+      <Route path="/billing" element={<Navigate to="/app/billing" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

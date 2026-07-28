@@ -10,6 +10,8 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import RankTrendList from '../components/RankTrendList';
 import KeywordTable from '../components/KeywordTable';
+import LowHangingFruits from '../components/LowHangingFruits';
+import SerpFeatures from '../components/SerpFeatures';
 import { useNavigate } from 'react-router-dom';
 import {
   selectStats,
@@ -237,6 +239,10 @@ function DashboardPage() {
       </section>
 
       <KeywordTable />
+
+      <LowHangingFruits />
+
+      <SerpFeatures />
 
       <section className="grid gap-6 xl:grid-cols-2">
         <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">

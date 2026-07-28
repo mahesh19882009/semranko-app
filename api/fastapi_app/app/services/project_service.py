@@ -64,6 +64,46 @@ def get_project_by_id(db: Session, user_id: str, project_id: str) -> dict:
     return model_to_dict(project)
 
 
+def update_project(db: Session, user_id: str, project_id: str, payload: dict) -> dict:
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == user_id)
+    )
+    if not project:
+        raise ApiError(404, "Project not found")
+
+    name = payload.get("name")
+    domain = payload.get("domain")
+
+    if name:
+        project.name = name.strip()
+    if domain:
+        project.domain = domain.strip()
+
+    db.flush()
+
+    create_notification(
+        db,
+        user_id=user_id,
+        project_id=project.id,
+        type="PROJECT_UPDATED",
+        title="Project updated",
+        message=f"{project.name} project was updated successfully.",
+        severity="info",
+        entity_type="project",
+        entity_id=project.id,
+        metadata={
+            "projectId": project.id,
+            "projectName": project.name,
+            "event": "PROJECT_UPDATED",
+        },
+    )
+
+    db.commit()
+    db.refresh(project)
+
+    return model_to_dict(project)
+
+
 def delete_project(db: Session, user_id: str, project_id: str) -> None:
     project = db.scalar(
         select(Project).where(Project.id == project_id, Project.userId == user_id)

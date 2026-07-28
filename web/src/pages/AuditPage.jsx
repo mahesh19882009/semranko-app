@@ -7,6 +7,7 @@ import {
   runAuditByProject,
 } from '../features/audit/auditSlice';
 import { AlertTriangle, Bug, CheckCircle2, PlayCircle } from 'lucide-react';
+import { formatDateTime } from '../utils/date';
 
 const severityClasses = {
   CRITICAL: 'bg-rose-100 text-rose-700 border border-rose-200',
@@ -216,51 +217,53 @@ export default function AuditPage() {
               <p className="mt-1 text-xs text-slate-500">
                 Last run:{' '}
                 {latestAudit.createdAt
-                  ? new Date(latestAudit.createdAt).toLocaleString()
+                  ? formatDateTime(latestAudit.createdAt)
                   : '-'}
               </p>
             </div>
 
             <div className="mt-6 overflow-x-auto">
-              <table className="min-w-full">
-                <thead>
-                  <tr className="border-b border-slate-200 text-left text-sm text-slate-500">
-                    <th className="py-3 pr-4 font-medium">Issue</th>
-                    <th className="py-3 pr-4 font-medium">Category</th>
-                    <th className="py-3 pr-4 font-medium">Severity</th>
-                    <th className="py-3 pr-4 font-medium">Status</th>
-                    <th className="py-3 font-medium">Recommendation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {latestIssues.map((issue) => (
-                    <tr key={issue.id} className="border-b border-slate-100 text-sm align-top">
-                      <td className="py-3 pr-4">
-                        <p className="font-medium text-slate-900">{issue.title}</p>
-                        {issue.description ? (
-                          <p className="mt-1 text-slate-500">{issue.description}</p>
-                        ) : null}
-                      </td>
-                      <td className="py-3 pr-4 text-slate-700">
-                        {issue.category}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
-                            severityClasses[issue.severity] || 'bg-slate-100 text-slate-700 border border-slate-200'
-                          }`}
-                        >
-                          {issue.severity}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-slate-700">{issue.status}</td>
-                      <td className="py-3 text-slate-700">
-                        {issue.recommendation || '-'}
-                      </td>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="min-w-full">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-sm text-slate-500 sticky top-0 bg-slate-50">
+                      <th className="py-3 pr-4 font-medium">Issue</th>
+                      <th className="py-3 pr-4 font-medium">Category</th>
+                      <th className="py-3 pr-4 font-medium">Severity</th>
+                      <th className="py-3 pr-4 font-medium">Status</th>
+                      <th className="py-3 font-medium">Recommendation</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {latestIssues.map((issue) => (
+                      <tr key={issue.id} className="border-b border-slate-100 text-sm align-top">
+                        <td className="py-3 pr-4">
+                          <p className="font-medium text-slate-900">{issue.title}</p>
+                          {issue.description ? (
+                            <p className="mt-1 text-slate-500">{issue.description}</p>
+                          ) : null}
+                        </td>
+                        <td className="py-3 pr-4 text-slate-700">
+                          {issue.category}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                              severityClasses[issue.severity] || 'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}
+                          >
+                            {issue.severity}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-700">{issue.status}</td>
+                        <td className="py-3 text-slate-700">
+                          {issue.recommendation || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         ) : null}

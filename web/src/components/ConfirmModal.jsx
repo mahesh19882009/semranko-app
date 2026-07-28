@@ -36,6 +36,7 @@ const toneConfig = {
 
 function ConfirmModal({
   open,
+  isOpen,
   title = 'Confirm action',
   message = 'Are you sure you want to continue?',
   description,
@@ -52,6 +53,8 @@ function ConfirmModal({
   const cancelButtonRef = useRef(null);
   const previouslyFocusedRef = useRef(null);
 
+  const resolvedOpen = isOpen ?? open;
+
   const currentTone = useMemo(() => {
     return toneConfig[tone] || toneConfig.danger;
   }, [tone]);
@@ -59,7 +62,7 @@ function ConfirmModal({
   const resolvedIcon = icon || currentTone.icon;
 
   useEffect(() => {
-    if (!open) return;
+    if (!resolvedOpen) return;
 
     previouslyFocusedRef.current = document.activeElement;
     document.body.style.overflow = 'hidden';
@@ -82,9 +85,9 @@ function ConfirmModal({
       document.removeEventListener('keydown', handleEscape);
       previouslyFocusedRef.current?.focus?.();
     };
-  }, [open, loading, onClose]);
+  }, [resolvedOpen, loading, onClose]);
 
-  if (!open) return null;
+  if (!resolvedOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6 sm:px-6">

@@ -70,6 +70,27 @@ def create_project_report(db: Session, user_id: str, project_id: str) -> dict:
     project = ensure_project_access(db, user_id, project_id, include_relations=True)
     computed = build_report_summary(project)
 
+    # Calculate score from visibility score
+    score = computed["visibilityScore"]
+    
+    # Generate strengths and recommendations based on data
+    strengths = []
+    recommendations = []
+    
+    if computed["top10Count"] > 0:
+        strengths.append(f"{computed['top10Count']} keywords ranking in top 10")
+    if computed["keywordCount"] > 0:
+        strengths.append(f"Tracking {computed['keywordCount']} keywords")
+    if computed["competitorCount"] > 0:
+        strengths.append(f"Monitoring {computed['competitorCount']} competitors")
+    
+    if computed["top10Count"] < computed["keywordCount"] / 2:
+        recommendations.append("Focus on improving keyword rankings to increase visibility")
+    if computed["keywordCount"] < 10:
+        recommendations.append("Add more keywords to track for better insights")
+    if computed["competitorCount"] == 0:
+        recommendations.append("Add competitors to monitor their performance")
+
     report = Report(
         projectId=project_id,
         title=f"{project.name} SEO Report",

@@ -1,0 +1,77 @@
+# Project Profile: RankCare (RankWatch Clone)
+You are an expert AI software engineer replicating the core functionalities, user workflows, and SEO/rank-tracking features of https://www.rankwatch.com/. The workspace contains a monorepo with both Frontend and Backend systems.
+
+## Tech Stack & Architecture
+- **Frontend:** React + Vite
+- **Backend:** Python with SQLAlchemy ORM mapped to existing PostgreSQL tables
+- **Background Tasks:** Redis Queue (RQ) + RQ Worker for handling heavy rank-check jobs
+
+## Structural Rules (Strict Consistency)
+1. **Never Break Existing Implementation:** Before making changes, analyze existing code across frontend and backend. Backward compatibility is non-negotiable.
+2. **Backend Routing Architecture:** All HTTP routes must be structured under the `/api` equivalent surface. Group routes strictly inside: `app/api/routes/` (e.g., `app/api/routes/auth.py`, `app/api/routes/rank.py`).
+3. **Business Logic Layer:** Keep controllers and core logic separated from endpoints. Place them strictly inside: `app/services/`.
+4. **Authentication System:** Implement strict JWT authentication across secured endpoints. Expect and pass the token via the `Authorization: Bearer <token>` header.
+
+## Coding Patterns & Safety
+1. **Standardized API Responses:** Every JSON API response must match this precise shape:
+   ```json
+   {
+     "success": true/false,
+     "message": "Descriptive message here",
+     "data": {} or []
+   }
+   ```
+2. **Zero Hardcoded Secrets:** Never hardcode secret keys, API credentials, Google Console keys, or database credentials. Always load them using environment variables (`os.getenv()`, `process.env`). Prompt the user to update their `.env` file if new keys are required.
+3. **Repository Mapping:** Always perform a full project analysis of files and schemas before making multi-file edits. Never make assumptions about table columns or existing file connections.
+
+# Product Specification & Rules for RankWatch Alternative
+
+## Global Architectural Constraints
+* **Design Principle:** Implement a "Zero Cost Design" architecture for both the frontend and backend. Prioritize open-source tools, free self-hosted libraries, and resource-efficient setups over paid third-party components wherever possible.
+* **Core Data Provider:** Use **DataForSEO** exclusively for the Rank Tracking and Backlinking data pipelines. Do not use SerpAPI or any other third-party SEO scrapers.
+
+---
+
+## 1. Rank Tracking Engine (The Core Module)
+This module acts as the automated data harvester. Use the DataForSEO API to manage data collection and prevent search engine blocks.
+* **Precise Local Tracking:** Track rankings down to specific zip codes, cities, or neighborhoods using DataForSEO location parameters.
+* **Multi-Engine Support:** Parse and store search results across Google, Bing, Yahoo, and Baidu.
+* **Device Segmentation:** Separate desktop search visibility from mobile layout rankings in the database schema.
+* **SERP Feature Tracking:** Detect and flag if a site appears in Featured Snippets, Map Packs, or People Also Ask boxes.
+* **Automated Refreshes:** Build a scheduling worker to execute DataForSEO API updates daily or weekly.
+
+---
+
+## 2. Competitor Intelligence & Benchmarking
+This section allows users to map their performance directly against rival domains in real time.
+* **Share of Voice (SoV) Analytics:** Calculate market visibility metrics across a shared keyword cluster.
+* **Competitor Keyword Mapping:** Identify ranking keywords that rivals own but the primary user is missing.
+* **Historical Ranking Comparison:** Structure data payloads to plot multi-domain ranking trajectories side by side on line charts.
+* **SERP Competitor Discovery:** Automatically flag new domains entering the top 100 results for tracked terms.
+
+---
+
+## 3. Site Audit & On-Page Crawler
+An automated system that mimics search engine bots to evaluate architectural and technical health without incurring scraping costs.
+* **Technical Health Scoring:** Calculate an overall optimization score out of 100 based on the volume and severity of issues found.
+* **Broken Link & Redirect Mapper:** Scan codebases to flag 404 errors, broken resource loops, or 301 redirect chains.
+* **Meta Tag Verification:** Identify missing alt tags, duplicate H1 headers, or truncated meta titles.
+* **Page Speed Diagnostics:** Integrate open-source Core Web Vitals data/APIs to pinpoint slow-loading files or bulky scripts.
+
+---
+
+## 4. Backlink Analyzer & Monitor
+A data-heavy processing pipeline powered by DataForSEO to monitor a website's link authority profile over time.
+* **Link Profile Health Tracking:** Calculate and display metrics like Domain Authority (DA) and Page Authority (PA).
+* **New vs. Lost Link Timelines:** Log live dates when backlinks are gained or dropped by external sites.
+* **Anchor Text Density Mapping:** Breakdown distributions of exact-match, branded, or generic anchor text.
+* **Toxic Link Detection:** Flag spam links to allow users to generate Google Disavow export files quickly.
+
+---
+
+## 5. Agency Whitelabel & Workflow Systems
+The monetization layer built for agencies managing dozens of distinct digital client accounts.
+* **Automated Email Reports:** Schedule white-labeled PDFs to be generated and emailed to clients automatically.
+* **Custom Subdomain Branded Portals:** Build a dynamic router to handle custom domains (e.g., `seo.agencyname.com`) for client logins.
+* **Multi-Tenant User Management:** Enforce strict role-based access control (RBAC) separating master admins, account managers, and read-only clients.
+* **Competitor Alerts:** Trigger notification hooks (Slack, WhatsApp, or Email) whenever a competitor overtakes a top-3 ranking position.

@@ -162,3 +162,66 @@ def login_user(db: Session, payload: dict) -> dict:
             exclude={"passwordHash", "emailVerificationToken"}
         ),
     }
+
+
+def forgot_password(db: Session, payload: dict) -> dict:
+    settings = get_settings()
+
+    email = payload.get("email")
+    if not email:
+        raise ApiError(400, "Email is required")
+
+    normalized_email = email.strip().lower()
+
+    user = db.scalar(select(User).where(User.email == normalized_email))
+    if not user:
+        # Return success even if user doesn't exist to prevent email enumeration
+        return {"sent": True}
+
+    if user.authProvider != "local":
+        raise ApiError(400, "Password reset is only available for local accounts")
+
+    raw_token, token_hash = generate_email_verification_token()
+    expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
+
+    user.passwordResetToken = token_hash
+    user.passwordResetExpiresAt = expires_at
+
+    db.add(user)
+    db.commit()
+
+    frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
+    reset_url = f"{frontend_url}/reset-password?token={raw_token}"
+
+    email_service.send_password_reset_email(user.email, user.name, reset_url)
+
+    return {"sent": True}
+
+
+def reset_password(db: Session, payload: dict) -> dict:
+    token = payload.get("token")
+    new_password = payload.get("newPassword")
+
+    if not token or not new_password:
+        raise ApiError(400, "Token and new password are required")
+
+    if len(new_password) < 8:
+        raise ApiError(400, "Password must be at least 8 characters long")
+
+    token_hash = hash_token(token)
+
+    user = db.scalar(select(User).where(User.passwordResetToken == token_hash))
+    if not user:
+        raise ApiError(400, "Invalid or expired reset token")
+
+    if not user.passwordResetExpiresAt or user.passwordResetExpiresAt < datetime.utcnow():
+        raise ApiError(400, "Reset token has expired")
+
+    user.passwordHash = hash_password(new_password)
+    user.passwordResetToken = None
+    user.passwordResetExpiresAt = None
+
+    db.add(user)
+    db.commit()
+
+    return {"reset": True}
