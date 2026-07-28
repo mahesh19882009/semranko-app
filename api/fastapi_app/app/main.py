@@ -18,7 +18,13 @@ settings = get_settings()
 origins = [settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"]
 
 # Properly add CORS middleware
-app = FastAPI(title=settings.APP_NAME)
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="RankCare SEO Analytics API - Track rankings, analyze competitors, and optimize your SEO strategy",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 register_exception_handlers(app)
 

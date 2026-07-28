@@ -7,6 +7,7 @@ import {
   runAuditByProject,
 } from '../features/audit/auditSlice';
 import { AlertTriangle, Bug, CheckCircle2, PlayCircle } from 'lucide-react';
+import { formatDateTime } from '../utils/date';
 
 const severityClasses = {
   CRITICAL: 'bg-rose-100 text-rose-700 border border-rose-200',
@@ -216,7 +217,7 @@ export default function AuditPage() {
               <p className="mt-1 text-xs text-slate-500">
                 Last run:{' '}
                 {latestAudit.createdAt
-                  ? new Date(latestAudit.createdAt).toLocaleString()
+                  ? formatDateTime(latestAudit.createdAt)
                   : '-'}
               </p>
             </div>

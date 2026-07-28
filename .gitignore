@@ -19,7 +19,6 @@ env/
 **/.env.*.local
 **/.env.*
 
-# Logs
 *.log
 
 # Coverage
@@ -50,3 +49,5 @@ package-lock.json
 
 # AI tools
 .aider*
+api/.env
+api/.env

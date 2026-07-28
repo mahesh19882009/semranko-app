@@ -1,5 +1,6 @@
 import { useDispatch, useSelector } from 'react-redux';
 import { setSelectedProjectId } from '../features/projects/projectsSlice';
+import { formatDate } from '../utils/date';
 
 function ProjectCard({ project, onEdit }) {
   const dispatch = useDispatch();
@@ -57,14 +58,14 @@ function ProjectCard({ project, onEdit }) {
         <div>
           <p className="text-slate-400">Created</p>
           <p className="mt-1 font-semibold text-slate-900">
-            {new Date(project.createdAt).toLocaleDateString()}
+            {formatDate(project.createdAt)}
           </p>
         </div>
 
         <div>
           <p className="text-slate-400">Updated</p>
           <p className="mt-1 font-semibold text-slate-900">
-            {new Date(project.updatedAt).toLocaleDateString()}
+            {formatDate(project.updatedAt)}
           </p>
         </div>
       </div>

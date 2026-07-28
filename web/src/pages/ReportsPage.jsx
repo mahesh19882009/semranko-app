@@ -14,17 +14,7 @@ import {
 import { fetchCurrentPricing } from '../features/pricing/pricingSlice';
 import Alert from '../components/ui/Alert';
 
-function formatDateTime(value) {
-  if (!value) return '—';
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '—';
-
-  return new Intl.DateTimeFormat('en-IN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
+import { formatDateTime } from '../utils/date';
 
 function getScoreTone(score) {
   if (score >= 80) {

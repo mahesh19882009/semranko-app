@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { getStoredUser, logoutUser } from "../utils/auth";
+import { formatDate } from "../utils/date";
 import {
   faBell,
   faSearch,
@@ -159,7 +160,7 @@ function Topbar({ onToggleSidebar }) {
 
     const diffDays = Math.floor(diffHours / 24);
     if (diffDays < 7) return `${diffDays}d ago`;
-
+formDa(d
     return date.toLocaleDateString();
   };
 

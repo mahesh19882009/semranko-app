@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import ConfirmModal from '../components/ConfirmModal';
+import { formatDate } from '../utils/date';
 import {
   addCompetitorToProject,
   clearCompetitorMessage,
@@ -503,9 +504,7 @@ export default function Competitors() {
                           </td>
 
                           <td className="py-3 pr-4 align-top text-slate-500">
-                            {item.updatedAt
-                              ? new Date(item.updatedAt).toLocaleDateString()
-                              : '-'}
+                            {formatDate(item.updatedAt)}
                           </td>
 
                           <td className="py-3 align-top">

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLink, faChartBar, faExternalLinkAlt, faSync } from '@fortawesome/free-solid-svg-icons';
+import { formatDate } from '../utils/date';
 
 function BacklinkAnalysis({ projectId }) {
   const [backlinks, setBacklinks] = useState([]);
@@ -193,7 +194,7 @@ function BacklinkAnalysis({ projectId }) {
                       </span>
                     </td>
                     <td className="py-3 pr-4 text-slate-500">
-                      {bl.firstSeen ? new Date(bl.firstSeen).toLocaleDateString() : '—'}
+                      {formatDate(bl.firstSeen)}
                     </td>
                     <td className="py-3">
                       <a

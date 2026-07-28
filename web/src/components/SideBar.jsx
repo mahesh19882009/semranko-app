@@ -4,10 +4,14 @@ import {
   faChartLine,
   faFolderOpen,
   faMagnifyingGlassChart,
+  faLightbulb,
   faBug,
   faUsersViewfinder,
   faFileLines,
   faFileInvoiceDollar,
+  faKey,
+  faCalendar,
+  faUsers,
   faBars,
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -15,9 +19,15 @@ const navItems = [
   { to: '/app', label: 'Dashboard', icon: faChartLine },
   { to: '/app/projects', label: 'Projects', icon: faFolderOpen },
   { to: '/app/keywords', label: 'Keywords', icon: faMagnifyingGlassChart },
+  { to: '/app/keyword-research', label: 'Keyword Research', icon: faLightbulb },
   { to: '/app/audit', label: 'Audit', icon: faBug },
   { to: '/app/competitors', label: 'Competitors', icon: faUsersViewfinder },
   { to: '/app/reports', label: 'Reports', icon: faFileLines },
+  { to: '/app/scheduled-reports', label: 'Scheduled Reports', icon: faCalendar },
+  { to: '/app/teams', label: 'Teams', icon: faUsers },
+  { to: '/app/white-label', label: 'White Label', icon: faFileLines },
+  { to: '/app/agency-dashboard', label: 'Agency Dashboard', icon: faChartLine },
+  { to: '/app/api-keys', label: 'API Keys', icon: faKey },
   { to: '/app/billing', label: 'Billing', icon: faFileInvoiceDollar },
 ];
 
