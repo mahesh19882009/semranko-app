@@ -91,15 +91,15 @@ function ReportDetailsModal({ open, onClose, report, loading, error }) {
 
                 <div
                   className={`rounded-full px-3 py-1 text-sm font-semibold ${getScoreTone(
-                    Number(report.score || 0)
+                    Number(report.visibilityScore || 0)
                   )}`}
                 >
-                  Score: {report.score ?? 0}
+                  Score: {report.visibilityScore ?? 0}
                 </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <StatChip label="SEO Score" value={report.score ?? 0} />
+                <StatChip label="SEO Score" value={report.visibilityScore ?? 0} />
                 <StatChip label="Issues" value={report.issueCount ?? 0} />
                 <StatChip label="Warnings" value={report.warningCount ?? 0} />
                 <StatChip label="Passed checks" value={report.passedChecks ?? 0} />
@@ -440,8 +440,8 @@ export default function ReportsPage() {
                           {formatDateTime(report.createdAt)}
                         </td>
                         <td className="px-5 py-4">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getScoreTone(Number(report.score || 0))}`}>
-                            {report.score ?? 0}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getScoreTone(Number(report.visibilityScore || 0))}`}>
+                            {report.visibilityScore ?? 0}
                           </span>
                         </td>
                         <td className="px-5 py-4 text-slate-700">{report.issueCount ?? 0}</td>

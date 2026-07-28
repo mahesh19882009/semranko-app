@@ -23,6 +23,7 @@ class CreateScheduledReportRequest(BaseModel):
     frequency: str  # daily, weekly, monthly
     format: str  # pdf, csv
     recipients: str  # comma-separated emails
+    start_date: Optional[str] = None  # ISO format date string
 
 
 class UpdateScheduledReportRequest(BaseModel):
@@ -42,26 +43,35 @@ async def create_scheduled_report_endpoint(
     """
     Create a new scheduled report
     """
-    report = create_scheduled_report(
-        db,
-        current_user["id"],
-        request.project_id,
-        request.name,
-        request.frequency,
-        request.format,
-        request.recipients
-    )
-    
-    return ok("Scheduled report created", {
-        "id": report.id,
-        "name": report.name,
-        "frequency": report.frequency,
-        "format": report.format,
-        "recipients": report.recipients,
-        "isActive": report.isActive,
-        "nextSendAt": report.nextSendAt.isoformat() if report.nextSendAt else None,
-        "createdAt": report.createdAt.isoformat()
-    })
+    try:
+        # Parse start_date if provided
+        start_date = None
+        if request.start_date:
+            start_date = datetime.fromisoformat(request.start_date)
+        
+        report = create_scheduled_report(
+            db,
+            current_user["id"],
+            request.project_id,
+            request.name,
+            request.frequency,
+            request.format,
+            request.recipients,
+            start_date
+        )
+        
+        return ok("Scheduled report created", {
+            "id": report.id,
+            "name": report.name,
+            "frequency": report.frequency,
+            "format": report.format,
+            "recipients": report.recipients,
+            "isActive": report.isActive,
+            "nextSendAt": report.nextSendAt.isoformat() if report.nextSendAt else None,
+            "createdAt": report.createdAt.isoformat()
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/list")

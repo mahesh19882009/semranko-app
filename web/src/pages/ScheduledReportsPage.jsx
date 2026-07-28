@@ -21,9 +21,11 @@ export default function ScheduledReportsPage() {
     frequency: "weekly",
     format: "pdf",
     recipients: "",
+    startDate: "",
   });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [createError, setCreateError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [reportToDelete, setReportToDelete] = useState(null);
 
@@ -49,8 +51,16 @@ export default function ScheduledReportsPage() {
     e.preventDefault();
     if (!selectedProject?.id || !formData.name.trim() || !formData.recipients.trim()) return;
 
+    setCreateError("");
+
+    // Validate max 2 recipients
+    const recipientList = formData.recipients.split(',').map(r => r.trim()).filter(r => r);
+    if (recipientList.length > 2) {
+      setCreateError("Maximum of 2 recipients allowed");
+      return;
+    }
+
     setCreating(true);
-    setError("");
 
     try {
       await createScheduledReportApi(
@@ -66,7 +76,12 @@ export default function ScheduledReportsPage() {
       setFormData({ name: "", frequency: "weekly", format: "pdf", recipients: "", startDate: "" });
       await loadReports();
     } catch (err) {
-      setError(err?.message || "Failed to create scheduled report");
+      if (err?.message === "Maximum of 2 scheduled reports allowed per project" ||
+          err?.message === "Maximum of 2 recipients allowed per scheduled report") {
+        setCreateError(err.message);
+      } else {
+        setError(err?.message || "Failed to create scheduled report");
+      }
     } finally {
       setCreating(false);
     }
@@ -91,11 +106,13 @@ export default function ScheduledReportsPage() {
 
     try {
       await deleteScheduledReportApi(reportToDelete.id);
-      await loadReports();
       setShowDeleteConfirm(false);
       setReportToDelete(null);
+      await loadReports();
     } catch (err) {
       setError(err?.message || "Failed to delete scheduled report");
+      setShowDeleteConfirm(false);
+      setReportToDelete(null);
     }
   };
 
@@ -108,7 +125,10 @@ export default function ScheduledReportsPage() {
             <p className="text-slate-600">Automate your SEO reporting with scheduled email reports</p>
           </div>
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setCreateError("");
+              setShowCreateModal(true);
+            }}
             disabled={!selectedProject?.id}
             className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
           >
@@ -199,6 +219,12 @@ export default function ScheduledReportsPage() {
               <h2 className="text-xl font-semibold text-slate-900 mb-4">Create Scheduled Report</h2>
               
               <form onSubmit={handleCreate}>
+                {createError && (
+                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                    {createError}
+                  </div>
+                )}
+                
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Report Name
@@ -244,7 +270,7 @@ export default function ScheduledReportsPage() {
 
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Recipients (comma-separated emails)
+                    Recipients (comma-separated emails, max 2)
                   </label>
                   <input
                     type="text"
@@ -256,10 +282,25 @@ export default function ScheduledReportsPage() {
                   />
                 </div>
 
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Start Date (optional)
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.startDate}
+                    onChange={(e) => setFormData({...formData, startDate: e.target.value})}
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
                 <div className="flex gap-2 justify-end">
                   <button
                     type="button"
-                    onClick={() => setShowCreateModal(false)}
+                    onClick={() => {
+                      setCreateError("");
+                      setShowCreateModal(false);
+                    }}
                     className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel

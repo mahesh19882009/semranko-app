@@ -187,8 +187,11 @@ def delete_team(db: Session, team_id: str, user_id: str) -> bool:
         .where(Team.id == team_id)
     ).scalar_one_or_none()
     
-    if not team or team.ownerId != user_id:
-        return False
+    if not team:
+        raise ValueError("Team not found")
+    
+    if team.ownerId != user_id:
+        raise ValueError("Only the team owner can delete this team")
     
     db.delete(team)
     db.commit()

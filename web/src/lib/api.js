@@ -148,10 +148,14 @@ export async function deleteApiKeyApi(apiKeyId) {
   });
 }
 
-export async function createScheduledReportApi(projectId, name, frequency, format, recipients) {
+export async function createScheduledReportApi(projectId, name, frequency, format, recipients, startDate) {
+  const body = { project_id: projectId, name, frequency, format, recipients };
+  if (startDate) {
+    body.start_date = startDate;
+  }
   return apiRequest('/scheduled-reports/create', {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, name, frequency, format, recipients }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -305,7 +309,8 @@ export const apiRequest = async (endpoint, options = {}) => {
   }
 
   if (!response.ok) {
-    throw new Error(data.message || 'Request failed');
+    const errorMessage = data.message || (typeof data.detail === 'string' ? data.detail : null) || 'Request failed';
+    throw new Error(errorMessage);
   }
 
   return data;

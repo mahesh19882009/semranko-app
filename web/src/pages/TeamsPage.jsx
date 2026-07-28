@@ -27,6 +27,7 @@ export default function TeamsPage() {
   const [creating, setCreating] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
+  const [inviteError, setInviteError] = useState("");
   const [showRemoveMemberConfirm, setShowRemoveMemberConfirm] = useState(false);
   const [showDeleteTeamConfirm, setShowDeleteTeamConfirm] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState(null);
@@ -73,6 +74,7 @@ export default function TeamsPage() {
     setSelectedTeam(team);
     setTeamMembers([]);
     setTeamInvites([]);
+    setInviteError("");
     
     try {
       const [membersResult, invitesResult] = await Promise.all([
@@ -95,18 +97,19 @@ export default function TeamsPage() {
     if (!inviteEmail.trim() || !selectedTeam) return;
 
     setInviting(true);
-    setError("");
+    setInviteError("");
 
     try {
       await inviteTeamMemberApi(selectedTeam.id, inviteEmail, inviteRole);
       setShowInviteModal(false);
       setInviteEmail("");
       setInviteRole("member");
+      setInviteError("");
       // Reload invitations
       const invitesResult = await getTeamInvitesApi(selectedTeam.id);
       setTeamInvites(invitesResult.data.invites || []);
     } catch (err) {
-      setError(err?.message || "Failed to invite team member");
+      setInviteError(err?.message || "Failed to invite team member");
     } finally {
       setInviting(false);
     }
@@ -395,6 +398,12 @@ export default function TeamsPage() {
             <div className="bg-white rounded-xl p-6 w-full max-w-md">
               <h2 className="text-xl font-semibold text-slate-900 mb-4">Invite Team Member</h2>
               
+              {inviteError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {inviteError}
+                </div>
+              )}
+              
               <form onSubmit={handleInvite}>
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -428,7 +437,10 @@ export default function TeamsPage() {
                 <div className="flex gap-2 justify-end">
                   <button
                     type="button"
-                    onClick={() => setShowInviteModal(false)}
+                    onClick={() => {
+                      setShowInviteModal(false);
+                      setInviteError("");
+                    }}
                     className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel

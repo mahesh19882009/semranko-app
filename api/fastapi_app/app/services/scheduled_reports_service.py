@@ -21,6 +21,20 @@ def create_scheduled_report(
     """
     Create a new scheduled report
     """
+    # Check if project already has 2 scheduled reports
+    existing_count = db.execute(
+        select(func.count()).select_from(ScheduledReport)
+        .where(ScheduledReport.projectId == project_id)
+    ).scalar() or 0
+    
+    if existing_count >= 2:
+        raise ValueError("Maximum of 2 scheduled reports allowed per project")
+    
+    # Validate recipients (max 2)
+    recipient_list = [r.strip() for r in recipients.split(',') if r.strip()]
+    if len(recipient_list) > 2:
+        raise ValueError("Maximum of 2 recipients allowed per scheduled report")
+    
     # Calculate next send time based on frequency and start date
     base_date = start_date or datetime.now()
     next_send_at = calculate_next_send_time(frequency, base_date)

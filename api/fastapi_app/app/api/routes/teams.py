@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional, List
 
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
+from app.db.models import Team, TeamMember
 from app.services.team_service import (
     create_team,
     get_user_teams,
@@ -204,10 +206,10 @@ async def delete_team_endpoint(
     """
     Delete a team
     """
-    success = delete_team(db, team_id, current_user["id"])
-    
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to delete team")
+    try:
+        delete_team(db, team_id, current_user["id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     return ok("Team deleted", {"success": True})
 
