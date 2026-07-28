@@ -30,7 +30,7 @@ import {
   setSearchQuery,
 } from "../features/search/searchSlice";
 
-function Topbar({ onToggleSidebar, sidebarOpen }) {
+function Topbar({ onToggleSidebar }) {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
@@ -278,9 +278,7 @@ function Topbar({ onToggleSidebar, sidebarOpen }) {
         <div className="flex items-center gap-3">
           <button
             onClick={onToggleSidebar}
-            className={`inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 ${
-              sidebarOpen ? 'lg:hidden' : 'lg:flex'
-            }`}
+            className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600"
           >
             <FontAwesomeIcon icon={faBars} />
           </button>

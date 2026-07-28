@@ -24,11 +24,11 @@ const navItems = [
 function Sidebar({ open, onToggle }) {
   return (
     <aside
-      className={`shrink-0 relative border-r border-slate-200 bg-white transition-all duration-300 ${
+      className={`h-[100vh] sticky top-0 shrink-0 border-r border-slate-200 bg-white transition-all duration-300 ${
         open ? 'w-72' : 'w-16'
-      } hidden lg:flex lg:flex-col`}
+      } flex flex-col`}
     >
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-5">
+      <div className="shrink-0 flex items-center justify-between border-b border-slate-200 px-4 py-5">
         <Link
           to="/"
           className={`flex items-center gap-3 overflow-hidden transition hover:bg-brand-700 hover:text-white ${
@@ -47,60 +47,62 @@ function Sidebar({ open, onToggle }) {
         </Link>
       </div>
 
-      <nav className="flex-1 space-y-2 px-3 py-6">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === '/app'}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition ${
-                isActive
-                  ? 'bg-brand-50 text-brand-700'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              } ${!open ? 'justify-center' : ''}`
-            }
-            title={!open ? item.label : undefined}
-          >
-            <FontAwesomeIcon icon={item.icon} className="w-4" />
-            {open && <span>{item.label}</span>}
-          </NavLink>
-        ))}
-      </nav>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <nav className="px-3 py-6">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === '/app'}
+              className={({ isActive }) =>
+                `flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-brand-50 text-brand-700'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                } ${!open ? 'justify-center' : ''}`
+              }
+              title={!open ? item.label : undefined}
+            >
+              <FontAwesomeIcon icon={item.icon} className="w-4" />
+              {open && <span>{item.label}</span>}
+            </NavLink>
+          ))}
+        </nav>
 
-      <div className={`m-4 rounded-3xl bg-slate-900 p-5 text-white transition-all ${!open ? 'p-3' : ''}`}>
-        {open ? (
-          <>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Upgrade</p>
-            <h3 className="mt-2 text-lg font-semibold">Agency mode</h3>
-            <p className="mt-2 text-sm text-slate-300">
-              White-label reporting, more tracked keywords, and client workspaces.
-            </p>
+        <div className={`m-4 rounded-3xl bg-slate-900 p-5 text-white transition-all ${!open ? 'p-3' : ''}`}>
+          {open ? (
+            <>
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Upgrade</p>
+              <h3 className="mt-2 text-lg font-semibold">Agency mode</h3>
+              <p className="mt-2 text-sm text-slate-300">
+                White-label reporting, more tracked keywords, and client workspaces.
+              </p>
+              <button
+                onClick={() => window.location.href = '/pricing'}
+                className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+              >
+                Explore plans
+              </button>
+            </>
+          ) : (
             <button
               onClick={() => window.location.href = '/pricing'}
-              className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+              className="flex w-full items-center justify-center text-white"
+              title="Upgrade"
             >
-              Explore plans
+              <FontAwesomeIcon icon={faFileInvoiceDollar} />
             </button>
-          </>
-        ) : (
-          <button
-            onClick={() => window.location.href = '/pricing'}
-            className="flex w-full items-center justify-center text-white"
-            title="Upgrade"
-          >
-            <FontAwesomeIcon icon={faFileInvoiceDollar} />
-          </button>
-        )}
-      </div>
+          )}
+        </div>
 
-      <button
-        onClick={onToggle}
-        className="absolute bottom-4 -right-3 z-10 hidden h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm lg:flex"
-        title={open ? 'Collapse sidebar' : 'Expand sidebar'}
-      >
-        <FontAwesomeIcon icon={open ? faBars : faBars} className="text-xs text-slate-600" />
-      </button>
+        <button
+          onClick={onToggle}
+          className="absolute bottom-4 -right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm"
+          title={open ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          <FontAwesomeIcon icon={faBars} className="text-xs text-slate-600" />
+        </button>
+      </div>
     </aside>
   );
 }

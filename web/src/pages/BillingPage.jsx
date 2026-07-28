@@ -198,10 +198,6 @@ export default function BillingPage() {
     .filter(inv => ["paid", "captured"].includes(inv.status?.toLowerCase()))
     .reduce((sum, inv) => sum + inv.total_amount, 0);
 
-  const totalGST = invoices
-    .filter(inv => ["paid", "captured"].includes(inv.status?.toLowerCase()))
-    .reduce((sum, inv) => sum + inv.gst_amount, 0);
-
   return (
     <div className="min-h-screen bg-slate-50 pb-16">
       {/* Header */}

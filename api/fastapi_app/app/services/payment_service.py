@@ -7,6 +7,7 @@ from app.db.models import User, PaymentOrder, Subscription
 from app.core.config import get_settings
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER
 from app.services.notification_service import create_notification
+from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from fastapi import HTTPException
@@ -285,6 +286,16 @@ def activate_subscription(
             severity="info",
         )
         db.commit()
+
+        payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+        amount = float(payment_order.amount) / 100 if payment_order else 0.0
+        email_service.send_payment_success_email(
+            to_email=user.email,
+            name=user.name,
+            plan_name=plan['name'],
+            amount=amount,
+            order_id=order_id
+        )
         
         return existing_subscription
     else:
@@ -319,6 +330,16 @@ def activate_subscription(
             severity="info",
         )
         db.commit()
+
+        payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+        amount = float(payment_order.amount) / 100 if payment_order else 0.0
+        email_service.send_payment_success_email(
+            to_email=user.email,
+            name=user.name,
+            plan_name=plan['name'],
+            amount=amount,
+            order_id=order_id
+        )
         
         return subscription
 

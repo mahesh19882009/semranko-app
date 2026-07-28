@@ -1,13 +1,17 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+import logging
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.db.models import User, Subscription
 from app.services.payment_service import create_order, verify_payment_signature, activate_subscription
+from app.services import email_service
 from app.services.plan_service import PLAN_DEFINITIONS
 from app.core.config import FREE_PLAN_LIMITS, GST_RATE, get_settings
 
@@ -237,11 +241,19 @@ async def verify_payment(
             # Mark payment order as failed
             from app.db.models import PaymentOrder as PO
             payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
+            plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown")
             if payment_order:
                 payment_order.status = "failed"
                 payment_order.razorpayPaymentId = razorpay_payment_id
                 db.add(payment_order)
                 db.commit()
+            email_service.send_payment_failure_email(
+                to_email=current_user.email,
+                name=current_user.name,
+                plan_name=plan_name,
+                order_id=razorpay_order_id,
+                error_message="Invalid payment signature"
+            )
             raise HTTPException(status_code=400, detail="Invalid payment signature")
         
         subscription = activate_subscription(
@@ -270,11 +282,19 @@ async def verify_payment(
         # Mark payment order as failed on any other error
         from app.db.models import PaymentOrder as PO
         payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
+        plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown")
         if payment_order:
             payment_order.status = "failed"
             payment_order.razorpayPaymentId = razorpay_payment_id
             db.add(payment_order)
             db.commit()
+        email_service.send_payment_failure_email(
+            to_email=current_user.email,
+            name=current_user.name,
+            plan_name=plan_name,
+            order_id=razorpay_order_id,
+            error_message=str(e)
+        )
         raise HTTPException(status_code=500, detail=f"Payment verification failed: {str(e)}")
 
 @router.get("/current-plan")
@@ -393,3 +413,82 @@ async def get_invoices(
             "user_email": current_user.email,
         }
     }
+
+
+@router.post("/webhook")
+async def razorpay_webhook(
+    request_data: Dict[str, Any],
+    signature: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    from app.services.payment_service import handle_webhook
+    from app.db.models import User, PaymentOrder as PO
+
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing signature")
+
+    try:
+        event = handle_webhook(request_data, signature)
+    except Exception as exc:
+        logger.exception("Webhook verification failed: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    if not event:
+        return {"received": True}
+
+    event_type = event.get("type")
+    payment_id = event.get("payment_id")
+    order_id = event.get("order_id")
+    user_email = event.get("user_email")
+    plan_id = event.get("plan_id")
+
+    payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id))
+    if not payment_order:
+        return {"received": True}
+
+    user = db.scalar(select(User).where(User.id == payment_order.userId))
+    if not user:
+        return {"received": True}
+
+    plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown") if plan_id is not None else "Unknown"
+
+    if event_type == "payment.captured":
+        payment_order.status = "paid"
+        payment_order.razorpayPaymentId = payment_id
+        db.add(payment_order)
+        db.commit()
+
+        try:
+            subscription = activate_subscription(
+                db=db,
+                user_id=user.id,
+                plan_id=plan_id if plan_id is not None else payment_order.planId,
+                payment_id=payment_id,
+                order_id=order_id
+            )
+        except Exception as exc:
+            logger.exception("Webhook subscription activation failed: %s", exc)
+
+        email_service.send_payment_success_email(
+            to_email=user.email,
+            name=user.name,
+            plan_name=plan_name,
+            amount=float(payment_order.amount) / 100,
+            order_id=order_id
+        )
+
+    elif event_type == "payment.failed":
+        payment_order.status = "failed"
+        payment_order.razorpayPaymentId = payment_id
+        db.add(payment_order)
+        db.commit()
+
+        email_service.send_payment_failure_email(
+            to_email=user.email,
+            name=user.name,
+            plan_name=plan_name,
+            order_id=order_id,
+            error_message="Payment failed via Razorpay webhook"
+        )
+
+    return {"received": True}

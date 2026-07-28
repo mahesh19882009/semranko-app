@@ -23,7 +23,7 @@ function AppLayout() {
       <div className="flex min-h-screen">
         <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen((prev) => !prev)} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <Topbar onToggleSidebar={() => setSidebarOpen((prev) => !prev)} sidebarOpen={sidebarOpen} />
+          <Topbar onToggleSidebar={() => setSidebarOpen((prev) => !prev)} />
           <main className="flex-1 px-4 py-6 sm:px-6">
             <Outlet />
           </main>
