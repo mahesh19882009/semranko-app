@@ -135,55 +135,57 @@ function CompetitorComparison({ projectId }) {
       {comparisonData && comparisonData.length > 0 && (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
           <h3 className="text-lg font-semibold text-slate-900 mb-4">Competitor Rankings</h3>
-          <div className="space-y-4">
-            {comparisonData.map((competitor) => (
-              <div
-                key={competitor.competitor_id}
-                className="rounded-2xl border border-slate-100 p-4 hover:border-slate-300 transition cursor-pointer"
-                onClick={() => handleCompetitorClick(competitor)}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <p className="font-semibold text-slate-900">{competitor.competitor_name}</p>
-                    <p className="text-sm text-slate-500">{competitor.competitor_domain}</p>
+          <div className="max-h-[320px] overflow-y-auto">
+            <div className="space-y-4">
+              {comparisonData.map((competitor) => (
+                <div
+                  key={competitor.competitor_id}
+                  className="rounded-2xl border border-slate-100 p-4 hover:border-slate-300 transition cursor-pointer"
+                  onClick={() => handleCompetitorClick(competitor)}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="font-semibold text-slate-900">{competitor.competitor_name}</p>
+                      <p className="text-sm text-slate-500">{competitor.competitor_domain}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-slate-500">Overlap</p>
+                      <p className="font-semibold text-slate-900">{competitor.overlapPercentage}%</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm text-slate-500">Overlap</p>
-                    <p className="font-semibold text-slate-900">{competitor.overlapPercentage}%</p>
+                  
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-slate-500">Shared Keywords</p>
+                      <p className="font-semibold text-slate-900">{competitor.shared_keywords}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Average Gap</p>
+                      <p className="font-semibold text-slate-900">
+                        {getGapIndicator(competitor.average_gap)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-slate-500">Shared Keywords</p>
-                    <p className="font-semibold text-slate-900">{competitor.shared_keywords}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Average Gap</p>
-                    <p className="font-semibold text-slate-900">
-                      {getGapIndicator(competitor.average_gap)}
-                    </p>
-                  </div>
-                </div>
 
-                {/* Top 5 keyword comparisons */}
-                <div className="mt-4 pt-4 border-t border-slate-100">
-                  <p className="text-xs font-semibold text-slate-500 mb-2">Top Keywords</p>
-                  <div className="space-y-2">
-                    {competitor.rankings.slice(0, 5).map((ranking, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-sm">
-                        <span className="text-slate-600 truncate w-1/2">{ranking.keyword}</span>
-                        <div className="flex items-center gap-4">
-                          <span className="text-slate-500">You: #{ranking.your_position || '—'}</span>
-                          <span className="text-slate-500">Them: #{ranking.competitor_position || '—'}</span>
-                          <span>{getGapIndicator(ranking.gap)}</span>
+                  {/* Top 5 keyword comparisons */}
+                  <div className="mt-4 pt-4 border-t border-slate-100">
+                    <p className="text-xs font-semibold text-slate-500 mb-2">Top Keywords</p>
+                    <div className="space-y-2">
+                      {competitor.rankings.slice(0, 5).map((ranking, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600 truncate w-1/2">{ranking.keyword}</span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-slate-500">You: #{ranking.your_position || '—'}</span>
+                            <span className="text-slate-500">Them: #{ranking.competitor_position || '—'}</span>
+                            <span>{getGapIndicator(ranking.gap)}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       )}

@@ -35,6 +35,7 @@ import {
   resetDashboard,
 } from '../features/dashboard/dashboardSlice';
 import StatCard from '../components/StateCard';
+import Card from '../components/ui/Card';
 
 function DashboardPage() {
   const dispatch = useDispatch();
@@ -67,7 +68,7 @@ function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+      <Card padding="p-6">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-brand-700">
@@ -116,24 +117,24 @@ function DashboardPage() {
             </div>
           </div>
         </div>
-      </section>
+      </Card>
 
       {error && (
-        <section className="rounded-3xl border border-rose-200 bg-rose-50/70 p-6 text-center shadow-soft">
+        <Card padding="p-6 text-center" border="border-rose-200" className="bg-rose-50/70">
           <h3 className="text-lg font-semibold text-slate-900">Dashboard failed to load</h3>
           <p className="mt-2 text-sm text-slate-600">{error}</p>
-        </section>
+        </Card>
       )}
 
       {project && !loading && !error && !hasSelectedProjectData && (
-        <section className="rounded-3xl border border-dashed border-amber-300 bg-amber-50/70 p-6 text-center shadow-soft">
+        <Card padding="p-6 text-center" border="border-dashed border-amber-300" className="bg-amber-50/70">
           <h3 className="text-lg font-semibold text-slate-900">
             No dashboard data for {project.name}
           </h3>
           <p className="mt-2 text-sm text-slate-600">
             This project is selected, but no dashboard records are available yet.
           </p>
-        </section>
+        </Card>
       )}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

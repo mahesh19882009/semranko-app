@@ -94,38 +94,40 @@ export default function AgencyDashboardPage() {
             <p className="text-slate-600">No projects to compare</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Project</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Domain</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Keywords</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Top 10</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Top 10 %</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Improved (30d)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparison.map((project, index) => (
-                    <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                      <td className="py-3 px-4 text-sm font-medium text-slate-900">{project.projectName}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{project.domain}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{project.keywordCount}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{project.top10Count}</td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          project.top10Percentage >= 50 ? 'bg-green-100 text-green-800' :
-                          project.top10Percentage >= 20 ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          {project.top10Percentage}%
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{project.improvedCount}</td>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                      <th className="text-left py-3 px-4 font-medium">Project</th>
+                      <th className="text-left py-3 px-4 font-medium">Domain</th>
+                      <th className="text-left py-3 px-4 font-medium">Keywords</th>
+                      <th className="text-left py-3 px-4 font-medium">Top 10</th>
+                      <th className="text-left py-3 px-4 font-medium">Top 10 %</th>
+                      <th className="text-left py-3 px-4 font-medium">Improved (30d)</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {comparison.map((project, index) => (
+                      <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="py-3 px-4 text-sm font-medium text-slate-900">{project.projectName}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{project.domain}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{project.keywordCount}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{project.top10Count}</td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            project.top10Percentage >= 50 ? 'bg-green-100 text-green-800' :
+                            project.top10Percentage >= 20 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {project.top10Percentage}%
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{project.improvedCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -150,21 +152,23 @@ export default function AgencyDashboardPage() {
         {overview && overview.recentActivity && overview.recentActivity.length > 0 && (
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900 mb-4">Recent Activity</h2>
-            <div className="space-y-3">
-              {overview.recentActivity.map((activity, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{activity.keyword}</p>
-                    <p className="text-xs text-slate-600">{activity.projectName}</p>
+            <div className="max-h-[320px] overflow-y-auto">
+              <div className="space-y-3">
+                {overview.recentActivity.map((activity, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{activity.keyword}</p>
+                      <p className="text-xs text-slate-600">{activity.projectName}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-slate-900">#{activity.position}</p>
+                      <p className="text-xs text-slate-500">
+                        {formatDate(activity.checkedAt)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-slate-900">#{activity.position}</p>
-                    <p className="text-xs text-slate-500">
-                      {formatDate(activity.checkedAt)}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         )}

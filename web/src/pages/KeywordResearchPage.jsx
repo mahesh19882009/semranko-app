@@ -255,36 +255,38 @@ export default function KeywordResearchPage() {
 
             {opportunities.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Keyword</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Current Position</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Difficulty</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Search Volume</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Opportunity Score</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {opportunities.map((opp, index) => (
-                      <tr key={index} className="border-b border-slate-100">
-                        <td className="py-3 px-4 text-sm text-slate-900 font-medium">{opp.keyword}</td>
-                        <td className="py-3 px-4 text-sm text-slate-600">#{opp.currentPosition}</td>
-                        <td className="py-3 px-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(opp.difficulty)}`}>
-                            {opp.difficulty}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-sm text-slate-600">{opp.searchVolume.toLocaleString()}</td>
-                        <td className="py-3 px-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getOpportunityColor(opp.opportunityScore)}`}>
-                            {opp.opportunityScore}
-                          </span>
-                        </td>
+                <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                        <th className="text-left py-3 px-4 font-medium">Keyword</th>
+                        <th className="text-left py-3 px-4 font-medium">Current Position</th>
+                        <th className="text-left py-3 px-4 font-medium">Difficulty</th>
+                        <th className="text-left py-3 px-4 font-medium">Search Volume</th>
+                        <th className="text-left py-3 px-4 font-medium">Opportunity Score</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {opportunities.map((opp, index) => (
+                        <tr key={index} className="border-b border-slate-100">
+                          <td className="py-3 px-4 text-sm text-slate-900 font-medium">{opp.keyword}</td>
+                          <td className="py-3 px-4 text-sm text-slate-600">#{opp.currentPosition}</td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(opp.difficulty)}`}>
+                              {opp.difficulty}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-slate-600">{opp.searchVolume.toLocaleString()}</td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getOpportunityColor(opp.opportunityScore)}`}>
+                              {opp.opportunityScore}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

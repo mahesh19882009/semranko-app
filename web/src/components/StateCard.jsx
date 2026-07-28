@@ -1,5 +1,5 @@
-import React from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import Card from './ui/Card';
 
 function StatCard({ title, value, hint, icon, tone = 'brand' }) {
   const toneClasses = {
@@ -10,7 +10,7 @@ function StatCard({ title, value, hint, icon, tone = 'brand' }) {
   };
 
   return (
-    <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+    <Card padding="p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-slate-500">{title}</p>
@@ -22,7 +22,7 @@ function StatCard({ title, value, hint, icon, tone = 'brand' }) {
           <FontAwesomeIcon icon={icon} />
         </div>
       </div>
-    </article>
+    </Card>
   );
 }
 

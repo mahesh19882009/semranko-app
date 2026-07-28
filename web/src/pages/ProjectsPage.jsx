@@ -9,6 +9,8 @@ import {
 } from '../features/projects/projectsSlice';
 import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 import Alert from '../components/ui/Alert';
+import Input from '../components/ui/Input';
+import Button from '../components/ui/Button';
 
 function ProjectsPage() {
   const dispatch = useDispatch();
@@ -119,13 +121,12 @@ function ProjectsPage() {
             </p>
           </div>
 
-          <button
+          <Button
             onClick={() => setShowForm((prev) => !prev)}
             disabled={projectLimitReached}
-            className="rounded-2xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {showForm ? 'Close form' : 'Add project'}
-          </button>
+          </Button>
         </div>
 
         {projectLimitReached ? (
@@ -140,43 +141,40 @@ function ProjectsPage() {
             onSubmit={projectToEdit ? handleUpdateProject : handleSubmit}
             className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-5 md:grid-cols-2"
           >
-            <input
-              type="text"
+            <Input
+              label="Project name"
               name="name"
               placeholder="Project name"
               value={form.name}
               onChange={handleChange}
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
               required
             />
 
-            <input
-              type="text"
+            <Input
+              label="Domain"
               name="domain"
               placeholder="Domain (example.com)"
               value={form.domain}
               onChange={handleChange}
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
               required
             />
 
-            <select
+            <Input.Select
+              label="Device"
               name="device"
               value={form.device}
               onChange={handleChange}
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
             >
               <option value="desktop">Desktop</option>
               <option value="mobile">Mobile</option>
-            </select>
+            </Input.Select>
 
-            <input
-              type="text"
+            <Input
+              label="Location"
               name="location"
               placeholder="Location"
               value={form.location}
               onChange={handleChange}
-              className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
             />
 
             <div className="md:col-span-2 flex gap-3">

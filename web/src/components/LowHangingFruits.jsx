@@ -114,50 +114,52 @@ export default function LowHangingFruits() {
 
       {opportunities.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-200">
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Keyword</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Position</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Change</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Difficulty</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">LHF Score</th>
-                <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Category</th>
-              </tr>
-            </thead>
-            <tbody>
-              {opportunities.map((opp, index) => (
-                <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="py-3 px-4 text-sm text-slate-900 font-medium">{opp.keyword}</td>
-                  <td className="py-3 px-4 text-sm text-slate-600">#{opp.currentPosition}</td>
-                  <td className="py-3 px-4">
-                    {opp.positionChange !== 0 ? (
-                      <span className={`text-sm font-medium ${opp.positionChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {opp.positionChange > 0 ? '+' : ''}{opp.positionChange}
-                      </span>
-                    ) : (
-                      <span className="text-sm text-slate-400">-</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={`text-sm font-medium ${opp.difficulty <= 40 ? 'text-green-600' : opp.difficulty <= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {opp.difficulty}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={`text-sm font-bold ${getLHFColor(opp.lhfScore)}`}>
-                      {opp.lhfScore}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getCategoryColor(opp.category)}`}>
-                      {opp.category}
-                    </span>
-                  </td>
+          <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                  <th className="text-left py-3 px-4 font-medium">Keyword</th>
+                  <th className="text-left py-3 px-4 font-medium">Position</th>
+                  <th className="text-left py-3 px-4 font-medium">Change</th>
+                  <th className="text-left py-3 px-4 font-medium">Difficulty</th>
+                  <th className="text-left py-3 px-4 font-medium">LHF Score</th>
+                  <th className="text-left py-3 px-4 font-medium">Category</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {opportunities.map((opp, index) => (
+                  <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-3 px-4 text-sm text-slate-900 font-medium">{opp.keyword}</td>
+                    <td className="py-3 px-4 text-sm text-slate-600">#{opp.currentPosition}</td>
+                    <td className="py-3 px-4">
+                      {opp.positionChange !== 0 ? (
+                        <span className={`text-sm font-medium ${opp.positionChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {opp.positionChange > 0 ? '+' : ''}{opp.positionChange}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-slate-400">-</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`text-sm font-medium ${opp.difficulty <= 40 ? 'text-green-600' : opp.difficulty <= 60 ? 'text-yellow-600' : 'text-red-600'}`}>
+                        {opp.difficulty}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`text-sm font-bold ${getLHFColor(opp.lhfScore)}`}>
+                        {opp.lhfScore}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getCategoryColor(opp.category)}`}>
+                        {opp.category}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

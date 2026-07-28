@@ -160,55 +160,57 @@ export default function ScheduledReportsPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Name</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Frequency</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Format</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Recipients</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Next Send</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Status</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reports.map((report) => (
-                    <tr key={report.id} className="border-b border-slate-100">
-                      <td className="py-3 px-4 text-sm font-medium text-slate-900">{report.name}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600 capitalize">{report.frequency}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600 uppercase">{report.format}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{report.recipients}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">
-                        {formatDate(report.nextSendAt)}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          report.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {report.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleToggleActive(report.id, report.isActive)}
-                            className="text-sm text-slate-600 hover:text-slate-900"
-                          >
-                            {report.isActive ? 'Pause' : 'Activate'}
-                          </button>
-                          <button
-                            onClick={() => handleDelete(report.id, report.name)}
-                            className="text-sm text-red-600 hover:text-red-900"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
+              <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                      <th className="text-left py-3 px-4 font-medium">Name</th>
+                      <th className="text-left py-3 px-4 font-medium">Frequency</th>
+                      <th className="text-left py-3 px-4 font-medium">Format</th>
+                      <th className="text-left py-3 px-4 font-medium">Recipients</th>
+                      <th className="text-left py-3 px-4 font-medium">Next Send</th>
+                      <th className="text-left py-3 px-4 font-medium">Status</th>
+                      <th className="text-left py-3 px-4 font-medium">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {reports.map((report) => (
+                      <tr key={report.id} className="border-b border-slate-100">
+                        <td className="py-3 px-4 text-sm font-medium text-slate-900">{report.name}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600 capitalize">{report.frequency}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600 uppercase">{report.format}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{report.recipients}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">
+                          {formatDate(report.nextSendAt)}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            report.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {report.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleToggleActive(report.id, report.isActive)}
+                              className="text-sm text-slate-600 hover:text-slate-900"
+                            >
+                              {report.isActive ? 'Pause' : 'Activate'}
+                            </button>
+                            <button
+                              onClick={() => handleDelete(report.id, report.name)}
+                              className="text-sm text-red-600 hover:text-red-900"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

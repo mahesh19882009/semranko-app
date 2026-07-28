@@ -1,3 +1,5 @@
+import Card from './ui/Card';
+
 function Skeleton({ className = '' }) {
   return (
     <div className={`animate-pulse rounded-full bg-slate-200 ${className}`} />
@@ -19,7 +21,7 @@ function SkeletonText({ lines = 3, className = '' }) {
 
 function SkeletonCard() {
   return (
-    <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+    <Card padding="p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 space-y-3">
           <Skeleton className="h-4 w-24" />
@@ -28,7 +30,7 @@ function SkeletonCard() {
         </div>
         <Skeleton className="h-12 w-12 shrink-0 rounded-2xl" />
       </div>
-    </article>
+    </Card>
   );
 }
 

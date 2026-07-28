@@ -155,26 +155,28 @@ export default function SerpFeatures() {
         <div>
           <h3 className="text-lg font-semibold text-slate-900 mb-3">Keywords with SERP Features</h3>
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Keyword</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-700">Feature Count</th>
-                </tr>
-              </thead>
-              <tbody>
-                {keywords.map((item, index) => (
-                  <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="py-3 px-4 text-sm text-slate-900 font-medium">{item.keyword}</td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
-                        {item.featureCount}
-                      </span>
-                    </td>
+            <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                    <th className="text-left py-3 px-4 font-medium">Keyword</th>
+                    <th className="text-left py-3 px-4 font-medium">Feature Count</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {keywords.map((item, index) => (
+                    <tr key={index} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="py-3 px-4 text-sm text-slate-900 font-medium">{item.keyword}</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                          {item.featureCount}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
