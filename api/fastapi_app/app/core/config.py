@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     # Email
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM: str = "noreply@rankcare.com"
+    CONTACT_EMAIL: Optional[str] = None
     EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     
     # Razorpay

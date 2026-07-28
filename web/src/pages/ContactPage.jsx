@@ -1,7 +1,19 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
 
 function ContactPage() {
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    company: "",
+    message: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
   const contactItems = [
     {
       title: "Sales",
@@ -19,6 +31,44 @@ function ContactPage() {
       value: "hello@rankcare.com",
     },
   ];
+
+  const handleChange = (e) => {
+    setForm((prev) => ({
+      ...prev,
+      [e.target.name]: e.target.value,
+    }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch("/api/contact/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message || "Failed to send message");
+      }
+
+      setMessage(result?.message || "Thank you for your message. We'll get back to you soon.");
+      setSubmitted(true);
+      setForm({ name: "", email: "", company: "", message: "" });
+    } catch (err) {
+      setError(err?.message || "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <PublicLayout>
@@ -44,33 +94,63 @@ function ContactPage() {
                 Use this basic form now and connect it to your backend or email flow later.
               </p>
 
-              <form style={styles.form}>
+              <form style={styles.form} onSubmit={handleSubmit}>
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>Full Name</label>
-                  <input type="text" placeholder="Enter your name" style={styles.input} />
+                  <input
+                    type="text"
+                    name="name"
+                    placeholder="Enter your name"
+                    value={form.name}
+                    onChange={handleChange}
+                    required
+                    style={styles.input}
+                  />
                 </div>
 
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>Email Address</label>
-                  <input type="email" placeholder="Enter your email" style={styles.input} />
+                  <input
+                    type="email"
+                    name="email"
+                    placeholder="Enter your email"
+                    value={form.email}
+                    onChange={handleChange}
+                    required
+                    style={styles.input}
+                  />
                 </div>
 
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>Company</label>
-                  <input type="text" placeholder="Enter company name" style={styles.input} />
+                  <input
+                    type="text"
+                    name="company"
+                    placeholder="Enter company name"
+                    value={form.company}
+                    onChange={handleChange}
+                    style={styles.input}
+                  />
                 </div>
 
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>Message</label>
                   <textarea
+                    name="message"
                     placeholder="Tell us what you need help with"
                     rows="6"
+                    value={form.message}
+                    onChange={handleChange}
+                    required
                     style={styles.textarea}
                   />
                 </div>
 
-                <button type="button" style={styles.submitBtn}>
-                  Send Message
+                {error && <p style={styles.error}>{error}</p>}
+                {message && <p style={styles.success}>{message}</p>}
+
+                <button type="submit" disabled={loading} style={styles.submitBtn}>
+                  {loading ? "Sending..." : "Send Message"}
                 </button>
               </form>
             </div>
@@ -293,6 +373,16 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer",
     marginTop: "6px",
+  },
+  error: {
+    color: "#d92d20",
+    margin: 0,
+    fontSize: "14px",
+  },
+  success: {
+    color: "#059669",
+    margin: 0,
+    fontSize: "14px",
   },
   contactList: {
     display: "flex",

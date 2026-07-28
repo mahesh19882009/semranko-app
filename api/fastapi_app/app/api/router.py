@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.routes.audits import router as audits_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.competitors import router as competitors_router
+from app.api.routes.contact import router as contact_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.keywords import router as keywords_router
 from app.api.routes.notifications import router as notifications_router
@@ -31,3 +32,4 @@ api_router.include_router(search_router)
 api_router.include_router(pricing_router)
 api_router.include_router(payments_router)
 api_router.include_router(backlinks.router)
+api_router.include_router(contact_router)
