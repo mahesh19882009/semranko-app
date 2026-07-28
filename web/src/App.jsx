@@ -13,6 +13,8 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
 import ResendVerificationPage from "./pages/ResendVerificationPage";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import KeywordsPage from "./pages/KeywordsPage";
@@ -69,6 +71,22 @@ function App() {
         element={
           <PublicLayout>
             <ResendVerificationPage />
+          </PublicLayout>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <PublicLayout>
+            <ForgotPasswordPage />
+          </PublicLayout>
+        }
+      />
+      <Route
+        path="/reset-password"
+        element={
+          <PublicLayout>
+            <ResetPasswordPage />
           </PublicLayout>
         }
       />

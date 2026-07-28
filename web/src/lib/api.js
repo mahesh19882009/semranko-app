@@ -55,6 +55,42 @@ export async function resendVerificationApi(email) {
   return result;
 }
 
+export async function forgotPasswordApi(email) {
+  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email }),
+  });
+
+  const result = await parseJsonSafe(response);
+
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message || "Failed to send password reset email");
+  }
+
+  return result;
+}
+
+export async function resetPasswordApi(token, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ token, newPassword }),
+  });
+
+  const result = await parseJsonSafe(response);
+
+  if (!response.ok || !result?.success) {
+    throw new Error(result?.message || "Failed to reset password");
+  }
+
+  return result;
+}
+
 
 export const apiRequest = async (endpoint, options = {}) => {
   let token = null;

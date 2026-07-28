@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import db_session
 from app.schemas.common import ok
 from app.services.auth_service import (
+    forgot_password,
     login_user,
     register_user,
     resend_verification_email,
+    reset_password,
     verify_email_token,
 )
 
@@ -39,3 +41,15 @@ def resend_verification(payload: dict = Body(...), db: Session = Depends(db_sess
         return ok("Email is already verified", result)
 
     return ok("Verification email sent", result)
+
+
+@router.post("/forgot-password")
+def forgot_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+    result = forgot_password(db, payload)
+    return ok("If your email is registered, you will receive a password reset link", result)
+
+
+@router.post("/reset-password")
+def reset_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+    result = reset_password(db, payload)
+    return ok("Password reset successfully", result)

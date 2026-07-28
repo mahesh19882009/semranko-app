@@ -85,6 +85,11 @@ function LoginPage() {
             value={form.password}
             onChange={handleChange}
           />
+          <div style={styles.forgotPasswordContainer}>
+            <Link to="/forgot-password" style={styles.forgotPasswordLink}>
+              Forgot password?
+            </Link>
+          </div>
 
           {error ? <p style={styles.error}>{error}</p> : null}
           {error === "Please verify your email before logging in" ? (
@@ -183,6 +188,14 @@ const styles = {
     marginTop: "18px",
     fontSize: "14px",
     color: "#667085",
+  },
+  forgotPasswordContainer: {
+    textAlign: "right",
+  },
+  forgotPasswordLink: {
+    fontSize: "14px",
+    color: "#667085",
+    textDecoration: "none",
   },
 };
 

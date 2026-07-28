@@ -24,6 +24,8 @@ class User(Base):
     isVerified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     emailVerificationToken: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
     emailVerificationExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    passwordResetToken: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
+    passwordResetExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     authProvider: Mapped[str] = mapped_column(String, nullable=False, default="local", server_default="local")
     googleId: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
 

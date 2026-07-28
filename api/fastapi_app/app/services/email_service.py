@@ -308,3 +308,97 @@ def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_i
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PAYMENT FAILURE EMAIL: %s", exc)
+
+
+def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
+    settings = get_settings()
+
+    if not settings.RESEND_API_KEY:
+        logger.info("[EMAIL DISABLED] Password reset link for %s: %s", to_email, reset_url)
+        return
+
+    resend.api_key = settings.RESEND_API_KEY
+    sender = settings.EMAIL_FROM or "onboarding@resend.dev"
+    subject = "Reset your password"
+
+    try:
+        response = resend.Emails.send({
+            "from": sender,
+            "to": [to_email],
+            "subject": subject,
+            "html": f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Reset your password</title>
+                </head>
+                <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 32px 16px;">
+                    <tr>
+                    <td align="center">
+                        <!-- Main Card Container -->
+                        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 440px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                        
+                        <!-- Header Banner -->
+                        <tr>
+                            <td style="background-color: #0f172a; padding: 32px 24px; text-align: center;">
+                            <!-- Key Icon Wrapper -->
+                            <div style="display: inline-block; background-color: #2563eb; width: 48px; height: 48px; border-radius: 50%; text-align: center; margin-bottom: 16px;">
+                                <span style="color: #ffffff; font-size: 20px; line-height: 46px; font-weight: bold;">🔑</span>
+                            </div>
+                            <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.025em;">Reset Your Password</h1>
+                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">RankCare Account Security</p>
+                            </td>
+                        </tr>
+
+                        <!-- Content Body -->
+                        <tr>
+                            <td style="padding: 24px;">
+                            <p style="margin: 0 0 16px 0; font-size: 15px; color: #334155; line-height: 1.5;">Hi <strong>{name}</strong>,</p>
+                            <p style="margin: 0 0 24px 0; font-size: 14px; color: #64748b; line-height: 1.5;">We received a request to reset your password. If you didn't make this request, you can safely ignore this email.</p>
+
+                            <!-- Action Button -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
+                                <tr>
+                                <td align="center">
+                                    <a href="{reset_url}" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Reset Password</a>
+                                </td>
+                                </tr>
+                            </table>
+
+                            <!-- Fallback URL Section -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                                <tr>
+                                <td>
+                                    <p style="margin: 0 0 8px 0; font-size: 12px; color: #94a3b8; line-height: 1.4;">If the button above doesn't work, copy and paste this link into your web browser:</p>
+                                    <p style="margin: 0; font-size: 12px; color: #2563eb; word-break: break-all; font-family: monospace; line-height: 1.4;"><a href="{reset_url}" style="color: #2563eb; text-decoration: none;">{reset_url}</a></p>
+                                </td>
+                                </tr>
+                            </table>
+                            </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                            <td style="padding: 0 24px 24px 24px; text-align: center;">
+                            <p style="margin: 0; font-size: 12px; color: #94a3b8;">This link will expire in 1 hour for your security.</p>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
+                            </td>
+                        </tr>
+
+                        </table>
+                    </td>
+                    </tr>
+                </table>
+                </body>
+                </html>
+            """
+        })
+
+        logger.info("RESEND PASSWORD RESET EMAIL RESPONSE: %s", response)
+        logger.info("PASSWORD RESET URL SENT: %s", reset_url)
+
+    except Exception as exc:
+        logger.exception("FAILED TO SEND PASSWORD RESET EMAIL: %s", exc)
