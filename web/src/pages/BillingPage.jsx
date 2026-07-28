@@ -13,6 +13,8 @@ import {
   faClock,
   faTag,
 } from "@fortawesome/free-solid-svg-icons";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 function fmt(amount) {
   return new Intl.NumberFormat("en-IN", {
@@ -211,14 +213,14 @@ export default function BillingPage() {
                 All transactions, GST breakdown, and account credit balance
               </p>
             </div>
-            <button
+            <Button
               type="button"
               onClick={() => navigate("/pricing")}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 transition"
+              variant="primary"
             >
               Manage Plan
               <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -303,12 +305,14 @@ export default function BillingPage() {
             <div className="flex flex-col items-center justify-center py-20 text-rose-500">
               <FontAwesomeIcon icon={faCircleXmark} className="text-3xl mb-3" />
               <p className="text-sm font-medium">{error}</p>
-              <button
+              <Button
                 onClick={loadInvoices}
-                className="mt-4 rounded-xl border border-rose-200 px-4 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition"
+                variant="outline"
+                size="sm"
+                className="mt-4 border-rose-200 text-rose-600 hover:bg-rose-50"
               >
                 Retry
-              </button>
+              </Button>
             </div>
           ) : invoices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-slate-400">
@@ -317,13 +321,13 @@ export default function BillingPage() {
               <p className="mt-1 text-xs text-slate-400">
                 Your payment history will appear here after your first subscription.
               </p>
-              <button
+              <Button
                 type="button"
                 onClick={() => navigate("/pricing")}
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition"
+                className="mt-5 bg-indigo-600 hover:bg-indigo-700"
               >
                 View Plans <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
-              </button>
+              </Button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -376,15 +380,16 @@ export default function BillingPage() {
                           </td>
                           <td className="px-6 py-4">
                             {["paid", "captured"].includes(inv.status?.toLowerCase()) ? (
-                              <button
+                              <Button
                                 type="button"
+                                variant="outline"
+                                size="sm"
                                 onClick={() => printInvoice(inv)}
                                 title="Download / Print Invoice"
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
                               >
                                 <FontAwesomeIcon icon={faDownload} />
                                 PDF
-                              </button>
+                              </Button>
                             ) : (
                               <span className="text-xs text-slate-400">—</span>
                             )}

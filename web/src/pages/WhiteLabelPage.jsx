@@ -5,6 +5,8 @@ import {
   deleteWhiteLabelSettingsApi,
 } from "../lib/api";
 import ConfirmModal from "../components/ConfirmModal";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function WhiteLabelPage() {
   const [settings, setSettings] = useState(null);
@@ -96,9 +98,7 @@ export default function WhiteLabelPage() {
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
+          <Alert variant="error" message={error} />
         )}
 
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -235,22 +235,23 @@ export default function WhiteLabelPage() {
               )}
 
               <div className="mt-6 flex gap-3 justify-between">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleDelete}
                   disabled={!settings}
-                  className="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="text-red-600 hover:text-red-700 border-red-300 hover:bg-red-50"
                 >
                   Reset to Default
-                </button>
+                </Button>
                 <div className="flex gap-2">
-                  <button
+                  <Button
                     type="submit"
                     disabled={saving}
-                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    loading={saving}
                   >
-                    {saving ? "Saving..." : "Save Settings"}
-                  </button>
+                    Save Settings
+                  </Button>
                 </div>
               </div>
             </form>

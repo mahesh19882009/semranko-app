@@ -8,6 +8,7 @@ import {
   updateProfile,
 } from "../features/settings/settingsSlice";
 import Alert from "../components/ui/Alert";
+import Button from "../components/ui/Button";
 
 const SettingsPage = () => {
   const dispatch = useDispatch();
@@ -217,13 +218,13 @@ const SettingsPage = () => {
             </div>
 
             <div className="md:col-span-2 flex justify-end">
-              <button
+              <Button
                 type="submit"
                 disabled={profileLoading || !profileChanged}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                loading={profileLoading}
               >
-                {profileLoading ? "Saving..." : "Save profile"}
-              </button>
+                Save profile
+              </Button>
             </div>
           </form>
         </section>
@@ -292,13 +293,13 @@ const SettingsPage = () => {
             </label>
 
             <div className="flex justify-end">
-              <button
+              <Button
                 type="submit"
                 disabled={notificationsLoading || !notificationsChanged}
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                loading={notificationsLoading}
               >
-                {notificationsLoading ? "Saving..." : "Save notifications"}
-              </button>
+                Save notifications
+              </Button>
             </div>
           </form>
         </section>
@@ -376,7 +377,7 @@ const SettingsPage = () => {
             ) : null}
 
             <div className="md:col-span-3 flex justify-end">
-              <button
+              <Button
                 type="submit"
                 disabled={
                   passwordLoading ||
@@ -385,10 +386,10 @@ const SettingsPage = () => {
                   !passwordForm.confirmPassword ||
                   passwordMismatch
                 }
-                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                loading={passwordLoading}
               >
-                {passwordLoading ? "Updating..." : "Update password"}
-              </button>
+                Update password
+              </Button>
             </div>
           </form>
         </section>

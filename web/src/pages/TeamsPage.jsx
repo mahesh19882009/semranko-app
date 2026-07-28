@@ -12,6 +12,8 @@ import {
 import { formatDate } from "../utils/date";
 import { getStoredUser } from "../utils/auth";
 import ConfirmModal from "../components/ConfirmModal";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function TeamsPage() {
   const [teams, setTeams] = useState([]);
@@ -196,18 +198,13 @@ export default function TeamsPage() {
             <h1 className="text-3xl font-bold text-slate-900 mb-2">Teams</h1>
             <p className="text-slate-600">Collaborate with your team on SEO projects</p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700"
-          >
+          <Button onClick={() => setShowCreateModal(true)}>
             Create Team
-          </button>
+          </Button>
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
+          <Alert variant="error" message={error} />
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -257,18 +254,12 @@ export default function TeamsPage() {
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => setShowInviteModal(true)}
-                      className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700"
-                    >
+                    <Button onClick={() => setShowInviteModal(true)}>
                       Invite Member
-                    </button>
-                    <button
-                      onClick={handleDeleteTeam}
-                      className="bg-red-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-red-700"
-                    >
+                    </Button>
+                    <Button variant="danger" onClick={handleDeleteTeam}>
                       Delete Team
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -291,12 +282,14 @@ export default function TeamsPage() {
                                 {member.role}
                               </span>
                               {canRemoveMember(member.role, currentUserRole) && (
-                                <button
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
                                   onClick={() => handleRemoveMember(member.userId, member.userName)}
-                                  className="text-sm text-red-600 hover:text-red-900"
+                                  className="text-red-600 hover:text-red-900"
                                 >
                                   Remove
-                                </button>
+                                </Button>
                               )}
                             </div>
                           </div>
@@ -316,12 +309,14 @@ export default function TeamsPage() {
                                   Expires: {formatDate(invite.expiresAt)}
                                 </p>
                               </div>
-                              <button
+                              <Button
+                                size="sm"
+                                variant="ghost"
                                 onClick={() => handleCancelInvite(invite.id)}
-                                className="text-sm text-red-600 hover:text-red-900"
+                                className="text-red-600 hover:text-red-900"
                               >
                                 Cancel
-                              </button>
+                              </Button>
                             </div>
                           ))}
                         </div>
@@ -372,20 +367,20 @@ export default function TeamsPage() {
                 </div>
 
                 <div className="flex gap-2 justify-end">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setShowCreateModal(false)}
-                    className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="submit"
                     disabled={creating}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    loading={creating}
                   >
-                    {creating ? "Creating..." : "Create"}
-                  </button>
+                    Create
+                  </Button>
                 </div>
               </form>
             </div>
@@ -399,9 +394,7 @@ export default function TeamsPage() {
               <h2 className="text-xl font-semibold text-slate-900 mb-4">Invite Team Member</h2>
               
               {inviteError && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                  {inviteError}
-                </div>
+                <Alert variant="error" message={inviteError} />
               )}
               
               <form onSubmit={handleInvite}>
@@ -435,23 +428,23 @@ export default function TeamsPage() {
                 </div>
 
                 <div className="flex gap-2 justify-end">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => {
                       setShowInviteModal(false);
                       setInviteError("");
                     }}
-                    className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="primary"
                     type="submit"
                     disabled={inviting}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                  >
+                    loading={inviting}>
                     {inviting ? "Inviting..." : "Invite"}
-                  </button>
+                  </Button>
                 </div>
               </form>
             </div>

@@ -12,6 +12,7 @@ import {
 } from '../features/competitors/competitorsSlice';
 import { Check, Globe, Pencil, Trash2, X } from 'lucide-react';
 import Alert from '../components/ui/Alert';
+import Button from '../components/ui/Button';
 
 const normalizeDomain = (value = '') =>
   value
@@ -319,16 +320,16 @@ export default function Competitors() {
             </p>
 
             {(form.name || form.domain) && !adding ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => {
                   setForm({ name: '', domain: '' });
                   setLocalError('');
                 }}
-                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Reset
-              </button>
+              </Button>
             ) : null}
           </div>
 
@@ -376,13 +377,14 @@ export default function Competitors() {
             </div>
 
             <div className="flex items-end">
-              <button
+              <Button
                 type="submit"
                 disabled={isBusy || competitorLimitReached}
-                className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                loading={adding}
+                fullWidth
               >
-                {adding ? 'Adding...' : competitorLimitReached ? 'Limit reached' : 'Add competitor'}
-              </button>
+                {competitorLimitReached ? 'Limit reached' : 'Add competitor'}
+              </Button>
             </div>
           </form>
 
@@ -511,45 +513,51 @@ export default function Competitors() {
                             <div className="flex flex-wrap items-center gap-2">
                               {isEditing ? (
                                 <>
-                                  <button
+                                  <Button
                                     type="button"
+                                    variant="outline"
+                                    size="sm"
                                     onClick={handleSaveEdit}
                                     disabled={updating || deleting || adding}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-2 text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    loading={updating}
+                                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
                                   >
                                     <Check size={15} />
-                                    {updating ? 'Saving...' : 'Save'}
-                                  </button>
-                                  <button
+                                    Save
+                                  </Button>
+                                  <Button
                                     type="button"
+                                    variant="outline"
+                                    size="sm"
                                     onClick={cancelEdit}
                                     disabled={updating}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     <X size={15} />
                                     Cancel
-                                  </button>
+                                  </Button>
                                 </>
                               ) : (
                                 <>
-                                  <button
+                                  <Button
                                     type="button"
+                                    variant="outline"
+                                    size="sm"
                                     onClick={() => startEdit(item)}
                                     disabled={isBusy}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     <Pencil size={15} />
                                     Edit
-                                  </button>
-                                  <button
+                                  </Button>
+                                  <Button
                                     type="button"
+                                    variant="danger"
+                                    size="sm"
                                     onClick={() => handleDelete(item)}
                                     disabled={isBusy}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-3 py-2 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     <Trash2 size={15} />
                                     Delete
-                                  </button>
+                                  </Button>
                                 </>
                               )}
                             </div>

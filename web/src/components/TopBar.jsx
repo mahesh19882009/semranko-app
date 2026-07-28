@@ -283,9 +283,9 @@ function Topbar({ onToggleSidebar }) {
 
   return (
     <header 
-      className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/90 backdrop-blur"
+      className="sticky top-0 z-30 border-b border-slate-200 backdrop-blur"
       style={{
-        backgroundColor: whiteLabelSettings?.primaryColor || undefined,
+        backgroundColor: whiteLabelSettings?.primaryColor || 'var(--color-topbar-bg)',
         color: whiteLabelSettings?.secondaryColor || undefined
       }}
     >

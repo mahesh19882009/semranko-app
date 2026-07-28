@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { resendVerificationApi } from "../lib/api";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function ResendVerificationPage() {
   const [email, setEmail] = useState("");
@@ -50,17 +52,17 @@ export default function ResendVerificationPage() {
               className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-slate-500"
             />
 
-            <button
+            <Button
               type="submit"
               disabled={loading}
-              className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              loading={loading}
+              fullWidth
+              className="mt-4"
             >
-              {loading ? "Sending..." : "Send verification email"}
-            </button>
+              Send verification email
+            </Button>
 
-            {error ? (
-              <p className="mt-4 text-sm text-red-600">{error}</p>
-            ) : null}
+            {error && <Alert variant="error" message={error} />}
 
             <div className="mt-4">
               <Link
@@ -82,24 +84,27 @@ export default function ResendVerificationPage() {
             </div>
 
             <div className="mt-5 flex flex-col gap-3">
-              <Link
+              <Button
+                as={Link}
                 to="/login"
-                className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium !text-white"
+                fullWidth
+                className="bg-slate-900 hover:bg-slate-800"
               >
                 Back to login
-              </Link>
+              </Button>
 
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => {
                   setSent(false);
                   setMessage("");
                   setError("");
                 }}
-                className="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700"
+                fullWidth
               >
                 Use another email
-              </button>
+              </Button>
             </div>
           </div>
         )}

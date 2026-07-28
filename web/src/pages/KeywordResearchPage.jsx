@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useSelector } from "react-redux";
 import { researchKeywordApi, getKeywordOpportunitiesApi } from "../lib/api";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function KeywordResearchPage() {
   const selectedProject = useSelector(selectSelectedProject);
@@ -102,9 +104,7 @@ export default function KeywordResearchPage() {
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
+          <Alert variant="error" message={error} />
         )}
 
         {activeTab === "research" && (
@@ -131,13 +131,14 @@ export default function KeywordResearchPage() {
                   )}
                 </div>
 
-                <button
+                <Button
                   type="submit"
                   disabled={loading || !keyword.trim() || !selectedProject?.id}
-                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  loading={loading}
+                  fullWidth
                 >
-                  {loading ? "Researching..." : "Research Keyword"}
-                </button>
+                  Research Keyword
+                </Button>
               </form>
 
               {researchData && (
@@ -236,13 +237,13 @@ export default function KeywordResearchPage() {
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold text-slate-900">Keyword Opportunities</h2>
-              <button
+              <Button
                 onClick={loadOpportunities}
                 disabled={loadingOpportunities || !selectedProject?.id}
-                className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+                loading={loadingOpportunities}
               >
-                {loadingOpportunities ? "Loading..." : "Refresh"}
-              </button>
+                Refresh
+              </Button>
             </div>
 
             {!selectedProject?.id && (

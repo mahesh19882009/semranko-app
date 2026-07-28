@@ -8,6 +8,8 @@ import {
 } from '../features/audit/auditSlice';
 import { AlertTriangle, Bug, CheckCircle2, PlayCircle } from 'lucide-react';
 import { formatDateTime } from '../utils/date';
+import Button from '../components/ui/Button';
+import Alert from '../components/ui/Alert';
 
 const severityClasses = {
   CRITICAL: 'bg-rose-100 text-rose-700 border border-rose-200',
@@ -130,24 +132,19 @@ export default function AuditPage() {
             </p>
           </div>
 
-          <button
+          <Button
             type="button"
             onClick={() => dispatch(runAuditByProject(selectedProjectId))}
             disabled={running}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            loading={running}
           >
             <PlayCircle size={16} />
-            {running ? 'Running audit...' : 'Run audit'}
-          </button>
+            Run audit
+          </Button>
         </div>
 
-        {error ? (
-          <p className="mt-4 text-sm font-medium text-rose-600">{error}</p>
-        ) : null}
-
-        {actionMessage ? (
-          <p className="mt-4 text-sm font-medium text-emerald-600">{actionMessage}</p>
-        ) : null}
+        {error && <Alert variant="error" message={error} />}
+        {actionMessage && <Alert variant="success" message={actionMessage} />}
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

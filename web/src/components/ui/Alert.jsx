@@ -1,5 +1,20 @@
-import { AlertCircle, CheckCircle2, Info, TriangleAlert } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from 'lucide-react';
 
+/**
+ * Alert Component
+ * 
+ * A notification component for displaying important messages.
+ * Supports multiple variants, optional dismissal, and custom actions.
+ * 
+ * @param {string} variant - Alert type: 'warning' | 'error' | 'success' | 'info' | 'plain'
+ * @param {string} title - Optional alert title
+ * @param {string} message - Alert message content
+ * @param {React.ReactNode} children - Custom content
+ * @param {React.ReactNode} action - Optional action button or content
+ * @param {boolean} dismissible - Whether alert can be dismissed
+ * @param {Function} onDismiss - Callback when alert is dismissed
+ * @param {string} className - Additional CSS classes
+ */
 const VARIANT_STYLES = {
   warning: {
     wrapper: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -37,6 +52,8 @@ function Alert({
   message,
   children,
   action,
+  dismissible = false,
+  onDismiss,
   className = '',
 }) {
   const styles = VARIANT_STYLES[variant] || VARIANT_STYLES.info;
@@ -48,7 +65,7 @@ function Alert({
       role="alert"
     >
       <div className="flex items-start gap-3">
-        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${styles.icon}`} />
+        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${styles.icon}`} aria-hidden="true" />
 
         <div className="min-w-0 flex-1">
           {title ? (
@@ -75,6 +92,16 @@ function Alert({
             </div>
           ) : null}
         </div>
+
+        {dismissible && (
+          <button
+            onClick={onDismiss}
+            className="flex-shrink-0 text-slate-400 hover:text-slate-600 transition-colors"
+            aria-label="Dismiss alert"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   );

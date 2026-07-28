@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { getLHFOpportunitiesApi, getLHFSummaryApi } from "../lib/api";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
+import Button from "./ui/Button";
 
 export default function LowHangingFruits() {
   const selectedProject = useSelector(selectSelectedProject);
@@ -69,13 +70,13 @@ export default function LowHangingFruits() {
           <h2 className="text-xl font-semibold text-slate-900 mb-1">Low Hanging Fruits</h2>
           <p className="text-sm text-slate-600">Quick-win opportunities to improve rankings</p>
         </div>
-        <button
+        <Button
           onClick={loadData}
           disabled={loading}
-          className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+          variant="primary"
         >
           {loading ? "Loading..." : "Refresh"}
-        </button>
+        </Button>
       </div>
 
       {error && (

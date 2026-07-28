@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { getAccessToken, setAccessToken, setStoredUser } from "../utils/auth";
 import { apiRequest } from "../lib/api";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -91,16 +93,16 @@ function LoginPage() {
             </Link>
           </div>
 
-          {error ? <p style={styles.error}>{error}</p> : null}
+          {error && <Alert variant="error" message={error} />}
           {error === "Please verify your email before logging in" ? (
             <p style={styles.helperText}>
               Need a new link? <Link to="/resend-verification">Resend verification email</Link>
             </p>
           ) : null}
 
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? "Logging in..." : "Login"}
-          </button>
+          <Button type="submit" disabled={loading} loading={loading} fullWidth>
+            Login
+          </Button>
         </form>
 
         <p style={styles.footerText}>

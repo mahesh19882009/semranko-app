@@ -1,3 +1,9 @@
+/**
+ * Typography Component
+ * 
+ * A comprehensive typography system with heading and text variants.
+ * Provides consistent text styling throughout the application.
+ */
 const headingStyles = {
   h1: 'text-3xl font-bold text-slate-900 tracking-tight',
   h2: 'text-2xl font-bold text-slate-900 tracking-tight',
@@ -18,6 +24,12 @@ const textStyles = {
   warning: 'text-sm text-warning',
 };
 
+/**
+ * Base Typography component
+ * @param {React.ElementType} as - HTML element to render
+ * @param {React.ReactNode} children - Text content
+ * @param {string} className - Additional CSS classes
+ */
 function Typography({ as, children, className = '', ...props }) {
   const Component = as || 'p';
   const styles = as?.startsWith('h') ? headingStyles[as] : textStyles.body;

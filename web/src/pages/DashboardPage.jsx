@@ -13,6 +13,7 @@ import KeywordTable from '../components/KeywordTable';
 import LowHangingFruits from '../components/LowHangingFruits';
 import SerpFeatures from '../components/SerpFeatures';
 import { useNavigate } from 'react-router-dom';
+import Button from '../components/ui/Button';
 import {
   selectStats,
   selectRankTrend,
@@ -256,13 +257,14 @@ function DashboardPage() {
                   : 'Current competitor comparison snapshot.'}
               </p>
             </div>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => navigate('/app/competitors')}
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50 text-nowrap"
+              className="text-brand-700 hover:bg-brand-50"
             >
               View all
-            </button>
+            </Button>
           </div>
 
           <div className="mt-5 space-y-4">
@@ -301,13 +303,14 @@ function DashboardPage() {
                   : `Reporting activity filtered for ${dateRange.toLowerCase()}.`}
               </p>
             </div>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => navigate('/app/reports')}
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-brand-700 transition hover:bg-brand-50"
+              className="text-brand-700 hover:bg-brand-50"
             >
               Create report
-            </button>
+            </Button>
           </div>
 
           <div className="mt-5 space-y-4">

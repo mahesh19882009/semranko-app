@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 function ContactPage() {
   const [form, setForm] = useState({
@@ -146,12 +148,12 @@ function ContactPage() {
                   />
                 </div>
 
-                {error && <p style={styles.error}>{error}</p>}
-                {message && <p style={styles.success}>{message}</p>}
+                {error && <Alert variant="error" message={error} />}
+                {message && <Alert variant="success" message={message} />}
 
-                <button type="submit" disabled={loading} style={styles.submitBtn}>
-                  {loading ? "Sending..." : "Send Message"}
-                </button>
+                <Button type="submit" disabled={loading} loading={loading} fullWidth>
+                  Send Message
+                </Button>
               </form>
             </div>
 

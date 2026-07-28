@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowUp, faArrowDown, faMinus, faChartLine } from '@fortawesome/free-solid-svg-icons';
 import RankHistoryChart from './RankHistoryChart';
 import { apiRequest } from '../lib/api';
+import Button from './ui/Button';
 
 function CompetitorComparison({ projectId }) {
   const [selectedCompetitor, setSelectedCompetitor] = useState(null);
@@ -94,14 +95,14 @@ function CompetitorComparison({ projectId }) {
       {/* Load Data Button */}
       {!comparisonData && (
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft text-center">
-          <button
+          <Button
             onClick={loadComparisonData}
             disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-700 transition disabled:opacity-50"
+            variant="primary"
           >
             <FontAwesomeIcon icon={faChartLine} />
             {loading ? 'Loading...' : 'Load Competitor Comparison'}
-          </button>
+          </Button>
         </div>
       )}
 

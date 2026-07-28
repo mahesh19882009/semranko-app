@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { resetPasswordApi } from "../lib/api";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
@@ -140,17 +142,17 @@ export default function ResetPasswordPage() {
               </div>
             </div>
 
-            <button
+            <Button
               type="submit"
               disabled={loading || !token}
-              className="mt-6 inline-flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              loading={loading}
+              fullWidth
+              className="mt-6"
             >
-              {loading ? "Resetting..." : "Reset password"}
-            </button>
+              Reset password
+            </Button>
 
-            {error ? (
-              <p className="mt-4 text-sm text-red-600">{error}</p>
-            ) : null}
+            {error && <Alert variant="error" message={error} />}
 
             <div className="mt-4">
               <Link

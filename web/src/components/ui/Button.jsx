@@ -1,11 +1,31 @@
+/**
+ * Button Component
+ * 
+ * A versatile button component with multiple variants and sizes.
+ * Supports loading states, icons, and full width option.
+ * 
+ * @param {React.ReactNode} children - Button content
+ * @param {string} variant - Button style: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline'
+ * @param {string} size - Button size: 'sm' | 'md' | 'lg'
+ * @param {boolean} disabled - Disable the button
+ * @param {boolean} loading - Show loading spinner
+ * @param {boolean} fullWidth - Make button full width
+ * @param {string} className - Additional CSS classes
+ * @param {string} type - HTML button type
+ * @param {React.ReactNode} leftIcon - Icon to display on the left
+ * @param {React.ReactNode} rightIcon - Icon to display on the right
+ */
 function Button({
   children,
   variant = 'primary',
   size = 'md',
-  className = '',
   disabled,
   loading,
+  fullWidth = false,
+  className = '',
   type = 'button',
+  leftIcon,
+  rightIcon,
   ...props
 }) {
   const variantStyles = {
@@ -26,6 +46,7 @@ function Button({
     'inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition focus:outline-none focus:ring-4 focus:ring-offset-0',
     sizeStyles[size],
     variantStyles[variant],
+    fullWidth ? 'w-full' : '',
     disabled || loading ? 'opacity-60 cursor-not-allowed' : '',
     className,
   ]
@@ -33,14 +54,27 @@ function Button({
     .join(' ');
 
   return (
-    <button type={type} className={base} disabled={disabled || loading} {...props}>
+    <button 
+      type={type} 
+      className={base} 
+      disabled={disabled || loading} 
+      aria-busy={loading}
+      {...props}
+    >
       {loading && (
         <span className="inline-flex items-center gap-2">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current/30 border-t-current" />
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-current/30 border-t-current" aria-hidden="true" />
+          <span className="sr-only">Loading...</span>
           {children}
         </span>
       )}
-      {!loading && children}
+      {!loading && (
+        <>
+          {leftIcon && <span className="flex-shrink-0" aria-hidden="true">{leftIcon}</span>}
+          {children}
+          {rightIcon && <span className="flex-shrink-0" aria-hidden="true">{rightIcon}</span>}
+        </>
+      )}
     </button>
   );
 }

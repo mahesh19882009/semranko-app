@@ -1,4 +1,5 @@
 import { Component } from 'react';
+import Button from './ui/Button';
 
 function ErrorBoundary({ children, fallback }) {
   class Boundary extends Component {
@@ -28,15 +29,15 @@ function ErrorBoundary({ children, fallback }) {
               <p className="mt-2 text-sm text-slate-600">
                 {this.state.error?.message || 'An unexpected error occurred. Please try refreshing the page.'}
               </p>
-              <button
+              <Button
                 type="button"
                 onClick={() => {
                   this.setState({ hasError: false, error: null });
                 }}
-                className="mt-6 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                variant="primary"
               >
                 Try again
-              </button>
+              </Button>
             </div>
           </div>
         );

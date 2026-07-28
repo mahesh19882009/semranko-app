@@ -12,6 +12,8 @@ import { initRazorpayCheckout } from "../lib/api";
 import { isAuthenticated } from "../utils/auth";
 import { PLAN_COMPARISON, PLANS } from "../config/pricing";
 import ConfirmModal from "../components/ConfirmModal";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCreditCard,
@@ -389,34 +391,24 @@ export default function PricingPage() {
           ) : null}
 
           {/* Success Banner */}
-          {successMessage ? (
-            <div className="mt-6 flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800 shadow-sm text-left">
-              <FontAwesomeIcon icon={faCircleCheck} className="text-lg text-emerald-600 shrink-0" />
-              <div className="flex-1 font-medium">{successMessage}</div>
-              <button
-                type="button"
-                onClick={() => setSuccessMessage(null)}
-                className="text-emerald-600 hover:text-emerald-800"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
-            </div>
-          ) : null}
+          {successMessage && (
+            <Alert
+              variant="success"
+              message={successMessage}
+              dismissible
+              onDismiss={() => setSuccessMessage(null)}
+            />
+          )}
 
           {/* Error Banner */}
-          {paymentError || error ? (
-            <div className="mt-6 flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800 shadow-sm text-left">
-              <FontAwesomeIcon icon={faCircleExclamation} className="text-lg text-rose-600 shrink-0" />
-              <div className="flex-1 font-medium">{paymentError || error}</div>
-              <button
-                type="button"
-                onClick={() => setPaymentError(null)}
-                className="text-rose-600 hover:text-rose-800"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
-            </div>
-          ) : null}
+          {(paymentError || error) && (
+            <Alert
+              variant="error"
+              message={paymentError || error}
+              dismissible
+              onDismiss={() => setPaymentError(null)}
+            />
+          )}
         </div>
 
         {authenticated ? (
@@ -598,61 +590,65 @@ export default function PricingPage() {
                     <div className="mt-5 space-y-3">
                       {/* Free plan switch (for downgrades only) */}
                       {authenticated && isLowerPlan && !showDowngradeWarning && (
-                        <button
+                        <Button
                           type="button"
+                          variant="secondary"
                           onClick={() => handleRequestSelectPlan(plan)}
                           disabled={changingPlan}
-                          className={`w-full rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                            changingPlan
-                              ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                          }`}
+                          loading={changingPlan}
+                          fullWidth
                         >
-                          {changingPlan ? "Updating..." : `Switch to ${plan.name}`}
-                        </button>
+                          Switch to {plan.name}
+                        </Button>
                       )}
                       
                       {/* Paid upgrade button */}
                       {authenticated && !isCurrent && !isLowerPlan && (
-                        <button
+                        <Button
                           type="button"
                           onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
                           disabled={isProcessingPayment}
-                          className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-400"
+                          loading={isProcessingPayment}
+                          fullWidth
+                          className="bg-indigo-600 hover:bg-indigo-700"
                         >
-                          {isProcessingPayment ? "Processing..." : `Upgrade - ₹${price.toLocaleString('en-IN')}/mo`}
-                        </button>
+                          Upgrade - ₹{price.toLocaleString('en-IN')}/mo
+                        </Button>
                       )}
                       
                       {/* Start trial button for non-authenticated users */}
                       {!authenticated && (
-                        <button
+                        <Button
                           type="button"
+                          variant="secondary"
                           onClick={() => handleRequestSelectPlan(plan)}
-                          className="w-full rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200"
+                          fullWidth
                         >
-                          {`Start ${plan.name} Trial`}
-                        </button>
+                          Start {plan.name} Trial
+                        </Button>
                       )}
                       
                        {/* Current plan indicator / Activate for trial users */}
                        {isCurrent && current?.subscriptionStatus === "trialing" ? (
-                         <button
+                         <Button
                            type="button"
                            onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
                            disabled={isProcessingPayment}
-                           className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-400"
+                           loading={isProcessingPayment}
+                           fullWidth
+                           className="bg-indigo-600 hover:bg-indigo-700"
                          >
-                           {isProcessingPayment ? "Processing..." : `Activate ${plan.name} Plan`}
-                         </button>
+                           Activate {plan.name} Plan
+                         </Button>
                        ) : isCurrent ? (
-                         <button
+                         <Button
                            type="button"
                            disabled
-                           className="w-full rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-500 cursor-not-allowed"
+                           fullWidth
+                           className="bg-slate-200 text-slate-500 cursor-not-allowed"
                          >
                            Current Plan
-                         </button>
+                         </Button>
                        ) : null}
                     </div>
                   </article>
@@ -743,13 +739,14 @@ export default function PricingPage() {
                   </p>
                 </div>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={handleCancelMockPayment}
-                className="rounded-lg p-1.5 text-indigo-200 hover:bg-white/10 hover:text-white transition"
+                className="rounded-lg p-1.5 text-indigo-200 hover:bg-white/10 hover:text-white"
               >
                 <FontAwesomeIcon icon={faXmark} className="text-lg" />
-              </button>
+              </Button>
             </div>
 
             {/* Order Info */}
@@ -792,30 +789,26 @@ export default function PricingPage() {
 
               {/* Actions */}
               <div className="mt-6 flex flex-col gap-2.5">
-                <button
+                <Button
                   type="button"
                   onClick={handleSimulateMockPayment}
                   disabled={isSubmittingMockPayment}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3.5 text-sm font-semibold text-white shadow-soft transition hover:bg-indigo-700 disabled:opacity-60"
+                  loading={isSubmittingMockPayment}
+                  fullWidth
+                  className="bg-indigo-600 hover:bg-indigo-700"
                 >
-                  {isSubmittingMockPayment ? (
-                    <>
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                      Verifying Payment...
-                    </>
-                  ) : (
-                    `Complete Test Payment (₹${mockPaymentSession.netPrice.toLocaleString('en-IN')})`
-                  )}
-                </button>
+                  Complete Test Payment (₹{mockPaymentSession.netPrice.toLocaleString('en-IN')})
+                </Button>
 
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleCancelMockPayment}
                   disabled={isSubmittingMockPayment}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  fullWidth
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           </div>

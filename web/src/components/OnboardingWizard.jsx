@@ -11,6 +11,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { createProject } from '../features/projects/projectsSlice';
 import { addKeywordToProject } from '../features/keywords/keywordsSlice';
+import Button from './ui/Button';
 
 const STORAGE_KEY = 'rankcare_onboarding_completed';
 
@@ -170,14 +171,14 @@ function OnboardingWizard({ onComplete }) {
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
                 required
               />
-              <button
+              <Button
                 type="submit"
                 disabled={creating}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
+                variant="primary"
               >
                 {creating ? 'Creating...' : 'Create project'}
                 <FontAwesomeIcon icon={faChevronRight} />
-              </button>
+              </Button>
             </form>
           )}
 
@@ -191,14 +192,14 @@ function OnboardingWizard({ onComplete }) {
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none resize-none"
                 required
               />
-              <button
+              <Button
                 type="submit"
                 disabled={adding}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                variant="primary"
               >
                 {adding ? 'Adding...' : 'Add keywords'}
                 <FontAwesomeIcon icon={faChevronRight} />
-              </button>
+              </Button>
             </form>
           )}
 
@@ -207,14 +208,14 @@ function OnboardingWizard({ onComplete }) {
               <p className="text-sm text-slate-600">
                 Great! Your project and keywords are set up. You can now run rank checks from the Keywords page.
               </p>
-              <button
+              <Button
                 type="button"
                 onClick={handleFinish}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-700"
+                variant="primary"
               >
                 Go to Keywords
                 <FontAwesomeIcon icon={faChevronRight} />
-              </button>
+              </Button>
             </div>
           )}
         </div>

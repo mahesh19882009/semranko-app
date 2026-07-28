@@ -6,6 +6,7 @@ import {
   syncSerpFeaturesApi,
 } from "../lib/api";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
+import Button from "./ui/Button";
 
 export default function SerpFeatures() {
   const selectedProject = useSelector(selectSelectedProject);
@@ -94,20 +95,20 @@ export default function SerpFeatures() {
           <p className="text-sm text-slate-600">Track featured snippets, local packs, and more</p>
         </div>
         <div className="flex gap-2">
-          <button
+          <Button
             onClick={handleSync}
             disabled={syncing}
-            className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
+            variant="primary"
           >
             {syncing ? "Syncing..." : "Sync Features"}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={loadData}
             disabled={loading}
-            className="bg-slate-100 text-slate-700 py-2 px-4 rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50"
+            variant="outline"
           >
             {loading ? "Loading..." : "Refresh"}
-          </button>
+          </Button>
         </div>
       </div>
 

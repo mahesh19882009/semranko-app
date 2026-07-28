@@ -11,6 +11,8 @@ import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 import Alert from '../components/ui/Alert';
 import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 function ProjectsPage() {
   const dispatch = useDispatch();
@@ -178,15 +180,16 @@ function ProjectsPage() {
             />
 
             <div className="md:col-span-2 flex gap-3">
-              <button
+              <Button
                 type="submit"
                 disabled={creating || updating || projectLimitReached}
-                className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                loading={creating || updating}
               >
                 {creating ? 'Creating...' : updating ? 'Updating...' : projectToEdit ? 'Update project' : 'Create project'}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => {
                   setShowForm(false);
                   setProjectToEdit(null);
@@ -197,10 +200,9 @@ function ProjectsPage() {
                     location: 'India',
                   });
                 }}
-                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -233,14 +235,21 @@ function ProjectsPage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <div key={project.id} className="space-y-3">
-                <ProjectCard project={project} onEdit={handleEditProject} />
-                <button
-                  onClick={() => handleDeleteProject(project)}
-                  disabled={deleting}
-                  className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                >
-                  Delete project
-                </button>
+                <ProjectCard project={project}/>
+                <div className="inline-flex gap-2">
+                  <Button
+                    onClick={() => handleDeleteProject(project)}
+                    disabled={deleting}
+                    variant="danger"
+                    fullWidth
+                  >
+                    <FontAwesomeIcon icon={faTrash} />
+                  </Button>
+                  <Button
+                    onClick={() => handleEditProject(project)}>
+                    <FontAwesomeIcon icon={faPencil} />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

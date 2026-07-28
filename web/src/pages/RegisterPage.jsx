@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { registerApi } from "../lib/api";
 import { PLANS, TRIAL_DAYS, VALID_PLAN_KEYS } from "../config/pricing";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 function RegisterPage() {
   const navigate = useNavigate();
@@ -79,17 +81,16 @@ function RegisterPage() {
               const active = form.selectedPlan === plan.key;
 
               return (
-                <button
+                <Button
                   key={plan.key}
                   type="button"
+                  variant={active ? 'primary' : 'outline'}
+                  size="sm"
                   onClick={() => handlePlanSelect(plan.key)}
-                  style={{
-                    ...styles.planChip,
-                    ...(active ? styles.planChipActive : {}),
-                  }}
+                  style={styles.planChip}
                 >
                   {plan.name}
-                </button>
+                </Button>
               );
             })}
           </div>
@@ -134,12 +135,12 @@ function RegisterPage() {
 
           <input type="hidden" name="selectedPlan" value={form.selectedPlan} readOnly />
 
-          {error ? <p style={styles.error}>{error}</p> : null}
-          {success ? <p style={styles.success}>{success}</p> : null}
+          {error && <Alert variant="error" message={error} />}
+          {success && <Alert variant="success" message={success} />}
 
-          <button style={styles.button} type="submit" disabled={loading}>
-            {loading ? "Creating account..." : `Start trial`}
-          </button>
+          <Button type="submit" disabled={loading} loading={loading} fullWidth>
+            Start trial
+          </Button>
         </form>
 
         <p style={styles.footerText}>

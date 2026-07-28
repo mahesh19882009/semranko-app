@@ -6,6 +6,7 @@ import {
   faTriangleExclamation,
   faTrashCan,
 } from '@fortawesome/free-solid-svg-icons';
+import Button from './ui/Button';
 
 const toneConfig = {
   danger: {
@@ -97,8 +98,7 @@ function ConfirmModal({
         onClick={() => {
           if (!loading) onClose?.();
         }}
-        className="absolute inset-0 bg-slate-900/45 backdrop-blur-[2px] transition"
-      />
+        className="absolute inset-0 bg-slate-900/45 backdrop-blur-[2px] transition"/>
 
       <div
         role="dialog"
@@ -130,21 +130,20 @@ function ConfirmModal({
           </div>
 
           <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <button
+            <Button
               ref={cancelButtonRef}
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
+              variant="outline">
               {cancelText}
-            </button>
+            </Button>
 
-            <button
+            <Button
               type="button"
               onClick={onConfirm}
               disabled={loading}
-              className={`inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white transition focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60 ${currentTone.confirmBtn}`}
+              variant="primary"
             >
               {loading ? (
                 <span className="inline-flex items-center gap-2">
@@ -154,7 +153,7 @@ function ConfirmModal({
               ) : (
                 confirmText
               )}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

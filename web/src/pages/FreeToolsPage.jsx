@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
+import Button from "../components/ui/Button";
 
 function FreeToolsPage() {
   const tools = [
@@ -86,7 +87,9 @@ function FreeToolsPage() {
                 <p style={styles.cardDescription}>{tool.description}</p>
 
                 <div style={styles.cardFooter}>
-                  <button style={styles.cardButton}>Preview Tool</button>
+                  <Button style={styles.cardButton} disabled>
+                    Preview Tool
+                  </Button>
                 </div>
               </div>
             ))}

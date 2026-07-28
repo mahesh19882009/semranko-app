@@ -4,7 +4,7 @@ import { formatDate } from '../utils/date';
 import Card from './ui/Card';
 import Badge from './ui/Badge';
 
-function ProjectCard({ project, onEdit }) {
+function ProjectCard({ project }) {
   const dispatch = useDispatch();
   const selectedId = useSelector((state) => state.projects.selectedProjectId);
   const isSelected = selectedId === project.id;
@@ -34,15 +34,6 @@ function ProjectCard({ project, onEdit }) {
           <Badge tone="secondary" size="sm" rounded="rounded-full">
             Active
           </Badge>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(project);
-            }}
-            className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
-          >
-            Edit
-          </button>
         </div>
       </div>
 

@@ -1,3 +1,16 @@
+/**
+ * Card Component
+ * 
+ * A flexible card container with customizable padding, shadow, border, and radius.
+ * 
+ * @param {React.ReactNode} children - Card content
+ * @param {string} padding - Padding classes: 'p-5' | 'p-6' | 'p-8' | 'p-0'
+ * @param {string} shadow - Shadow classes: 'shadow-card' | 'shadow-sm' | 'shadow-md' | 'shadow-lg' | 'shadow-elevated' | 'shadow-none'
+ * @param {string} border - Border classes: 'border border-slate-200' | 'border-0'
+ * @param {string} radius - Border radius: 'rounded-3xl' | 'rounded-2xl' | 'rounded-xl' | 'rounded-lg'
+ * @param {string} className - Additional CSS classes
+ * @param {React.ElementType} as - HTML element to render
+ */
 function Card({
   children,
   className = '',
@@ -26,6 +39,17 @@ function Card({
   );
 }
 
+/**
+ * CardHeader Component
+ * 
+ * Header section of a card with optional bottom border.
+ * 
+ * @param {React.ReactNode} children - Header content
+ * @param {string} border - Border classes: 'border-b border-slate-200' | 'border-0'
+ * @param {string} padding - Padding classes
+ * @param {string} className - Additional CSS classes
+ * @param {React.ElementType} as - HTML element to render
+ */
 function CardHeader({
   children,
   className = '',
@@ -49,6 +73,16 @@ function CardHeader({
   );
 }
 
+/**
+ * CardBody Component
+ * 
+ * Main content section of a card.
+ * 
+ * @param {React.ReactNode} children - Body content
+ * @param {string} padding - Padding classes
+ * @param {string} className - Additional CSS classes
+ * @param {React.ElementType} as - HTML element to render
+ */
 function CardBody({
   children,
   className = '',
@@ -70,6 +104,17 @@ function CardBody({
   );
 }
 
+/**
+ * CardFooter Component
+ * 
+ * Footer section of a card with optional top border.
+ * 
+ * @param {React.ReactNode} children - Footer content
+ * @param {string} border - Border classes: 'border-t border-slate-200' | 'border-0'
+ * @param {string} padding - Padding classes
+ * @param {string} className - Additional CSS classes
+ * @param {React.ElementType} as - HTML element to render
+ */
 function CardFooter({
   children,
   className = '',

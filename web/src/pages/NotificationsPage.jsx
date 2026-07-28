@@ -10,6 +10,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { formatDateTime } from "../utils/date";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 function NotificationsPage() {
   const dispatch = useDispatch();
@@ -128,14 +130,14 @@ function NotificationsPage() {
             <option value="read">Read</option>
           </select>
 
-          <button
+          <Button
             type="button"
             onClick={handleMarkAllRead}
             disabled={actionLoading || unreadCount === 0}
-            className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            loading={actionLoading}
           >
             Mark all read
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -200,22 +202,25 @@ function NotificationsPage() {
 
                 <div className="flex items-center gap-3">
                   {notification.status === "UNREAD" && (
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => handleOpenNotification(notification)}
-                      className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                     >
                       Mark read
-                    </button>
+                    </Button>
                   )}
 
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => handleDelete(notification.id)}
-                    className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"
+                    className="border-rose-200 text-rose-600 hover:bg-rose-50"
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
@@ -228,23 +233,25 @@ function NotificationsPage() {
           </p>
 
           <div className="flex items-center gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={page <= 1}
               onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Previous
-            </button>
+            </Button>
 
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               disabled={pagination.totalPages ? page >= pagination.totalPages : true}
               onClick={() => setPage((prev) => prev + 1)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
-            </button>
+            </Button>
           </div>
         </div>
       </div>

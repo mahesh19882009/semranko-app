@@ -9,6 +9,8 @@ import {
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
 import { formatDate } from "../utils/date";
 import ConfirmModal from "../components/ConfirmModal";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function ScheduledReportsPage() {
   const selectedProject = useSelector(selectSelectedProject);
@@ -124,28 +126,23 @@ export default function ScheduledReportsPage() {
             <h1 className="text-3xl font-bold text-slate-900 mb-2">Scheduled Reports</h1>
             <p className="text-slate-600">Automate your SEO reporting with scheduled email reports</p>
           </div>
-          <button
+          <Button
             onClick={() => {
               setCreateError("");
               setShowCreateModal(true);
             }}
             disabled={!selectedProject?.id}
-            className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50"
           >
             Create Scheduled Report
-          </button>
+          </Button>
         </div>
 
         {!selectedProject?.id && (
-          <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700">
-            Please select a project to create scheduled reports
-          </div>
+          <Alert variant="warning" message="Please select a project to create scheduled reports" />
         )}
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
+          <Alert variant="error" message={error} />
         )}
 
         <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
@@ -192,18 +189,21 @@ export default function ScheduledReportsPage() {
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex gap-2">
-                            <button
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => handleToggleActive(report.id, report.isActive)}
-                              className="text-sm text-slate-600 hover:text-slate-900"
                             >
                               {report.isActive ? 'Pause' : 'Activate'}
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => handleDelete(report.id, report.name)}
-                              className="text-sm text-red-600 hover:text-red-900"
+                              className="text-red-600 hover:text-red-900"
                             >
                               Delete
-                            </button>
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -222,9 +222,7 @@ export default function ScheduledReportsPage() {
               
               <form onSubmit={handleCreate}>
                 {createError && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                    {createError}
-                  </div>
+                  <Alert variant="error" message={createError} />
                 )}
                 
                 <div className="mb-4">
@@ -297,23 +295,23 @@ export default function ScheduledReportsPage() {
                 </div>
 
                 <div className="flex gap-2 justify-end">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => {
                       setCreateError("");
                       setShowCreateModal(false);
                     }}
-                    className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="submit"
                     disabled={creating}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    loading={creating}
                   >
-                    {creating ? "Creating..." : "Create"}
-                  </button>
+                    Create
+                  </Button>
                 </div>
               </form>
             </div>

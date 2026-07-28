@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { isAuthenticated, logoutUser } from "../utils/auth";
+import Button from "./ui/Button";
 
 function PublicLayout({ children }) {
   const navigate = useNavigate();
@@ -47,12 +48,12 @@ function PublicLayout({ children }) {
 
               {authenticated ? (
                 <div style={styles.authActions}>
-                  <button type="button" style={styles.dashboardBtn} onClick={navigateToDashboard}>
+                  <Button type="button" variant="primary" onClick={navigateToDashboard}>
                     Dashboard
-                  </button>
-                  <button type="button" style={styles.logoutBtn} onClick={handleLogout}>
+                  </Button>
+                  <Button type="button" variant="danger" onClick={handleLogout}>
                     Logout
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div style={styles.authActions}>

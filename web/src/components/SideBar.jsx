@@ -14,6 +14,7 @@ import {
   faUsers,
   faBars,
 } from '@fortawesome/free-solid-svg-icons';
+import Button from './ui/Button';
 
 const navItems = [
   { to: '/app', label: 'Dashboard', icon: faChartLine },
@@ -79,39 +80,31 @@ function Sidebar({ open, onToggle }) {
           ))}
         </nav>
 
-        <div className={`m-4 rounded-3xl bg-slate-900 p-5 text-white transition-all ${!open ? 'p-3' : ''}`}>
+        <div>
           {open ? (
-            <>
+            <div className={`m-4 rounded-3xl bg-slate-900 p-5 text-white transition-all ${!open ? 'p-3' : ''}`}>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Upgrade</p>
               <h3 className="mt-2 text-lg font-semibold">Agency mode</h3>
-              <p className="mt-2 text-sm text-slate-300">
+              <p className="mt-2 text-sm text-slate-300 mb-3">
                 White-label reporting, more tracked keywords, and client workspaces.
               </p>
-              <button
+              <Button
                 onClick={() => window.location.href = '/pricing'}
-                className="mt-4 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                variant="primary"
               >
                 Explore plans
-              </button>
-            </>
+              </Button>
+            </div>
           ) : (
-            <button
+            <Button
               onClick={() => window.location.href = '/pricing'}
               className="flex w-full items-center justify-center text-white"
               title="Upgrade"
             >
               <FontAwesomeIcon icon={faFileInvoiceDollar} />
-            </button>
+            </Button>
           )}
         </div>
-
-        <button
-          onClick={onToggle}
-          className="absolute bottom-4 -right-3 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm"
-          title={open ? 'Collapse sidebar' : 'Expand sidebar'}
-        >
-          <FontAwesomeIcon icon={faBars} className="text-xs text-slate-600" />
-        </button>
       </div>
     </aside>
   );

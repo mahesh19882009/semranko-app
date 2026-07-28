@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { createApiKeyApi, listApiKeysApi, deactivateApiKeyApi, deleteApiKeyApi } from "../lib/api";
 import { formatDate } from "../utils/date";
 import ConfirmModal from "../components/ConfirmModal";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
 
 export default function ApiKeysPage() {
   const [apiKeys, setApiKeys] = useState([]);
@@ -111,18 +113,13 @@ export default function ApiKeysPage() {
             <h1 className="text-3xl font-bold text-slate-900 mb-2">API Keys</h1>
             <p className="text-slate-600">Manage your API keys for programmatic access</p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="bg-blue-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-blue-700"
-          >
+          <Button onClick={() => setShowCreateModal(true)}>
             Create API Key
-          </button>
+          </Button>
         </div>
 
         {error && (
-          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-            {error}
-          </div>
+          <Alert variant="error" message={error} />
         )}
 
         {createdKey && (
@@ -136,18 +133,12 @@ export default function ApiKeysPage() {
                 readOnly
                 className="flex-1 px-4 py-2 border border-green-300 rounded-lg bg-white font-mono text-sm"
               />
-              <button
-                onClick={() => copyToClipboard(createdKey.key)}
-                className="bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700"
-              >
+              <Button onClick={() => copyToClipboard(createdKey.key)} className="bg-green-600 hover:bg-green-700">
                 Copy
-              </button>
-              <button
-                onClick={() => setCreatedKey(null)}
-                className="bg-slate-200 text-slate-700 py-2 px-4 rounded-lg font-medium hover:bg-slate-300"
-              >
+              </Button>
+              <Button variant="secondary" onClick={() => setCreatedKey(null)}>
                 Dismiss
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -196,19 +187,22 @@ export default function ApiKeysPage() {
                       <td className="py-3 px-4">
                         <div className="flex gap-2">
                           {key.isActive && (
-                            <button
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => handleDeactivate(key.id, key.name)}
-                              className="text-sm text-slate-600 hover:text-slate-900"
                             >
                               Deactivate
-                            </button>
+                            </Button>
                           )}
-                          <button
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             onClick={() => handleDelete(key.id, key.name)}
-                            className="text-sm text-red-600 hover:text-red-900"
+                            className="text-red-600 hover:text-red-900"
                           >
                             Delete
-                          </button>
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -255,20 +249,20 @@ export default function ApiKeysPage() {
                 </div>
 
                 <div className="flex gap-2 justify-end">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => setShowCreateModal(false)}
-                    className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="submit"
                     disabled={creating}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    loading={creating}
                   >
-                    {creating ? "Creating..." : "Create"}
-                  </button>
+                    Create
+                  </Button>
                 </div>
               </form>
             </div>

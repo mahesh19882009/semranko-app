@@ -13,8 +13,11 @@ import {
 } from '../features/reports/reportSlice';
 import { fetchCurrentPricing } from '../features/pricing/pricingSlice';
 import Alert from '../components/ui/Alert';
+import Button from '../components/ui/Button';
 
 import { formatDateTime } from '../utils/date';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faEye, faTimes, faTrash } from '@fortawesome/free-solid-svg-icons';
 
 function getScoreTone(score) {
   if (score >= 80) {
@@ -52,9 +55,9 @@ function ReportDetailsModal({ open, onClose, report, loading, error }) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+            className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
           >
-            Close
+            <FontAwesomeIcon icon={faTimes} />
           </button>
         </div>
 
@@ -336,23 +339,22 @@ export default function ReportsPage() {
 
 
           <div className="flex flex-col gap-3 sm:flex-row">
-            <button
-              type="button"
+            <Button
               onClick={handleRunReport}
               disabled={!selectedProjectId || running || reportLimitReached}
-              className="inline-flex items-center justify-center rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60"
+              loading={running}
             >
-              {running ? 'Creating report...' : 'Create report'}
-            </button>
+              Create report
+            </Button>
 
-            <button
-              type="button"
+            <Button
+              variant="danger"
               onClick={openDeleteAllConfirm}
               disabled={!selectedProjectId || sortedReports.length === 0 || deleteAllLoading}
-              className="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+              loading={deleteAllLoading}
             >
-              {deleteAllLoading ? 'Deleting all...' : 'Delete all'}
-            </button>
+              Delete all
+            </Button>
           </div>
         </div>
         <p className="mt-2 mb-3 text-sm text-slate-500">
@@ -449,21 +451,23 @@ export default function ReportsPage() {
                         <td className="px-5 py-4 text-slate-700">{report.passedChecks ?? 0}</td>
                         <td className="px-5 py-4">
                           <div className="flex flex-wrap items-center gap-2">
-                            <button
+                            <Button
                               type="button"
                               onClick={() => handleOpenDetails(report.id)}
-                              className="inline-flex items-center rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              variant="ghost"
+                              className="!text-indigo-600 hover:!text-indigo-700"
                             >
-                              View
-                            </button>
-                            <button
+                              <FontAwesomeIcon icon={faEye} />
+                            </Button>
+                            <Button
                               type="button"
                               onClick={() => openDeleteOneConfirm(report)}
                               disabled={deletingThis}
-                              className="inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              variant="ghost"
+                              className="!text-red-600 hover:!text-red-700"
                             >
-                              {deletingThis ? 'Deleting...' : 'Delete'}
-                            </button>
+                              <FontAwesomeIcon icon={faTrash} />
+                            </Button>
                           </div>
                         </td>
                       </tr>

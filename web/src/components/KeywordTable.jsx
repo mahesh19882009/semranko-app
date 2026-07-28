@@ -2,11 +2,14 @@ import { useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+  faTrash,
   faTrashCan,
   faTriangleExclamation,
   faUpload,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from './ConfirmModal';
+import Button from './ui/Button';
+import Alert from './ui/Alert';
 import {
   bulkAddKeywords,
   bulkDeleteKeywords,
@@ -420,27 +423,18 @@ function KeywordTable() {
                 />
               </label>
 
-              <button
+              <Button
                 type="submit"
                 disabled={adding || !keywordText.trim()}
-                className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                loading={adding}
               >
-                {adding ? 'Adding...' : 'Add Keywords'}
-              </button>
+                Add Keywords
+              </Button>
             </div>
           </form>
 
-          {actionMessage && (
-            <div className="border-t border-slate-200 rounded-b-3xl bg-emerald-50 px-5 py-3 text-sm text-emerald-700">
-              {actionMessage}
-            </div>
-          )}
-
-          {error && (
-            <div className="border-t border-slate-200 bg-rose-50 px-5 py-3 text-sm text-rose-600">
-              {error}
-            </div>
-          )}
+          {actionMessage && <Alert variant="success" message={actionMessage} />}
+          {error && <Alert variant="error" message={error} />}
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white shadow-soft">
@@ -466,7 +460,7 @@ function KeywordTable() {
               <span className="text-sm font-medium text-rose-700">
                 {selectedKeywords.length} selected
               </span>
-              <button
+              <Button
                 onClick={() => {
                   openConfirmModal({
                     title: 'Delete selected keywords',
@@ -479,10 +473,10 @@ function KeywordTable() {
                   });
                 }}
                 disabled={isBulkLoading}
-                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                variant="danger"
               >
                 Delete selected
-              </button>
+              </Button>
             </div>
           )}
 
@@ -533,13 +527,14 @@ function KeywordTable() {
                         {row.createdAt ? new Date(row.createdAt).toLocaleString() : '-'}
                       </td>
                       <td className="px-5 py-4">
-                        <button
+                        <Button
                           onClick={() => handleDeleteKeyword(row)}
                           disabled={deletingKeyword}
-                          className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 disabled:opacity-60"
+                          variant="ghost"
+                          className="!text-red-600 hover:!text-red-700"
                         >
-                          {deletingKeyword ? 'Deleting...' : 'Delete'}
-                        </button>
+                          <FontAwesomeIcon icon={faTrash} />
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -583,21 +578,21 @@ function KeywordTable() {
                 <option value="keyword">Sort by Keyword</option>
               </select>
 
-              <button
+              <Button
                 onClick={handleClearRankings}
                 disabled={clearingRankings || filteredRankings.length === 0}
-                className="rounded-xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                variant="danger"
               >
                 {clearingRankings ? 'Clearing...' : 'Clear Rankings'}
-              </button>
+              </Button>
 
-              <button
+              <Button
                 onClick={handleRunRankCheck}
                 disabled={running}
-                className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                variant="primary"
               >
                 {running ? 'Running...' : 'Run Rank Check'}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -606,7 +601,7 @@ function KeywordTable() {
               <span className="text-sm font-medium text-rose-700">
                 {selectedRankings.length} selected
               </span>
-              <button
+              <Button
                 onClick={() => {
                   openConfirmModal({
                     title: 'Delete selected rankings',
@@ -619,10 +614,10 @@ function KeywordTable() {
                   });
                 }}
                 disabled={isBulkLoading}
-                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                variant="danger"
               >
                 Delete selected
-              </button>
+              </Button>
             </div>
           )}
 
@@ -681,13 +676,14 @@ function KeywordTable() {
                         {row.checkedAt ? new Date(row.checkedAt).toLocaleString() : '-'}
                       </td>
                       <td className="px-5 py-4">
-                        <button
+                        <Button
                           onClick={() => handleDeleteRanking(row)}
                           disabled={deletingRanking}
-                          className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 disabled:opacity-60"
+                          variant="ghost"
+                          className="!text-red-600 hover:!text-red-700"
                         >
-                          {deletingRanking ? 'Deleting...' : 'Delete'}
-                        </button>
+                          <FontAwesomeIcon icon={faTrash} />
+                        </Button>
                       </td>
                     </tr>
                   ))}
