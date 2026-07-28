@@ -217,6 +217,22 @@ export async function deleteTeamApi(teamId) {
   });
 }
 
+export async function getTeamInvitesApi(teamId) {
+  return apiRequest(`/teams/${teamId}/invites`);
+}
+
+export async function acceptTeamInviteApi(teamId, inviteId) {
+  return apiRequest(`/teams/${teamId}/invites/${inviteId}/accept`, {
+    method: "POST",
+  });
+}
+
+export async function cancelTeamInviteApi(teamId, inviteId) {
+  return apiRequest(`/teams/${teamId}/invites/${inviteId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getWhiteLabelSettingsApi() {
   return apiRequest('/white-label/settings');
 }

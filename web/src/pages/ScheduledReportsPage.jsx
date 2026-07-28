@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
 import { formatDate } from "../utils/date";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function ScheduledReportsPage() {
   const selectedProject = useSelector(selectSelectedProject);
@@ -23,6 +24,8 @@ export default function ScheduledReportsPage() {
   });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [reportToDelete, setReportToDelete] = useState(null);
 
   useEffect(() => {
     loadReports();
@@ -55,11 +58,12 @@ export default function ScheduledReportsPage() {
         formData.name,
         formData.frequency,
         formData.format,
-        formData.recipients
+        formData.recipients,
+        formData.startDate
       );
       
       setShowCreateModal(false);
-      setFormData({ name: "", frequency: "weekly", format: "pdf", recipients: "" });
+      setFormData({ name: "", frequency: "weekly", format: "pdf", recipients: "", startDate: "" });
       await loadReports();
     } catch (err) {
       setError(err?.message || "Failed to create scheduled report");
@@ -77,12 +81,19 @@ export default function ScheduledReportsPage() {
     }
   };
 
-  const handleDelete = async (reportId) => {
-    if (!confirm("Are you sure you want to delete this scheduled report?")) return;
+  const handleDelete = (reportId, reportName) => {
+    setReportToDelete({ id: reportId, name: reportName });
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!reportToDelete?.id) return;
 
     try {
-      await deleteScheduledReportApi(reportId);
+      await deleteScheduledReportApi(reportToDelete.id);
       await loadReports();
+      setShowDeleteConfirm(false);
+      setReportToDelete(null);
     } catch (err) {
       setError(err?.message || "Failed to delete scheduled report");
     }
@@ -167,7 +178,7 @@ export default function ScheduledReportsPage() {
                             {report.isActive ? 'Pause' : 'Activate'}
                           </button>
                           <button
-                            onClick={() => handleDelete(report.id)}
+                            onClick={() => handleDelete(report.id, report.name)}
                             className="text-sm text-red-600 hover:text-red-900"
                           >
                             Delete
@@ -266,6 +277,14 @@ export default function ScheduledReportsPage() {
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={confirmDelete}
+        title="Delete Scheduled Report"
+        message={`Are you sure you want to delete "${reportToDelete?.name || 'this scheduled report'}"?`}
+      />
     </div>
   );
 }

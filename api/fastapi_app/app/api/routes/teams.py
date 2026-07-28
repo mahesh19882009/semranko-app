@@ -15,6 +15,9 @@ from app.services.team_service import (
     update_team_member_role,
     delete_team,
     invite_user_to_team,
+    get_team_invites,
+    accept_team_invite,
+    cancel_team_invite,
 )
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -131,7 +134,10 @@ async def invite_team_member_endpoint(
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     
-    return ok("User invited to team", {"success": True})
+    return ok("User invited to team", {
+        "success": True,
+        "invite": result.get("invite")
+    })
 
 
 @router.put("/{team_id}/members/{user_id}/role")
@@ -163,9 +169,27 @@ async def remove_team_member_endpoint(
     """
     Remove a member from a team
     """
-    success = remove_team_member(db, team_id, user_id, current_user["id"])
+    result = remove_team_member(db, team_id, user_id, current_user["id"])
     
-    if not success:
+    if not result:
+        # Check specific failure reason
+        requesting_member = db.execute(
+            select(TeamMember)
+            .where(TeamMember.teamId == team_id)
+            .where(TeamMember.userId == current_user["id"])
+        ).scalar_one_or_none()
+        
+        if not requesting_member or requesting_member.role not in ["admin", "owner"]:
+            raise HTTPException(status_code=403, detail="Only admins and owners can remove team members")
+        
+        team = db.execute(
+            select(Team)
+            .where(Team.id == team_id)
+        ).scalar_one_or_none()
+        
+        if team and team.ownerId == user_id:
+            raise HTTPException(status_code=400, detail="Cannot remove the team owner")
+        
         raise HTTPException(status_code=400, detail="Failed to remove member")
     
     return ok("Member removed", {"success": True})
@@ -186,3 +210,57 @@ async def delete_team_endpoint(
         raise HTTPException(status_code=400, detail="Failed to delete team")
     
     return ok("Team deleted", {"success": True})
+
+
+@router.get("/{team_id}/invites")
+async def get_team_invites_endpoint(
+    team_id: str,
+    db: Session = Depends(db_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all pending invitations for a team
+    """
+    # Verify user is a member of the team
+    team = get_team(db, team_id, current_user["id"])
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    
+    invites = get_team_invites(db, team_id)
+    return ok("Team invitations retrieved", {"invites": invites})
+
+
+@router.post("/{team_id}/invites/{invite_id}/accept")
+async def accept_team_invite_endpoint(
+    team_id: str,
+    invite_id: str,
+    db: Session = Depends(db_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Accept a team invitation
+    """
+    result = accept_team_invite(db, invite_id, current_user["id"])
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return ok(result["message"], {"success": True})
+
+
+@router.delete("/{team_id}/invites/{invite_id}")
+async def cancel_team_invite_endpoint(
+    team_id: str,
+    invite_id: str,
+    db: Session = Depends(db_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Cancel a team invitation
+    """
+    result = cancel_team_invite(db, invite_id, team_id, current_user["id"])
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return ok(result["message"], {"success": True})

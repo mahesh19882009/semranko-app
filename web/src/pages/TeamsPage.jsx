@@ -6,13 +6,18 @@ import {
   inviteTeamMemberApi,
   removeTeamMemberApi,
   deleteTeamApi,
+  getTeamInvitesApi,
+  cancelTeamInviteApi,
 } from "../lib/api";
 import { formatDate } from "../utils/date";
+import { getStoredUser } from "../utils/auth";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function TeamsPage() {
   const [teams, setTeams] = useState([]);
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [teamMembers, setTeamMembers] = useState([]);
+  const [teamInvites, setTeamInvites] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -22,6 +27,10 @@ export default function TeamsPage() {
   const [creating, setCreating] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
+  const [showRemoveMemberConfirm, setShowRemoveMemberConfirm] = useState(false);
+  const [showDeleteTeamConfirm, setShowDeleteTeamConfirm] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState(null);
+  const [currentUserRole, setCurrentUserRole] = useState(null);
 
   useEffect(() => {
     loadTeams();
@@ -62,15 +71,22 @@ export default function TeamsPage() {
 
   const handleSelectTeam = async (team) => {
     setSelectedTeam(team);
-    await loadTeamMembers(team.id);
-  };
-
-  const loadTeamMembers = async (teamId) => {
+    setTeamMembers([]);
+    setTeamInvites([]);
+    
     try {
-      const result = await getTeamMembersApi(teamId);
-      setTeamMembers(result.data.members || []);
+      const [membersResult, invitesResult] = await Promise.all([
+        getTeamMembersApi(team.id),
+        getTeamInvitesApi(team.id)
+      ]);
+      setTeamMembers(membersResult.data.members || []);
+      setTeamInvites(invitesResult.data.invites || []);
+      
+      // Set current user's role
+      const currentUser = membersResult.data.members?.find(m => m.userId === getStoredUser()?.id);
+      setCurrentUserRole(currentUser?.role || null);
     } catch (err) {
-      setError(err?.message || "Failed to load team members");
+      setError(err?.message || "Failed to load team details");
     }
   };
 
@@ -86,7 +102,9 @@ export default function TeamsPage() {
       setShowInviteModal(false);
       setInviteEmail("");
       setInviteRole("member");
-      await loadTeamMembers(selectedTeam.id);
+      // Reload invitations
+      const invitesResult = await getTeamInvitesApi(selectedTeam.id);
+      setTeamInvites(invitesResult.data.invites || []);
     } catch (err) {
       setError(err?.message || "Failed to invite team member");
     } finally {
@@ -94,20 +112,49 @@ export default function TeamsPage() {
     }
   };
 
-  const handleRemoveMember = async (userId) => {
-    if (!confirm("Are you sure you want to remove this team member?")) return;
+  const handleRemoveMember = (userId, userName) => {
+    setMemberToRemove({ userId, userName });
+    setShowRemoveMemberConfirm(true);
+  };
+
+  const confirmRemoveMember = async () => {
+    if (!memberToRemove || !selectedTeam) return;
+
+    setShowRemoveMemberConfirm(false);
 
     try {
-      await removeTeamMemberApi(selectedTeam.id, userId);
-      await loadTeamMembers(selectedTeam.id);
+      await removeTeamMemberApi(selectedTeam.id, memberToRemove.userId);
+      const result = await getTeamMembersApi(selectedTeam.id);
+      setTeamMembers(result.data.members || []);
     } catch (err) {
       setError(err?.message || "Failed to remove team member");
+    }
+
+    setMemberToRemove(null);
+  };
+
+  const handleCancelInvite = async (inviteId) => {
+    if (!selectedTeam) return;
+    
+    try {
+      await cancelTeamInviteApi(selectedTeam.id, inviteId);
+      const result = await getTeamInvitesApi(selectedTeam.id);
+      setTeamInvites(result.data.invites || []);
+    } catch (err) {
+      setError(err?.message || "Failed to cancel invitation");
     }
   };
 
   const handleDeleteTeam = async () => {
-    if (!selectedTeam || !confirm("Are you sure you want to delete this team? This action cannot be undone.")) return;
+    if (!selectedTeam) return;
+    setShowDeleteTeamConfirm(true);
+  };
 
+  const confirmDeleteTeam = async () => {
+    if (!selectedTeam) return;
+    
+    setShowDeleteTeamConfirm(false);
+    
     try {
       await deleteTeamApi(selectedTeam.id);
       setSelectedTeam(null);
@@ -126,6 +173,16 @@ export default function TeamsPage() {
       case "viewer": return "bg-gray-100 text-gray-800";
       default: return "bg-gray-100 text-gray-800";
     }
+  };
+
+  const canRemoveMember = (memberRole, currentUserRole) => {
+    // Only owners and admins can remove members
+    if (currentUserRole !== "owner" && currentUserRole !== "admin") return false;
+    // Cannot remove owner
+    if (memberRole === "owner") return false;
+    // Admins cannot remove other admins (only owners can)
+    if (currentUserRole === "admin" && memberRole === "admin") return false;
+    return true;
   };
 
   return (
@@ -214,37 +271,81 @@ export default function TeamsPage() {
 
                 <h3 className="text-lg font-semibold text-slate-900 mb-4">Team Members</h3>
                 
-                {teamMembers.length === 0 ? (
+                {teamMembers.length === 0 && teamInvites.length === 0 ? (
                   <p className="text-slate-600">No members yet. Invite someone to get started!</p>
                 ) : (
-                  <div className="space-y-3">
-                    {teamMembers.map((member) => (
-                      <div key={member.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
-                        <div>
-                          <p className="font-medium text-slate-900">{member.userName}</p>
-                          <p className="text-sm text-slate-600">{member.userEmail}</p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium capitalize ${getRoleColor(member.role)}`}>
-                            {member.role}
-                          </span>
-                          {member.role !== "owner" && (
-                            <button
-                              onClick={() => handleRemoveMember(member.userId)}
-                              className="text-sm text-red-600 hover:text-red-900"
-                            >
-                              Remove
-                            </button>
-                          )}
+                  <>
+                    {teamMembers.length > 0 && (
+                      <div className="space-y-3">
+                        {teamMembers.map((member) => (
+                          <div key={member.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+                            <div>
+                              <p className="font-medium text-slate-900">{member.userName}</p>
+                              <p className="text-sm text-slate-600">{member.userEmail}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium capitalize ${getRoleColor(member.role)}`}>
+                                {member.role}
+                              </span>
+                              {canRemoveMember(member.role, currentUserRole) && (
+                                <button
+                                  onClick={() => handleRemoveMember(member.userId, member.userName)}
+                                  className="text-sm text-red-600 hover:text-red-900"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {teamInvites.length > 0 && (
+                      <div className="mb-6">
+                        <h4 className="text-sm font-medium text-slate-700 mb-3">Pending Invitations</h4>
+                        <div className="space-y-2">
+                          {teamInvites.map((invite) => (
+                            <div key={invite.id} className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                              <div>
+                                <p className="font-medium text-slate-900">{invite.email}</p>
+                                <p className="text-xs text-slate-600">
+                                  Role: <span className="capitalize">{invite.role}</span> • 
+                                  Expires: {formatDate(invite.expiresAt)}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleCancelInvite(invite.id)}
+                                className="text-sm text-red-600 hover:text-red-900"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
           </div>
         </div>
+
+        <ConfirmModal
+          isOpen={showRemoveMemberConfirm}
+          onClose={() => setShowRemoveMemberConfirm(false)}
+          onConfirm={confirmRemoveMember}
+          title="Remove Team Member"
+          message={`Are you sure you want to remove ${memberToRemove?.userName || 'this team member'} from the team?`}
+        />
+
+        <ConfirmModal
+          isOpen={showDeleteTeamConfirm}
+          onClose={() => setShowDeleteTeamConfirm(false)}
+          onConfirm={confirmDeleteTeam}
+          title="Delete Team"
+          message="Are you sure you want to delete this team? This action cannot be undone."
+        />
 
         {/* Create Team Modal */}
         {showCreateModal && (

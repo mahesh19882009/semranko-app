@@ -15,13 +15,15 @@ def create_scheduled_report(
     name: str,
     frequency: str,
     format: str,
-    recipients: str
+    recipients: str,
+    start_date: Optional[datetime] = None
 ) -> ScheduledReport:
     """
     Create a new scheduled report
     """
-    # Calculate next send time based on frequency
-    next_send_at = calculate_next_send_time(frequency)
+    # Calculate next send time based on frequency and start date
+    base_date = start_date or datetime.now()
+    next_send_at = calculate_next_send_time(frequency, base_date)
     
     report = ScheduledReport(
         userId=user_id,
@@ -30,6 +32,7 @@ def create_scheduled_report(
         frequency=frequency,
         format=format,
         recipients=recipients,
+        startDate=start_date,
         isActive=True,
         nextSendAt=next_send_at
     )
@@ -114,11 +117,11 @@ def delete_scheduled_report(db: Session, report_id: str, user_id: str) -> bool:
     return True
 
 
-def calculate_next_send_time(frequency: str) -> datetime:
+def calculate_next_send_time(frequency: str, base_date: Optional[datetime] = None) -> datetime:
     """
     Calculate the next send time based on frequency
     """
-    now = datetime.utcnow()
+    now = base_date or datetime.utcnow()
     
     if frequency == "daily":
         return now + timedelta(days=1)

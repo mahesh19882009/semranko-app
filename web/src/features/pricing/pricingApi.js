@@ -55,3 +55,11 @@ export const fetchInvoicesApi = async () => {
   const response = await apiRequest("/payments/invoices");
   return response.data || { invoices: [], credit_balance: 0 };
 };
+
+export const markPaymentFailedApi = async (orderId) => {
+  const response = await apiRequest("/payments/mark-failed", {
+    method: "POST",
+    body: JSON.stringify({ razorpay_order_id: orderId }),
+  });
+  return response || null;
+};

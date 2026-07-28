@@ -1,8 +1,8 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.db.models import Team, TeamMember, User, Project
-from datetime import datetime
+from app.db.models import Team, TeamMember, TeamInvite, User, Project
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -199,7 +199,7 @@ def delete_team(db: Session, team_id: str, user_id: str) -> bool:
 def invite_user_to_team(db: Session, team_id: str, email: str, role: str, inviting_user_id: str) -> dict:
     """
     Invite a user to a team by email
-    In production, this would send an email invitation
+    Creates a pending invitation that can be accepted later
     """
     # Check if inviting user is admin or owner
     inviting_member = db.execute(
@@ -211,16 +211,151 @@ def invite_user_to_team(db: Session, team_id: str, email: str, role: str, inviti
     if not inviting_member or inviting_member.role not in ["admin", "owner"]:
         return {"success": False, "message": "Only admins can invite users"}
     
-    # Check if user exists
-    user = db.execute(
+    # Check if user already exists and is already a member
+    existing_user = db.execute(
         select(User)
         .where(User.email == email)
     ).scalar_one_or_none()
     
-    if not user:
-        return {"success": False, "message": "User not found"}
+    if existing_user:
+        # Check if already a member
+        existing_member = db.execute(
+            select(TeamMember)
+            .where(TeamMember.teamId == team_id)
+            .where(TeamMember.userId == existing_user.id)
+        ).scalar_one_or_none()
+        
+        if existing_member:
+            return {"success": False, "message": "User is already a member of this team"}
     
-    # Add to team
-    add_team_member(db, team_id, user.id, role)
+    # Check if there's already a pending invitation
+    existing_invite = db.execute(
+        select(TeamInvite)
+        .where(TeamInvite.teamId == team_id)
+        .where(TeamInvite.email == email)
+        .where(TeamInvite.status == "pending")
+    ).scalar_one_or_none()
     
-    return {"success": True, "message": "User added to team"}
+    if existing_invite:
+        return {"success": False, "message": "User already has a pending invitation"}
+    
+    # Create invitation (expires in 7 days)
+    invite = TeamInvite(
+        teamId=team_id,
+        email=email,
+        role=role,
+        invitedBy=inviting_user_id,
+        status="pending",
+        expiresAt=datetime.now() + timedelta(days=7)
+    )
+    
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    
+    # TODO: Send email invitation here
+    
+    return {
+        "success": True, 
+        "message": "Invitation sent successfully",
+        "invite": {
+            "id": invite.id,
+            "email": invite.email,
+            "role": invite.role,
+            "status": invite.status,
+            "expiresAt": invite.expiresAt.isoformat(),
+            "createdAt": invite.createdAt.isoformat()
+        }
+    }
+
+
+def get_team_invites(db: Session, team_id: str) -> List[dict]:
+    """
+    Get all pending invitations for a team
+    """
+    invites = db.execute(
+        select(TeamInvite)
+        .where(TeamInvite.teamId == team_id)
+        .where(TeamInvite.status == "pending")
+        .order_by(TeamInvite.createdAt.desc())
+    ).scalars().all()
+    
+    return [
+        {
+            "id": invite.id,
+            "email": invite.email,
+            "role": invite.role,
+            "invitedBy": invite.invitedBy,
+            "status": invite.status,
+            "expiresAt": invite.expiresAt.isoformat(),
+            "createdAt": invite.createdAt.isoformat()
+        }
+        for invite in invites
+    ]
+
+
+def accept_team_invite(db: Session, invite_id: str, user_id: str) -> dict:
+    """
+    Accept a team invitation
+    """
+    invite = db.execute(
+        select(TeamInvite)
+        .where(TeamInvite.id == invite_id)
+        .where(TeamInvite.status == "pending")
+    ).scalar_one_or_none()
+    
+    if not invite:
+        return {"success": False, "message": "Invitation not found or expired"}
+    
+    # Check if invitation email matches user's email
+    user = db.execute(
+        select(User)
+        .where(User.id == user_id)
+    ).scalar_one_or_none()
+    
+    if not user or user.email != invite.email:
+        return {"success": False, "message": "This invitation is for a different email address"}
+    
+    # Check if not expired
+    if invite.expiresAt < datetime.now():
+        invite.status = "expired"
+        db.commit()
+        return {"success": False, "message": "Invitation has expired"}
+    
+    # Add user to team
+    add_team_member(db, invite.teamId, user_id, invite.role)
+    
+    # Mark invitation as accepted
+    invite.status = "accepted"
+    db.commit()
+    
+    return {"success": True, "message": "Successfully joined the team"}
+
+
+def cancel_team_invite(db: Session, invite_id: str, team_id: str, requesting_user_id: str) -> dict:
+    """
+    Cancel a team invitation (only admins/owners)
+    """
+    # Check if requesting user is admin or owner
+    requesting_member = db.execute(
+        select(TeamMember)
+        .where(TeamMember.teamId == team_id)
+        .where(TeamMember.userId == requesting_user_id)
+    ).scalar_one_or_none()
+    
+    if not requesting_member or requesting_member.role not in ["admin", "owner"]:
+        return {"success": False, "message": "Only admins can cancel invitations"}
+    
+    invite = db.execute(
+        select(TeamInvite)
+        .where(TeamInvite.id == invite_id)
+        .where(TeamInvite.teamId == team_id)
+    ).scalar_one_or_none()
+    
+    if not invite:
+        return {"success": False, "message": "Invitation not found"}
+    
+    invite.status = "cancelled"
+    db.commit()
+    
+    return {"success": True, "message": "Invitation cancelled"}

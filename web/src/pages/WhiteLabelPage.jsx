@@ -4,11 +4,13 @@ import {
   updateWhiteLabelSettingsApi,
   deleteWhiteLabelSettingsApi,
 } from "../lib/api";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function WhiteLabelPage() {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
     logoUrl: "",
@@ -63,8 +65,12 @@ export default function WhiteLabelPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirm("Are you sure you want to delete your white label settings?")) return;
+    setShowResetConfirm(true);
+  };
 
+  const confirmReset = async () => {
+    setShowResetConfirm(false);
+    
     try {
       await deleteWhiteLabelSettingsApi();
       setSettings(null);
@@ -261,6 +267,14 @@ export default function WhiteLabelPage() {
           </ul>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={showResetConfirm}
+        onClose={() => setShowResetConfirm(false)}
+        onConfirm={confirmReset}
+        title="Reset to Default"
+        message="Are you sure you want to reset your white label settings to default? This action cannot be undone."
+      />
     </div>
   );
 }

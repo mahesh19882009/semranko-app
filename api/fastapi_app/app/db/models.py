@@ -371,6 +371,7 @@ class ScheduledReport(Base):
     frequency: Mapped[str] = mapped_column(String, nullable=False)  # daily, weekly, monthly
     format: Mapped[str] = mapped_column(String, nullable=False)  # pdf, csv
     recipients: Mapped[str] = mapped_column(String, nullable=False)  # comma-separated emails
+    startDate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)  # When to start sending reports
     isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     lastSentAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     nextSendAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
@@ -417,6 +418,28 @@ class TeamMember(Base):
         Index("TeamMember_teamId_idx", "teamId"),
         Index("TeamMember_userId_idx", "userId"),
         Index("TeamMember_team_user_key", "teamId", "userId", unique=True),
+    )
+
+
+class TeamInvite(Base):
+    __tablename__ = "TeamInvite"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    teamId: Mapped[str] = mapped_column(String, ForeignKey("Team.id", ondelete="CASCADE"), nullable=False)
+    email: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="member")
+    invitedBy: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")  # pending, accepted, declined, expired
+    expiresAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    team: Mapped[Team] = relationship("Team")
+    inviter: Mapped[User] = relationship("User")
+
+    __table_args__ = (
+        Index("TeamInvite_teamId_idx", "teamId"),
+        Index("TeamInvite_email_idx", "email"),
+        Index("TeamInvite_status_idx", "status"),
     )
 
 

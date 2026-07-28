@@ -7,7 +7,7 @@ import {
   fetchCurrentPricing,
   fetchPricingPlans,
 } from "../features/pricing/pricingSlice";
-import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
+import { createPaymentOrderApi, verifyPaymentApi, markPaymentFailedApi } from "../features/pricing/pricingApi";
 import { initRazorpayCheckout } from "../lib/api";
 import { isAuthenticated } from "../utils/auth";
 import { PLAN_COMPARISON, PLANS } from "../config/pricing";
@@ -288,11 +288,20 @@ export default function PricingPage() {
               setIsProcessingPayment(false);
             }
           },
-          onPaymentError: (error) => {
+          onPaymentError: async (error) => {
             console.error("Payment failed:", error);
             const desc = error?.description || error?.reason || "Payment failed or was cancelled.";
             setPaymentError(`${desc} (Test Tip: In Razorpay test mode, choose Netbanking or UPI vpa "success@razorpay" to complete test payment).`);
             setIsProcessingPayment(false);
+
+            const failedOrderId = error?.metadata?.order_id;
+            if (failedOrderId) {
+              try {
+                await markPaymentFailedApi(failedOrderId);
+              } catch (e) {
+                console.error("Failed to mark payment as failed:", e);
+              }
+            }
           },
         });
       }

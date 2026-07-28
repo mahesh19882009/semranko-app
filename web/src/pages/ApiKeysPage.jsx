@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { createApiKeyApi, listApiKeysApi, deactivateApiKeyApi, deleteApiKeyApi } from "../lib/api";
 import { formatDate } from "../utils/date";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function ApiKeysPage() {
   const [apiKeys, setApiKeys] = useState([]);
@@ -11,6 +12,9 @@ export default function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
   const [createdKey, setCreatedKey] = useState(null);
   const [error, setError] = useState("");
+  const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [apiKeyToAction, setApiKeyToAction] = useState(null);
 
   useEffect(() => {
     loadApiKeys();
@@ -55,26 +59,44 @@ export default function ApiKeysPage() {
     }
   };
 
-  const handleDeactivate = async (apiKeyId) => {
-    if (!confirm("Are you sure you want to deactivate this API key?")) return;
+  const handleDeactivate = async (apiKeyId, keyName) => {
+    setApiKeyToAction({ id: apiKeyId, name: keyName });
+    setShowDeactivateConfirm(true);
+  };
 
+  const confirmDeactivate = async () => {
+    if (!apiKeyToAction) return;
+    
+    setShowDeactivateConfirm(false);
+    
     try {
-      await deactivateApiKeyApi(apiKeyId);
+      await deactivateApiKeyApi(apiKeyToAction.id);
       await loadApiKeys();
     } catch (err) {
       setError(err?.message || "Failed to deactivate API key");
     }
+    
+    setApiKeyToAction(null);
   };
 
-  const handleDelete = async (apiKeyId) => {
-    if (!confirm("Are you sure you want to delete this API key? This action cannot be undone.")) return;
+  const handleDelete = async (apiKeyId, keyName) => {
+    setApiKeyToAction({ id: apiKeyId, name: keyName });
+    setShowDeleteConfirm(true);
+  };
 
+  const confirmDelete = async () => {
+    if (!apiKeyToAction) return;
+    
+    setShowDeleteConfirm(false);
+    
     try {
-      await deleteApiKeyApi(apiKeyId);
+      await deleteApiKeyApi(apiKeyToAction.id);
       await loadApiKeys();
     } catch (err) {
       setError(err?.message || "Failed to delete API key");
     }
+    
+    setApiKeyToAction(null);
   };
 
   const copyToClipboard = (text) => {
@@ -175,14 +197,14 @@ export default function ApiKeysPage() {
                         <div className="flex gap-2">
                           {key.isActive && (
                             <button
-                              onClick={() => handleDeactivate(key.id)}
+                              onClick={() => handleDeactivate(key.id, key.name)}
                               className="text-sm text-slate-600 hover:text-slate-900"
                             >
                               Deactivate
                             </button>
                           )}
                           <button
-                            onClick={() => handleDelete(key.id)}
+                            onClick={() => handleDelete(key.id, key.name)}
                             className="text-sm text-red-600 hover:text-red-900"
                           >
                             Delete
@@ -253,6 +275,22 @@ export default function ApiKeysPage() {
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={showDeactivateConfirm}
+        onClose={() => setShowDeactivateConfirm(false)}
+        onConfirm={confirmDeactivate}
+        title="Deactivate API Key"
+        message={`Are you sure you want to deactivate "${apiKeyToAction?.name || 'this API key'}"?`}
+      />
+
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={confirmDelete}
+        title="Delete API Key"
+        message={`Are you sure you want to delete "${apiKeyToAction?.name || 'this API key'}"? This action cannot be undone.`}
+      />
     </div>
   );
 }

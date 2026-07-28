@@ -492,3 +492,29 @@ async def razorpay_webhook(
         )
 
     return {"received": True}
+
+
+@router.post("/mark-failed")
+async def mark_payment_failed(
+    request_data: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    from app.db.models import PaymentOrder as PO
+
+    order_id = request_data.get("razorpay_order_id")
+    if not order_id:
+        raise HTTPException(status_code=400, detail="Missing order ID")
+
+    payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id, PO.userId == current_user.id))
+    if not payment_order:
+        raise HTTPException(status_code=404, detail="Payment order not found")
+
+    if payment_order.status == "paid":
+        return ok("Order already paid", None)
+
+    payment_order.status = "failed"
+    db.add(payment_order)
+    db.commit()
+
+    return ok("Payment marked as failed", None)

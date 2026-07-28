@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { getStoredUser, logoutUser } from "../utils/auth";
 import { formatDate } from "../utils/date";
+import { fetchWhiteLabelSettings } from "../features/whiteLabel/whiteLabelSlice";
 import {
   faBell,
   faSearch,
@@ -47,6 +48,11 @@ function Topbar({ onToggleSidebar }) {
   const searchLoading = useSelector((state) => state.search.loading);
   const searchError = useSelector((state) => state.search.error);
   const searchOpen = useSelector((state) => state.search.open);
+  const whiteLabelSettings = useSelector((state) => state.whiteLabel.settings);
+
+  useEffect(() => {
+    dispatch(fetchWhiteLabelSettings());
+  }, [dispatch]);
 
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -69,11 +75,13 @@ function Topbar({ onToggleSidebar }) {
 
   useEffect(() => {
     dispatch(fetchUnreadCount());
+    dispatch(fetchNotifications({ page: 1, limit: 10 }));
   }, [dispatch]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       dispatch(fetchUnreadCount());
+      dispatch(fetchNotifications({ page: 1, limit: 10 }));
     }, 60000);
 
     return () => clearInterval(interval);
@@ -160,7 +168,7 @@ function Topbar({ onToggleSidebar }) {
 
     const diffDays = Math.floor(diffHours / 24);
     if (diffDays < 7) return `${diffDays}d ago`;
-formDa(d
+
     return date.toLocaleDateString();
   };
 
@@ -269,12 +277,18 @@ formDa(d
   };
 
   const totalResults =
-  (searchResults?.totals?.projects || 0) +
-  (searchResults?.totals?.keywords || 0) +
-  (searchResults?.totals?.reports || 0);
+    (searchResults?.totals?.projects || 0) +
+    (searchResults?.totals?.keywords || 0) +
+    (searchResults?.totals?.reports || 0);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/90 backdrop-blur">
+    <header 
+      className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/90 backdrop-blur"
+      style={{
+        backgroundColor: whiteLabelSettings?.primaryColor || undefined,
+        color: whiteLabelSettings?.secondaryColor || undefined
+      }}
+    >
       <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex items-center gap-3">
           <button
@@ -285,14 +299,15 @@ formDa(d
           </button>
 
           <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-900">
+            <p className="text-xs uppercase tracking-[0.24em" style={{ color: whiteLabelSettings?.secondaryColor || 'text-slate-900' }}>
               Selected project
             </p>
 
             <select
               value={selectedProjectId || ""}
               onChange={(e) => dispatch(setSelectedProjectId(e.target.value || null))}
-              className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate text-slate-900 outline-none"
+              className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate outline-none"
+              style={{ color: whiteLabelSettings?.secondaryColor || 'text-slate-900' }}
             >
               {projects.length === 0 ? (
                 <option value="">No project</option>
@@ -463,7 +478,7 @@ formDa(d
             >
               <FontAwesomeIcon icon={faBell} />
               {unreadCount > 0 && (
-                <span className="absolute right-1.5 top-1.5 min-w-[18px] rounded-full bg-rose-500 px-1.5 text-[10px] font-bold leading-5 text-white">
+                <span className="absolute right-0.5 top-0.5 min-w-[18px] rounded-full bg-rose-500 px-1.5 text-[10px] font-bold leading-5 text-white">
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
               )}
@@ -505,11 +520,10 @@ formDa(d
                         key={notification.id}
                         type="button"
                         onClick={() => handleNotificationClick(notification)}
-                        className={`flex w-full flex-col items-start gap-1 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 ${
-                          notification.status === "UNREAD"
+                        className={`flex w-full flex-col items-start gap-1 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 ${notification.status === "UNREAD"
                             ? "bg-brand-50/40"
                             : "bg-white"
-                        }`}
+                          }`}
                       >
                         <div className="flex w-full items-start justify-between gap-3">
                           <p className="text-sm font-semibold text-slate-900">
@@ -569,9 +583,8 @@ formDa(d
 
               <FontAwesomeIcon
                 icon={faChevronDown}
-                className={`hidden text-xs text-slate-400 transition sm:block ${
-                  profileOpen ? "rotate-180" : ""
-                }`}
+                className={`hidden text-xs text-slate-400 transition sm:block ${profileOpen ? "rotate-180" : ""
+                  }`}
               />
             </button>
 
