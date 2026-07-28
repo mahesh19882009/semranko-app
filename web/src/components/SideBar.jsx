@@ -41,11 +41,11 @@ function Sidebar({ open, onToggle }) {
       <div className="shrink-0 flex items-center justify-between border-b border-slate-200 px-4 py-5">
         <Link
           to="/"
-          className={`flex items-center gap-3 overflow-hidden transition hover:bg-brand-700 hover:text-white ${
+          className={`h-[46px] flex items-center gap-3 overflow-hidden transition ${
             open ? 'px-2' : 'justify-center px-0'
           }`}
         >
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-soft">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-brand-600 text-white shadow-soft">
             <FontAwesomeIcon icon={faChartLine} className="text-lg" />
           </div>
           {open && (
