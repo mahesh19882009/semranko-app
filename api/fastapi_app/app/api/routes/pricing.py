@@ -7,6 +7,8 @@ from app.services.plan_service import (
     build_usage_snapshot,
     change_user_plan,
     get_user_or_404,
+    is_in_grace_period,
+    get_grace_period_end,
     list_available_plans,
     validate_plan_change,
 )
@@ -50,3 +52,27 @@ def change_plan(
     updated = change_user_plan(db, user["userId"], plan_key)
     snapshot = build_usage_snapshot(db, updated)
     return ok("Plan changed successfully", snapshot)
+
+
+@router.get("/subscription-status")
+def get_subscription_status(
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    """Get detailed subscription status including grace period information."""
+    db_user = get_user_or_404(db, user["userId"])
+    snapshot = build_usage_snapshot(db, db_user)
+    
+    return ok("Subscription status fetched", {
+        "plan": snapshot["plan"],
+        "effectivePlan": snapshot["effectivePlan"],
+        "subscriptionStatus": snapshot["subscriptionStatus"],
+        "trialStartsAt": snapshot["trialStartsAt"],
+        "trialEndsAt": snapshot["trialEndsAt"],
+        "gracePeriodEndsAt": snapshot["gracePeriodEndsAt"],
+        "isInGracePeriod": snapshot["isInGracePeriod"],
+        "trialDays": snapshot["trialDays"],
+        "usage": snapshot["usage"],
+        "limits": snapshot["limits"],
+        "creditBalance": snapshot["creditBalance"],
+    })

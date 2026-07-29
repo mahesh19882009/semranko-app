@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
 from app.services.keyword_service import add_keyword, add_keywords_bulk, delete_keyword, delete_keywords_bulk, get_project_keywords
+from app.core.security import enforce_limits
 
 router = APIRouter(prefix="/keywords", tags=["keywords"])
 
 
 @router.post("/{project_id}")
+@enforce_limits(resource_type='keyword')
 def create_keyword(
     project_id: str,
     payload: dict = Body(...),
@@ -21,6 +23,7 @@ def create_keyword(
 
 
 @router.post("/{project_id}/bulk")
+@enforce_limits(resource_type='keyword')
 def bulk_create_keywords(
     project_id: str,
     payload: dict = Body(...),

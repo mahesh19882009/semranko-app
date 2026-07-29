@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -13,7 +13,7 @@ PLAN_DEFINITIONS = {
         "key": "starter",
         "name": "Starter",
         "monthlyPrice": 1999,
-        "yearlyPrice": 1499,
+        "yearlyPrice": 17988,
         "description": "Best for freelancers and small websites starting SEO tracking.",
         "highlighted": False,
         "cta": "Start Starter Trial",
@@ -30,7 +30,7 @@ PLAN_DEFINITIONS = {
         "key": "pro",
         "name": "Pro",
         "monthlyPrice": 4999,
-        "yearlyPrice": 3999,
+        "yearlyPrice": 47988,
         "description": "Ideal for growing businesses that need stronger reporting and tracking.",
         "highlighted": True,
         "cta": "Start Pro Trial",
@@ -47,8 +47,8 @@ PLAN_DEFINITIONS = {
         "key": "agency",
         "name": "Agency",
         "monthlyPrice": 9999,
-        "yearlyPrice": 7999,
-        "description": "Built for agencies handling multiple clients and white-label style delivery.",
+        "yearlyPrice": 101988,
+        "description": "Built for agencies handling multiple clients and organized client delivery.",
         "highlighted": False,
         "cta": "Start Agency Trial",
         "limits": {
@@ -133,12 +133,50 @@ def get_user_plan_limits(user: User) -> dict:
 
 def ensure_subscription_active(user: User) -> None:
     status = get_subscription_status(user)
+    
+    # Allow active and trialing subscriptions
     if status not in {"trialing", "active"}:
         raise ApiError(403, "Your subscription is inactive. Please upgrade to continue.")
 
     trial_ends_at = getattr(user, "trialEndsAt", None)
-    if status == "trialing" and trial_ends_at and trial_ends_at < datetime.utcnow():
-        raise ApiError(403, "Your trial has expired. Please upgrade to continue.")
+    now = datetime.utcnow()
+    
+    if status == "trialing" and trial_ends_at:
+        # Calculate grace period end (3 days after trial expiration)
+        grace_period_end = trial_ends_at + timedelta(days=3)
+        
+        if trial_ends_at < now:
+            if now < grace_period_end:
+                # Within grace period - allow access but could show warning
+                pass
+            else:
+                # Grace period expired - block access
+                raise ApiError(403, "Your trial has expired. Please upgrade to continue.")
+
+
+def is_in_grace_period(user: User) -> bool:
+    """Check if user is in trial grace period (trial expired but within 3-day grace window)."""
+    trial_ends_at = getattr(user, "trialEndsAt", None)
+    if not trial_ends_at:
+        return False
+    
+    status = get_subscription_status(user)
+    if status != "trialing":
+        return False
+    
+    now = datetime.utcnow()
+    grace_period_end = trial_ends_at + timedelta(days=3)
+    
+    return trial_ends_at < now < grace_period_end
+
+
+def get_grace_period_end(user: User) -> Optional[datetime]:
+    """Get the grace period end date for a user, or None if not applicable."""
+    trial_ends_at = getattr(user, "trialEndsAt", None)
+    if not trial_ends_at:
+        return None
+    
+    return trial_ends_at + timedelta(days=3)
 
 
 def count_user_projects(db: Session, user_id: str) -> int:
@@ -195,9 +233,10 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "subscriptionStatus": get_subscription_status(user),
         "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
         "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
+        "gracePeriodEndsAt": get_grace_period_end(user).isoformat() if get_grace_period_end(user) else None,
+        "isInGracePeriod": is_in_grace_period(user),
         "trialDays": get_trial_days(),
         "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
-        "pendingPlanChange": getattr(user, "pendingPlanChange", None),
         "usage": {
             "projects": count_user_projects(db, user.id),
             "keywords": count_user_keywords(db, user.id),
@@ -296,24 +335,7 @@ def change_user_plan(db: Session, user_id: str, plan_key: str) -> User:
     if validation["isDowngrade"] and not validation["allowed"]:
         raise ApiError(409, "Downgrade not allowed until usage is reduced", validation)
 
-    if validation["isDowngrade"]:
-        user.pendingPlanChange = plan
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        
-        create_notification(
-            db,
-            user_id=user.id,
-            title="Plan downgrade scheduled",
-            message=f"Your plan will be changed to {PLAN_DEFINITIONS[plan]['name']} at the end of your current billing period.",
-            type="plan_change",
-            severity="info",
-        )
-        db.commit()
-        
-        return user
-
+    # Immediate plan change - no scheduling
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
 

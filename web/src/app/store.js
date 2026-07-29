@@ -9,6 +9,7 @@ import settingsReducer from "../features/settings/settingsSlice";
 import notificationsReducer from '../features/notifications/notificationsSlice';
 import searchReducer from '../features/search/searchSlice';
 import pricingReducer from '../features/pricing/pricingSlice';
+import subscriptionReducer from '../features/subscription/subscriptionSlice';
 
 export const store = configureStore({
   reducer: {
@@ -22,5 +23,6 @@ export const store = configureStore({
     notifications: notificationsReducer,
     search: searchReducer,
     pricing: pricingReducer,
+    subscription: subscriptionReducer,
   }
 });

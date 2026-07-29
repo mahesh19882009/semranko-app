@@ -22,13 +22,14 @@ razorpay_client = razorpay.Client(
 ) if settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET else None
 
 
-def get_plan_by_id(db: Session, plan_id: int) -> Optional[Dict[str, Any]]:
+def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") -> Optional[Dict[str, Any]]:
     """
     Get plan details by ID from PLAN_DEFINITIONS
     
     Args:
         db: Database session (not used but kept for consistency)
         plan_id: ID of the plan (0=starter, 1=pro, 2=agency)
+        billing_cycle: 'monthly' or 'yearly'
     
     Returns:
         Plan details or None if invalid plan_id
@@ -45,6 +46,14 @@ def get_plan_by_id(db: Session, plan_id: int) -> Optional[Dict[str, Any]]:
     if not plan:
         return None
     
+    # Calculate duration and price based on billing cycle
+    if billing_cycle == "yearly":
+        duration_days = 365
+        price = plan["yearlyPrice"]
+    else:
+        duration_days = 30
+        price = plan["monthlyPrice"]
+    
     # Return plan with additional metadata
     return {
         "id": plan_id,
@@ -52,9 +61,11 @@ def get_plan_by_id(db: Session, plan_id: int) -> Optional[Dict[str, Any]]:
         "name": plan["name"],
         "monthly_price": plan["monthlyPrice"],
         "yearly_price": plan["yearlyPrice"],
+        "price": price,
+        "billing_cycle": billing_cycle,
         "description": plan["description"],
         "limits": plan["limits"],
-        "duration_days": 30  # Default subscription duration
+        "duration_days": duration_days
     }
 
 
@@ -191,7 +202,8 @@ def activate_subscription(
     user_id: str,
     plan_id: int,
     payment_id: str,
-    order_id: str
+    order_id: str,
+    billing_cycle: str = "monthly"
 ) -> Subscription:
     """
     Activate subscription after successful payment
@@ -202,11 +214,12 @@ def activate_subscription(
         plan_id: ID of the purchased plan
         payment_id: Razorpay payment ID (or mock payment ID for dev mode)
         order_id: Razorpay order ID (or mock order ID for dev mode)
+        billing_cycle: 'monthly' or 'yearly'
     
     Returns:
         Activated subscription object
     """
-    plan = get_plan_by_id(db, plan_id)
+    plan = get_plan_by_id(db, plan_id, billing_cycle)
     if not plan:
         raise Exception("Plan not found")
     
@@ -243,17 +256,8 @@ def activate_subscription(
         )
     )
     
-    # Clear any pending plan change when user pays for an upgrade
-    # The pending plan takes precedence and is applied at activation time
     effective_plan_id = plan_id
     effective_plan_key = plan["key"]
-    pending_plan = getattr(user, "pendingPlanChange", None)
-    
-    if pending_plan:
-        plan_map = {"starter": 0, "pro": 1, "agency": 2}
-        effective_plan_id = plan_map[pending_plan]
-        effective_plan_key = pending_plan
-        user.pendingPlanChange = None
     
     if existing_subscription:
         existing_subscription.planId = effective_plan_id

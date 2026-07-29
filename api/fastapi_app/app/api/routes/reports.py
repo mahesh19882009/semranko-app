@@ -10,6 +10,7 @@ from app.services.report_service import (
     get_project_reports,
     get_single_report,
 )
+from app.core.security import enforce_limits
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -27,6 +28,7 @@ def list_reports(project_id: str, user: dict = Depends(get_current_user), db: Se
 
 
 @router.post("/{project_id}/run")
+@enforce_limits(resource_type='report')
 def create_report(project_id: str, user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> JSONResponse:
     report = create_project_report(db, user["userId"], project_id)
     return JSONResponse(status_code=201, content={"success": True, "message": "Report generated successfully", "data": report})

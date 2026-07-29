@@ -10,6 +10,7 @@ from app.services.competitor_service import (
     get_competitors_by_project,
     update_competitor,
 )
+from app.core.security import enforce_limits
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
 
@@ -21,6 +22,7 @@ def list_by_project(project_id: str, user: dict = Depends(get_current_user), db:
 
 
 @router.post("")
+@enforce_limits(resource_type='competitor')
 def create(payload: dict = Body(...), user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> JSONResponse:
     competitor = create_competitor(db, user["userId"], payload)
     return JSONResponse(status_code=201, content=ok("Competitor created", competitor))

@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
 from app.services.project_service import create_project, delete_project, get_project_by_id, get_projects, update_project
+from app.core.security import enforce_limits
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.post("")
+@enforce_limits(resource_type='project')
 def create(
     payload: dict = Body(...),
     user: dict = Depends(get_current_user),

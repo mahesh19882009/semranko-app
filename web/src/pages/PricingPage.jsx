@@ -534,7 +534,7 @@ export default function PricingPage() {
                 const violations = showDowngradeWarning ? validation?.violations || [] : [];
                 
                 // Calculate price based on billing cycle (in INR ₹)
-                const price = selectedBillingCycle === "yearly" ? plan.yearlyPrice : plan.monthlyPrice;
+                const price = selectedBillingCycle === "yearly" ? (plan.yearlyPrice) / 12 : plan.monthlyPrice;
 
                 return (
                   <article
@@ -645,7 +645,8 @@ export default function PricingPage() {
                            type="button"
                            disabled
                            fullWidth
-                           className="bg-slate-200 text-slate-500 cursor-not-allowed"
+                           variant="primary"
+                           className="cursor-not-allowed"
                          >
                            Current Plan
                          </Button>

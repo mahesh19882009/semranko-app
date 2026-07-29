@@ -24,9 +24,9 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency"}
 GST_RATE = Decimal(str(GST_RATE))
 PLAN_KEY_PRICES = {
-    "starter": {"monthly": 1999, "yearly": 1499},
-    "pro":     {"monthly": 4999, "yearly": 3999},
-    "agency":  {"monthly": 9999, "yearly": 7999},
+    "starter": {"monthly": 1999, "yearly": 17988},
+    "pro":     {"monthly": 4999, "yearly": 47988},
+    "agency":  {"monthly": 9999, "yearly": 101988},
 }
 
 def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
@@ -79,6 +79,7 @@ def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> di
 async def create_payment_order(
     plan_id: int = Query(..., description="Plan ID to upgrade to"),
     amount: int = Query(..., description="Amount in smallest currency unit (e.g., paise)"),
+    billing_cycle: str = Query("monthly", description="Billing cycle: monthly or yearly"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -148,7 +149,8 @@ async def create_payment_order(
                 user_id=current_user.id,
                 plan_id=plan_id,
                 payment_id=pay_id,
-                order_id=order_id
+                order_id=order_id,
+                billing_cycle=billing_cycle
             )
             credit_deducted = round(applied_credit_paise / 100.0, 2)
             current_user.creditBalance = round(max(0.0, available_credit - credit_deducted), 2)
@@ -219,13 +221,14 @@ async def verify_payment(
 ):
     """
     Verify Razorpay payment signature and activate subscription.
-    Expected body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id, credit_applied }
+    Expected body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id, credit_applied, billing_cycle }
     """
     razorpay_order_id = request_data.get("razorpay_order_id")
     razorpay_payment_id = request_data.get("razorpay_payment_id")
     razorpay_signature = request_data.get("razorpay_signature")
     plan_id = request_data.get("plan_id")
     credit_applied = float(request_data.get("credit_applied", 0.0) or 0.0)
+    billing_cycle = request_data.get("billing_cycle", "monthly")
     
     if razorpay_order_id is None or razorpay_payment_id is None or razorpay_signature is None or plan_id is None:
         raise HTTPException(status_code=400, detail="Missing required payment fields")
@@ -261,7 +264,8 @@ async def verify_payment(
             user_id=current_user.id,
             plan_id=plan_id,
             payment_id=razorpay_payment_id,
-            order_id=razorpay_order_id
+            order_id=razorpay_order_id,
+            billing_cycle=billing_cycle
         )
 
         if credit_applied > 0:
@@ -408,7 +412,6 @@ async def get_invoices(
         "data": {
             "invoices": invoices,
             "credit_balance": float(getattr(current_user, "creditBalance", 0.0) or 0.0),
-            "pendingPlanChange": getattr(current_user, "pendingPlanChange", None),
             "user_name": current_user.name,
             "user_email": current_user.email,
         }
@@ -464,7 +467,8 @@ async def razorpay_webhook(
                 user_id=user.id,
                 plan_id=plan_id if plan_id is not None else payment_order.planId,
                 payment_id=payment_id,
-                order_id=order_id
+                order_id=order_id,
+                billing_cycle="monthly"  # Default to monthly for webhooks, could be enhanced
             )
         except Exception as exc:
             logger.exception("Webhook subscription activation failed: %s", exc)

@@ -14,6 +14,8 @@ import {
   faFileLines,
   faKey,
   faFolderOpen,
+  faExclamationTriangle,
+  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import { setDateRange } from "../features/dashboard/dashboardSlice";
 import { setSelectedProjectId } from "../features/projects/projectsSlice";
@@ -30,6 +32,7 @@ import {
   fetchSearchResults,
   setSearchQuery,
 } from "../features/search/searchSlice";
+import { fetchSubscriptionStatus } from "../features/subscription/subscriptionSlice";
 
 function Topbar({ onToggleSidebar }) {
   const dispatch = useDispatch();
@@ -48,8 +51,12 @@ function Topbar({ onToggleSidebar }) {
   const searchError = useSelector((state) => state.search.error);
   const searchOpen = useSelector((state) => state.search.open);
 
+  const subscriptionData = useSelector((state) => state.subscription.data);
+  const subscriptionLoading = useSelector((state) => state.subscription.loading);
+
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [subscriptionBannerOpen, setSubscriptionBannerOpen] = useState(true);
 
   const notificationsRef = useRef(null);
   const profileRef = useRef(null);
@@ -70,6 +77,7 @@ function Topbar({ onToggleSidebar }) {
   useEffect(() => {
     dispatch(fetchUnreadCount());
     dispatch(fetchNotifications({ page: 1, limit: 10 }));
+    dispatch(fetchSubscriptionStatus());
   }, [dispatch]);
 
   useEffect(() => {
@@ -275,10 +283,57 @@ function Topbar({ onToggleSidebar }) {
     (searchResults?.totals?.keywords || 0) +
     (searchResults?.totals?.reports || 0);
 
+  // Show banner if in grace period or trial expired
+  const showSubscriptionBanner = subscriptionBannerOpen && 
+    (subscriptionData?.isInGracePeriod || subscriptionData?.subscriptionStatus === 'trialing');
+
+  const getBannerMessage = () => {
+    if (subscriptionData?.isInGracePeriod) {
+      const graceEnd = new Date(subscriptionData.gracePeriodEndsAt);
+      const daysLeft = Math.ceil((graceEnd - new Date()) / (1000 * 60 * 60 * 24));
+      return `Your trial has expired. Upgrade within ${daysLeft} day${daysLeft !== 1 ? 's' : ''} to continue using RankCare.`;
+    }
+    if (subscriptionData?.subscriptionStatus === 'trialing' && subscriptionData?.trialEndsAt) {
+      const trialEnd = new Date(subscriptionData.trialEndsAt);
+      const daysLeft = Math.ceil((trialEnd - new Date()) / (1000 * 60 * 60 * 24));
+      if (daysLeft <= 3) {
+        return `Your trial expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Upgrade now to avoid interruption.`;
+      }
+    }
+    return null;
+  };
+
+  const bannerMessage = getBannerMessage();
+
   return (
-    <header 
-      className="sticky top-0 z-30 border-b border-slate-200 bg-white backdrop-blur"
-    >
+    <>
+      {showSubscriptionBanner && bannerMessage && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-600" />
+              <p className="text-sm font-medium text-amber-800">{bannerMessage}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => navigate('/app/billing')}
+                className="text-sm font-semibold text-amber-700 hover:text-amber-900"
+              >
+                Upgrade Now
+              </button>
+              <button
+                onClick={() => setSubscriptionBannerOpen(false)}
+                className="text-amber-600 hover:text-amber-800"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <header 
+        className="sticky top-0 z-30 border-b border-slate-200 bg-white backdrop-blur"
+      >
       <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex items-center gap-3">
           <button
@@ -622,6 +677,7 @@ function Topbar({ onToggleSidebar }) {
         </div>
       </div>
     </header>
+    </>
   );
 }
 
