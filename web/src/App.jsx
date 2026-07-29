@@ -28,7 +28,6 @@ import BillingPage from "./pages/BillingPage";
 import ApiKeysPage from "./pages/ApiKeysPage";
 import ScheduledReportsPage from "./pages/ScheduledReportsPage";
 import TeamsPage from "./pages/TeamsPage";
-import WhiteLabelPage from "./pages/WhiteLabelPage";
 import AgencyDashboardPage from "./pages/AgencyDashboardPage";
 
 function App() {
@@ -117,7 +116,6 @@ function App() {
         <Route path="billing" element={<BillingPage />} />
         <Route path="api-keys" element={<ApiKeysPage />} />
         <Route path="scheduled-reports" element={<ScheduledReportsPage />} />
-        <Route path="white-label" element={<WhiteLabelPage />} />
         <Route path="teams" element={<TeamsPage />} />
         <Route path="agency-dashboard" element={<AgencyDashboardPage />} />
       </Route>

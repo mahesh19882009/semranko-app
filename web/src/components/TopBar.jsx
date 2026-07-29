@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { getStoredUser, logoutUser } from "../utils/auth";
 import { formatDate } from "../utils/date";
-import { fetchWhiteLabelSettings } from "../features/whiteLabel/whiteLabelSlice";
 import {
   faBell,
   faSearch,
@@ -48,11 +47,6 @@ function Topbar({ onToggleSidebar }) {
   const searchLoading = useSelector((state) => state.search.loading);
   const searchError = useSelector((state) => state.search.error);
   const searchOpen = useSelector((state) => state.search.open);
-  const whiteLabelSettings = useSelector((state) => state.whiteLabel.settings);
-
-  useEffect(() => {
-    dispatch(fetchWhiteLabelSettings());
-  }, [dispatch]);
 
   const [profileOpen, setProfileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -283,11 +277,7 @@ function Topbar({ onToggleSidebar }) {
 
   return (
     <header 
-      className="sticky top-0 z-30 border-b border-slate-200 backdrop-blur"
-      style={{
-        backgroundColor: whiteLabelSettings?.primaryColor || 'var(--color-topbar-bg)',
-        color: whiteLabelSettings?.secondaryColor || undefined
-      }}
+      className="sticky top-0 z-30 border-b border-slate-200 bg-white backdrop-blur"
     >
       <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
         <div className="flex items-center gap-3">
@@ -299,15 +289,14 @@ function Topbar({ onToggleSidebar }) {
           </button>
 
           <div>
-            <p className="text-xs uppercase tracking-[0.24em" style={{ color: whiteLabelSettings?.secondaryColor || 'text-slate-900' }}>
+            <p className="text-xs uppercase tracking-[0.24em text-slate-900">
               Selected project
             </p>
 
             <select
               value={selectedProjectId || ""}
               onChange={(e) => dispatch(setSelectedProjectId(e.target.value || null))}
-              className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate outline-none"
-              style={{ color: whiteLabelSettings?.secondaryColor || 'text-slate-900' }}
+              className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate outline-none text-slate-900"
             >
               {projects.length === 0 ? (
                 <option value="">No project</option>

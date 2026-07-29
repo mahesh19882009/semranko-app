@@ -20,7 +20,6 @@ from app.api.routes.serp_features import router as serp_features_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.payments import router as payments_router
 from app.api.routes.teams import router as teams_router
-from app.api.routes.white_label import router as white_label_router
 from app.api.routes.agency_dashboard import router as agency_dashboard_router
 from app.api.routes import backlinks
 
@@ -47,5 +46,4 @@ api_router.include_router(serp_features_router)
 api_router.include_router(api_keys_router)
 api_router.include_router(scheduled_reports_router)
 api_router.include_router(teams_router)
-api_router.include_router(white_label_router)
 api_router.include_router(agency_dashboard_router)

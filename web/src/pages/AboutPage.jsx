@@ -1,7 +1,12 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
+import Button from "../components/ui/Button";
 
 function AboutPage() {
+  const navigate = useNavigate();
+  const navigateHandler = (path) => {
+    navigate(path);
+  }
   const values = [
     {
       title: "Clarity first",
@@ -42,12 +47,12 @@ function AboutPage() {
             </p>
 
             <div style={styles.heroButtons}>
-              <Link to="/pricing" style={styles.primaryBtn}>
+              <Button onClick={() => navigateHandler('/pricing')} variant="primary">
                 View Pricing
-              </Link>
-              <Link to="/contact" style={styles.secondaryBtn}>
+              </Button>
+              <Button onClick={() => navigateHandler('/contact')} variant="outline">
                 Contact Us
-              </Link>
+              </Button>  
             </div>
           </div>
         </div>
@@ -132,7 +137,7 @@ function AboutPage() {
               <div style={styles.audienceCard}>
                 <h3 style={styles.audienceTitle}>Agencies</h3>
                 <p style={styles.audienceText}>
-                  Support multiple clients, stronger reporting, and future white-label style delivery.
+                  Support multiple clients, stronger reporting, and organized client delivery.
                 </p>
               </div>
             </div>
@@ -150,12 +155,12 @@ function AboutPage() {
             </p>
 
             <div style={styles.ctaButtons}>
-              <Link to="/register" style={styles.bigPrimaryBtn}>
+              <Button onClick={() => navigateHandler('/register')} variant="danger">
                 Create Account
-              </Link>
-              <Link to="/free-tools" style={styles.bigSecondaryBtn}>
-                Explore Free Tools
-              </Link>
+              </Button>
+              <Button onClick={() => navigateHandler('/contact')} variant="outline">
+                Contact Us
+              </Button>
             </div>
           </div>
         </div>

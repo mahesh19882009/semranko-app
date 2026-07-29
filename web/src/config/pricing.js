@@ -15,7 +15,6 @@ export const PLANS = [
       competitorsPerProject: 3,
       reportsPerMonth: 2,
       teamMembers: 1,
-      whiteLabel: false,
     },
     features: [
       "1 project",
@@ -39,7 +38,6 @@ export const PLANS = [
       competitorsPerProject: 10,
       reportsPerMonth: 10,
       teamMembers: 2,
-      whiteLabel: false,
     },
     features: [
       "Up to 3 projects",
@@ -63,12 +61,10 @@ export const PLANS = [
       competitorsPerProject: 25,
       reportsPerMonth: 25,
       teamMembers: 5,
-      whiteLabel: true,
     },
     features: [
       "Up to 10 projects",
       "Track up to 300 keywords",
-      "White-label reports",
       "Team access",
       "Premium support",
     ],
@@ -83,7 +79,6 @@ export const PLAN_COMPARISON = [
   { label: "Team members", starter: "1", pro: "2", agency: "5" },
   { label: "Daily rank updates", starter: "Yes", pro: "Yes", agency: "Yes" },
   { label: "Advanced reports", starter: "No", pro: "Yes", agency: "Yes" },
-  { label: "White-label reports", starter: "No", pro: "No", agency: "Yes" },
   { label: "Priority support", starter: "No", pro: "Yes", agency: "Yes" },
 ];
 

@@ -1,10 +1,14 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
 import Button from "../components/ui/Button";
 import Alert from "../components/ui/Alert";
 
 function ContactPage() {
+  const navigate = useNavigate();
+    const navigateHandler = (path) => {
+      navigate(path);
+    }
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -182,12 +186,12 @@ function ContactPage() {
                 </p>
 
                 <div style={styles.helpButtons}>
-                  <Link to="/pricing" style={styles.secondaryBtn}>
+                  <Button onClick={() => navigateHandler('/pricing')} variant="danger">
                     View Pricing
-                  </Link>
-                  <Link to="/register" style={styles.primaryBtn}>
+                  </Button>
+                  <Button onClick={() => navigateHandler('/register')} variant="outline">
                     Create Account
-                  </Link>
+                  </Button>
                 </div>
               </div>
             </div>

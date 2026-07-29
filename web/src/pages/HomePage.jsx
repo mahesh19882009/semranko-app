@@ -1,7 +1,12 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
+import Button from "../components/ui/Button";
 
 function HomePage() {
+  const navigate = useNavigate();
+  const navigateHandler = (path) => {
+    navigate(path);
+  }
   const features = [
     {
       title: "Track keyword performance",
@@ -54,12 +59,12 @@ function HomePage() {
               </p>
 
               <div style={styles.heroButtons}>
-                <Link to="/register" style={styles.primaryBtn}>
+                <Button onClick={() => navigateHandler('/register')} variant="primary">
                   Get Started
-                </Link>
-                <Link to="/pricing" style={styles.secondaryBtn}>
+                </Button>
+                <Button onClick={() => navigateHandler('/pricing')} variant="outline">
                   View Pricing
-                </Link>
+                </Button>
               </div>
 
               <div style={styles.statsGrid}>
@@ -206,12 +211,12 @@ function HomePage() {
             </p>
 
             <div style={styles.ctaButtons}>
-              <Link to="/register" style={styles.bigPrimaryBtn}>
+              <Button onClick={() => navigateHandler('/register')} variant="danger">
                 Create Account
-              </Link>
-              <Link to="/pricing" style={styles.bigSecondaryBtn}>
+              </Button>
+              <Button onClick={() => navigateHandler('/pricing')} variant="outline">
                 Compare Plans
-              </Link>
+              </Button>
             </div>
           </div>
         </div>

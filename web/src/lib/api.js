@@ -237,32 +237,6 @@ export async function cancelTeamInviteApi(teamId, inviteId) {
   });
 }
 
-export async function getWhiteLabelSettingsApi() {
-  return apiRequest('/white-label/settings');
-}
-
-export async function updateWhiteLabelSettingsApi(settings) {
-  // Convert camelCase to snake_case for backend
-  const snakeCaseSettings = {
-    company_name: settings.companyName,
-    logo_url: settings.logoUrl,
-    primary_color: settings.primaryColor,
-    secondary_color: settings.secondaryColor,
-    custom_domain: settings.customDomain,
-    hide_branding: settings.hideBranding,
-  };
-  return apiRequest('/white-label/settings', {
-    method: "POST",
-    body: JSON.stringify(snakeCaseSettings),
-  });
-}
-
-export async function deleteWhiteLabelSettingsApi() {
-  return apiRequest('/white-label/settings', {
-    method: "DELETE",
-  });
-}
-
 export async function getAgencyOverviewApi() {
   return apiRequest('/agency-dashboard/overview');
 }

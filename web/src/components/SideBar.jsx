@@ -26,7 +26,6 @@ const navItems = [
   { to: '/app/reports', label: 'Reports', icon: faFileLines },
   { to: '/app/scheduled-reports', label: 'Scheduled Reports', icon: faCalendar },
   { to: '/app/teams', label: 'Teams', icon: faUsers },
-  { to: '/app/white-label', label: 'White Label', icon: faFileLines },
   { to: '/app/agency-dashboard', label: 'Agency Dashboard', icon: faChartLine },
   { to: '/app/api-keys', label: 'API Keys', icon: faKey },
   { to: '/app/billing', label: 'Billing', icon: faFileInvoiceDollar },

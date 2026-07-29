@@ -1,8 +1,11 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import PublicLayout from "../components/PublicLayout";
 import Button from "../components/ui/Button";
 
 function FreeToolsPage() {
+
+  const navigate = useNavigate();
+
   const tools = [
     {
       name: "Meta Tag Checker",
@@ -42,6 +45,11 @@ function FreeToolsPage() {
     },
   ];
 
+  const navigateHandler = (path) => {
+    navigate(path);
+  }
+
+
   return (
     <PublicLayout>
       <section style={styles.heroSection}>
@@ -55,12 +63,12 @@ function FreeToolsPage() {
             </p>
 
             <div style={styles.heroButtons}>
-              <Link to="/register" style={styles.primaryBtn}>
+              <Button onClick={() => navigateHandler('/register')} variant="primary">
                 Create Free Account
-              </Link>
-              <Link to="/pricing" style={styles.secondaryBtn}>
+              </Button>
+              <Button onClick={() => navigateHandler('/pricing')} variant="outline">
                 View Pricing
-              </Link>
+              </Button>
             </div>
           </div>
         </div>
@@ -138,12 +146,12 @@ function FreeToolsPage() {
             </p>
 
             <div style={styles.ctaButtons}>
-              <Link to="/register" style={styles.bigPrimaryBtn}>
+              <Button onClick={() => navigateHandler('/register')} variant="danger">
                 Get Started
-              </Link>
-              <Link to="/contact" style={styles.bigSecondaryBtn}>
+              </Button>
+              <Button onClick={() => navigateHandler('/contact')} variant="outline">
                 Contact Us
-              </Link>
+              </Button>
             </div>
           </div>
         </div>

@@ -158,21 +158,4 @@ export const theme = {
   },
 };
 
-/**
- * Helper function to get brand color for white-label customization
- * @param {string} color - The brand color shade (50-900)
- * @returns {string} The hex color value
- */
-export const getBrandColor = (color = '600') => {
-  return theme.brand[color] || theme.brand[600];
-};
-
-/**
- * Helper function to override brand colors for white-label
- * @param {Object} newBrandColors - Object with brand color overrides
- */
-export const overrideBrandColors = (newBrandColors) => {
-  Object.assign(theme.brand, newBrandColors);
-};
-
 export default theme;

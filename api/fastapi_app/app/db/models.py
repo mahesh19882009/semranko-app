@@ -441,23 +441,3 @@ class TeamInvite(Base):
         Index("TeamInvite_email_idx", "email"),
         Index("TeamInvite_status_idx", "status"),
     )
-
-
-class WhiteLabelSettings(Base):
-    __tablename__ = "WhiteLabelSettings"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    companyName: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    logoUrl: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    primaryColor: Mapped[str] = mapped_column(String, nullable=False, default="#000000")
-    secondaryColor: Mapped[str] = mapped_column(String, nullable=False, default="#ffffff")
-    customDomain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    hideBranding: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
-
-    user: Mapped[User] = relationship("User")
-
-    __table_args__ = (
-        Index("WhiteLabelSettings_userId_idx", "userId"),
-    )
