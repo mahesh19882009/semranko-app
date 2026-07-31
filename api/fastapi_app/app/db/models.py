@@ -39,6 +39,7 @@ class User(Base):
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     competitorAlerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    refreshFrequency: Mapped[str] = mapped_column(String, nullable=False, default="weekly", server_default="weekly")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -49,12 +50,65 @@ class User(Base):
     )
 
     projects: Mapped[list["Project"]] = relationship(back_populates="user")
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
     orders: Mapped[list["PaymentOrder"]] = relationship(back_populates="user")
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
-    apiKeys: Mapped[list["ApiKey"]] = relationship(back_populates="user")
-    ownedTeams: Mapped[list["Team"]] = relationship(back_populates="owner")
-    teamMemberships: Mapped[list["TeamMember"]] = relationship(back_populates="user")
+    keywordLists: Mapped[list["KeywordList"]] = relationship(back_populates="user")
+
+
+class KeywordList(Base):
+    __tablename__ = "KeywordList"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    user: Mapped[User] = relationship(back_populates="keywordLists")
+    items: Mapped[list["KeywordListItem"]] = relationship(back_populates="keywordList", cascade="all, delete-orphan")
+
+
+class KeywordListItem(Base):
+    __tablename__ = "KeywordListItem"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    listId: Mapped[str] = mapped_column(String, ForeignKey("KeywordList.id", ondelete="CASCADE"), nullable=False)
+    keyword: Mapped[str] = mapped_column(String, nullable=False)
+
+    keywordList: Mapped[KeywordList] = relationship(back_populates="items")
+
+
+class CompetitorRank(Base):
+    __tablename__ = "CompetitorRank"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
+    competitorId: Mapped[str] = mapped_column(String, ForeignKey("Competitor.id", ondelete="CASCADE"), nullable=False)
+    keywordText: Mapped[str] = mapped_column(String, nullable=False)
+    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("CompetitorRank_projectId_idx", "projectId"),
+        Index("CompetitorRank_projectId_competitor_keyword_key", "projectId", "competitorId", "keywordText", unique=True),
+    )
+
+
+class AIOTracking(Base):
+    __tablename__ = "AIOTracking"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
+    keywordText: Mapped[str] = mapped_column(String, nullable=False)
+    hasAIOverview: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    aiOverviewText: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    citedDomains: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("AIOTracking_projectId_idx", "projectId"),
+        Index("AIOTracking_projectId_keyword_key", "projectId", "keywordText", unique=True),
+    )
 
 
 class Project(Base):
@@ -77,10 +131,6 @@ class Project(Base):
     competitors: Mapped[list["Competitor"]] = relationship(back_populates="project")
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="project")
     rankResults: Mapped[list["RankResult"]] = relationship(back_populates="project")
-    audits: Mapped[list["Audit"]] = relationship(back_populates="project")
-    reports: Mapped[list["Report"]] = relationship(back_populates="project")
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="project")
-    backlinks: Mapped[list["Backlink"]] = relationship(back_populates="project")
 
 
 class Keyword(Base):
@@ -91,6 +141,13 @@ class Keyword(Base):
     keyword: Mapped[str] = mapped_column(String, nullable=False)
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cpc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    competition: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
 
     project: Mapped[Project] = relationship(back_populates="keywords")
@@ -140,113 +197,6 @@ class Competitor(Base):
     __table_args__ = (
         Index("Competitor_projectId_idx", "projectId"),
         Index("Competitor_projectId_domain_key", "projectId", "domain", unique=True),
-    )
-
-
-class Audit(Base):
-    __tablename__ = "Audit"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False)
-    score: Mapped[int] = mapped_column(Integer, nullable=False)
-    totalIssues: Mapped[int] = mapped_column(Integer, nullable=False)
-    criticalIssues: Mapped[int] = mapped_column(Integer, nullable=False)
-    warningIssues: Mapped[int] = mapped_column(Integer, nullable=False)
-    passedChecks: Mapped[int] = mapped_column(Integer, nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    project: Mapped[Project] = relationship(back_populates="audits")
-    issues: Mapped[list["AuditIssue"]] = relationship(back_populates="audit")
-
-    __table_args__ = (Index("Audit_projectId_idx", "projectId"),)
-
-
-class AuditIssue(Base):
-    __tablename__ = "AuditIssue"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    auditId: Mapped[str] = mapped_column(String, ForeignKey("Audit.id", ondelete="CASCADE"), nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str] = mapped_column(String, nullable=False)
-    severity: Mapped[str] = mapped_column(String, nullable=False)
-    recommendation: Mapped[str] = mapped_column(Text, nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    audit: Mapped[Audit] = relationship(back_populates="issues")
-
-    __table_args__ = (Index("AuditIssue_auditId_idx", "auditId"),)
-
-
-class Report(Base):
-    __tablename__ = "Report"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    period: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="COMPLETED", server_default="COMPLETED")
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    visibilityScore: Mapped[int] = mapped_column(Integer, nullable=False)
-    keywordCount: Mapped[int] = mapped_column(Integer, nullable=False)
-    top10Count: Mapped[int] = mapped_column(Integer, nullable=False)
-    competitorCount: Mapped[int] = mapped_column(Integer, nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-    updatedAt: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        nullable=False,
-        default=func.now(),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    project: Mapped[Project] = relationship(back_populates="reports")
-
-    __table_args__ = (Index("Report_projectId_idx", "projectId"),)
-
-
-class Notification(Base):
-    __tablename__ = "Notification"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    projectId: Mapped[Optional[str]] = mapped_column(
-        String,
-        ForeignKey("Project.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
-    type: Mapped[str] = mapped_column(String, nullable=False)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-
-    status: Mapped[str] = mapped_column(String, nullable=False, default="UNREAD", server_default="UNREAD")
-    severity: Mapped[str] = mapped_column(String, nullable=False, default="info", server_default="info")
-
-    entityType: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    entityId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-
-    readAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-    updatedAt: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        nullable=False,
-        default=func.now(),
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
-
-    user: Mapped["User"] = relationship(back_populates="notifications")
-    project: Mapped[Optional["Project"]] = relationship(back_populates="notifications")
-
-    __table_args__ = (
-        Index("notification_user_id_idx", "userId"),
-        Index("notification_project_id_idx_v2", "projectId"),
-        Index("notification_status_idx", "status"),
-        Index("notification_created_at_idx", "createdAt"),
     )
 
 
@@ -308,20 +258,6 @@ class Subscription(Base):
         Index("Subscription_status_idx", "status"),
     )
 
-class Backlink(Base):
-    __tablename__ = "Backlink"
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
-    sourceUrl: Mapped[str] = mapped_column(Text, nullable=False)
-    sourceDomain: Mapped[str] = mapped_column(String, nullable=False)
-    anchor: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    domainRank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    firstSeen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    project: Mapped[Project] = relationship(back_populates="backlinks")
-    __table_args__ = (Index("Backlink_projectId_idx", "projectId"),)
-
 
 class SerpFeature(Base):
     __tablename__ = "SerpFeature"
@@ -338,26 +274,6 @@ class SerpFeature(Base):
     __table_args__ = (
         Index("SerpFeature_projectId_idx", "projectId"),
         Index("SerpFeature_projectId_keyword_feature_key", "projectId", "keywordText", "featureType", unique=True),
-    )
-
-
-class ApiKey(Base):
-    __tablename__ = "ApiKey"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    lastUsed: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-    expiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-
-    user: Mapped[User] = relationship("User", back_populates="apiKeys")
-
-    __table_args__ = (
-        Index("ApiKey_userId_idx", "userId"),
-        Index("ApiKey_key_idx", "key"),
     )
 
 
@@ -383,61 +299,4 @@ class ScheduledReport(Base):
     __table_args__ = (
         Index("ScheduledReport_userId_idx", "userId"),
         Index("ScheduledReport_projectId_idx", "projectId"),
-    )
-
-
-class Team(Base):
-    __tablename__ = "Team"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    owner: Mapped[User] = relationship("User", back_populates="ownedTeams")
-    members: Mapped[list["TeamMember"]] = relationship(back_populates="team", cascade="all, delete-orphan")
-
-    __table_args__ = (
-        Index("Team_ownerId_idx", "ownerId"),
-    )
-
-
-class TeamMember(Base):
-    __tablename__ = "TeamMember"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    teamId: Mapped[str] = mapped_column(String, ForeignKey("Team.id", ondelete="CASCADE"), nullable=False)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    role: Mapped[str] = mapped_column(String, nullable=False, default="member")  # owner, admin, member, viewer
-    joinedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    team: Mapped[Team] = relationship("Team", back_populates="members")
-    user: Mapped[User] = relationship("User", back_populates="teamMemberships")
-
-    __table_args__ = (
-        Index("TeamMember_teamId_idx", "teamId"),
-        Index("TeamMember_userId_idx", "userId"),
-        Index("TeamMember_team_user_key", "teamId", "userId", unique=True),
-    )
-
-
-class TeamInvite(Base):
-    __tablename__ = "TeamInvite"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    teamId: Mapped[str] = mapped_column(String, ForeignKey("Team.id", ondelete="CASCADE"), nullable=False)
-    email: Mapped[str] = mapped_column(String, nullable=False)
-    role: Mapped[str] = mapped_column(String, nullable=False, default="member")
-    invitedBy: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")  # pending, accepted, declined, expired
-    expiresAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    team: Mapped[Team] = relationship("Team")
-    inviter: Mapped[User] = relationship("User")
-
-    __table_args__ = (
-        Index("TeamInvite_teamId_idx", "teamId"),
-        Index("TeamInvite_email_idx", "email"),
-        Index("TeamInvite_status_idx", "status"),
     )

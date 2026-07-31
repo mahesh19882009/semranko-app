@@ -1,13 +1,12 @@
-from fastapi import APIRouter, Query, Depends
+from fastapi import APIRouter, Query, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
-from app.services.keyword_research_service import (
-    research_keyword,
-    get_keyword_opportunities,
-)
+from app.services.keyword_research_service import research_keyword, add_keywords_to_project
+from app.services.competitor_spy_service import spy_competitor_keywords
+from app.services.project_onboarding_service import create_project_with_keywords
 
 router = APIRouter(prefix="/keyword-research", tags=["keyword-research"])
 
@@ -15,32 +14,43 @@ router = APIRouter(prefix="/keyword-research", tags=["keyword-research"])
 @router.get("/research")
 async def research_keyword_endpoint(
     keyword: str = Query(..., description="Keyword to research"),
-    project_id: str = Query(..., description="Project ID"),
+    location: str = Query("India", description="Location code"),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Research a keyword and get comprehensive data including:
-    - Difficulty score
-    - Search volume estimate
-    - Related keywords
-    - Suggestions
-    - Opportunity score
-    """
-    result = await research_keyword(db, keyword, project_id)
-    return ok("Keyword research completed", result)
+    try:
+        result = research_keyword(db, current_user["userId"], keyword, location)
+        return ok("Keyword research completed", result)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/opportunities")
-async def get_opportunities_endpoint(
-    project_id: str = Query(..., description="Project ID"),
-    limit: int = Query(20, description="Number of opportunities to return"),
+@router.get("/competitor-spy")
+async def competitor_spy_endpoint(
+    domain: str = Query(..., description="Competitor domain to spy on"),
+    location: str = Query("India", description="Location code"),
+    limit: int = Query(100, description="Max keywords to return"),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Get keyword opportunities for a project
-    Returns keywords with high opportunity scores
-    """
-    opportunities = get_keyword_opportunities(db, project_id, limit)
-    return ok("Keyword opportunities retrieved", {"opportunities": opportunities})
+    try:
+        results = spy_competitor_keywords(db, current_user["userId"], domain, location, limit)
+        return ok("Competitor keywords retrieved", {"keywords": results, "domain": domain})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/project/onboard")
+async def onboard_project_endpoint(
+    name: str = Query(..., description="Project name"),
+    domain: str = Query(..., description="Project domain"),
+    location: str = Query("India", description="Location code"),
+    keywords: list[str] = Query(..., description="Initial keywords"),
+    db: Session = Depends(db_session),
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        project = create_project_with_keywords(db, current_user["userId"], name, domain, location, keywords)
+        return ok("Project created", {"projectId": project.id})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

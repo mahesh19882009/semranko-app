@@ -1,10 +1,14 @@
+import logging
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project
 from app.services.plan_service import ensure_keyword_limit, count_user_keywords, get_user_plan_limits, get_user_or_404
+from app.services.dataforseo_client import DataForSEOClient
 from app.utils.serializers import model_to_dict
+
+logger = logging.getLogger(__name__)
 
 
 def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> dict:
@@ -35,12 +39,28 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
     keyword = Keyword(
         projectId=project_id,
         keyword=normalized_keyword,
-        location=(payload.get("location") or None),
+        location=(payload.get("location") or "India"),
         device=(payload.get("device") or "desktop"),
     )
     db.add(keyword)
     db.commit()
     db.refresh(keyword)
+
+    try:
+        data = DataForSEOClient.get_keyword_data(normalized_keyword, keyword.location or "India")
+        if data:
+            keyword.volume = data.get("volume")
+            keyword.kd = data.get("difficulty")
+            keyword.cpc = data.get("cpc")
+            keyword.competition = data.get("competition")
+            keyword.backlinks = data.get("backlinks")
+            keyword.referring_domains = data.get("referring_domains")
+            keyword.intent = data.get("intent")
+            db.commit()
+            db.refresh(keyword)
+    except Exception as e:
+        logger.error(f"Failed to fetch keyword metrics for {normalized_keyword}: {e}")
+
     return model_to_dict(keyword)
 
 
@@ -55,7 +75,7 @@ def get_project_keywords(db: Session, user_id: str, project_id: str) -> list[dic
     return [model_to_dict(keyword) for keyword in keywords]
 
 
-def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list[str]) -> dict:
+def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list[str], location: str = "India") -> dict:
     project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
     if not project:
         raise ApiError(404, "Project not found")
@@ -93,7 +113,7 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         keyword = Keyword(
             projectId=project_id,
             keyword=kw,
-            location=None,
+            location=location,
             device="desktop",
         )
         db.add(keyword)
@@ -101,6 +121,25 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         existing_set.add(kw)
 
     db.commit()
+
+    if added:
+        try:
+            batch_data = DataForSEOClient.get_keyword_data_batch(added, "India")
+            for kw_text in added:
+                data = batch_data.get(kw_text)
+                if data:
+                    keyword = db.scalar(select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text))
+                    if keyword:
+                        keyword.volume = data.get("volume")
+                        keyword.kd = data.get("difficulty")
+                        keyword.cpc = data.get("cpc")
+                        keyword.competition = data.get("competition")
+                        keyword.backlinks = data.get("backlinks")
+                        keyword.referring_domains = data.get("referring_domains")
+                        keyword.intent = data.get("intent")
+            db.commit()
+        except Exception as e:
+            logger.error(f"Failed to fetch keyword metrics for batch: {e}")
 
     return {
         "added": len(added),

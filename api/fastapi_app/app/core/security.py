@@ -84,7 +84,7 @@ def enforce_limits(resource_type: str = None):
     """
     def decorator(func):
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs):
             # Extract db and user from kwargs or args
             db = kwargs.get('db')
             user = kwargs.get('current_user') or kwargs.get('user')
@@ -95,13 +95,28 @@ def enforce_limits(resource_type: str = None):
                     detail="Missing db or user in endpoint"
                 )
             
+            # If user is a dict (from deps.get_current_user), convert to User ORM object
+            if isinstance(user, dict):
+                user_id = user.get("id") or user.get("userId")
+                if not user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid token"
+                    )
+                db_user = db.query(User).filter(User.id == user_id).first()
+                if db_user is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found"
+                    )
+                user = db_user
+            
             # Import here to avoid circular dependency
             from app.services.plan_service import (
                 ensure_subscription_active,
                 ensure_project_limit,
                 ensure_keyword_limit,
                 ensure_competitor_limit,
-                ensure_report_limit,
                 get_user_plan_limits
             )
             
@@ -124,9 +139,7 @@ def enforce_limits(resource_type: str = None):
                             detail="project_id required for competitor limit check"
                         )
                     ensure_competitor_limit(db, user.id, project_id)
-                elif resource_type == 'report':
-                    ensure_report_limit(db, user.id)
             
-            return await func(*args, **kwargs)
+            return func(*args, **kwargs)
         return wrapper
     return decorator

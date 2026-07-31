@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ApiError
-from app.db.models import Audit, Project
+from app.db.models import Project
 from app.services.plan_service import build_usage_snapshot, get_user_or_404, get_user_plan_limits
 
 
@@ -16,8 +16,6 @@ def ensure_project_access(db: Session, user_id: str, project_id: str) -> Project
         .options(
             selectinload(Project.keywords),
             selectinload(Project.competitors),
-            selectinload(Project.reports),
-            selectinload(Project.audits).selectinload(Audit.issues),
             selectinload(Project.rankResults),
         )
     )
@@ -73,21 +71,6 @@ def build_rank_trend(rank_results: list) -> list[dict]:
     return trend[-12:]
 
 
-def build_audit_summary(latest_audit) -> list[dict]:
-    if not latest_audit:
-        return [
-            {"label": "Issues found", "value": 0},
-            {"label": "Warnings", "value": 0},
-            {"label": "Passed checks", "value": 0},
-        ]
-
-    return [
-        {"label": "Issues found", "value": latest_audit.criticalIssues or 0},
-        {"label": "Warnings", "value": latest_audit.warningIssues or 0},
-        {"label": "Passed checks", "value": latest_audit.passedChecks or 0},
-    ]
-
-
 def build_competitor_summary(competitors: list, keywords: list, preview_limit: int) -> list[dict]:
     if not competitors:
         return []
@@ -106,57 +89,38 @@ def build_competitor_summary(competitors: list, keywords: list, preview_limit: i
     return items
 
 
-def build_reports_summary(reports: list) -> list[dict]:
-    items = []
-    for report in reports[:5]:
-        items.append(
-            {
-                "id": report.id,
-                "name": report.title,
-                "schedule": report.period,
-                "type": "SEO Report",
-                "status": "Active" if report.status == "COMPLETED" else report.status,
-            }
-        )
-    return items
-
-
 def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
     user = get_user_or_404(db, user_id)
     limits = get_user_plan_limits(user)
     project = ensure_project_access(db, user_id, project_id)
 
-    audits = sorted(project.audits, key=lambda a: a.createdAt, reverse=True)
-    reports = sorted(project.reports, key=lambda r: r.createdAt, reverse=True)
     rank_results = sorted(project.rankResults, key=lambda r: r.checkedAt, reverse=True)[:500]
-
-    latest_audit = audits[0] if audits else None
 
     stats = {
         "totalKeywords": len(project.keywords),
         "avgRank": calculate_average_rank(rank_results),
         "estimatedTraffic": calculate_estimated_traffic(rank_results),
-        "technicalHealth": getattr(latest_audit, "score", 0) or 0,
+        "technicalHealth": 0,
         "backlinks": 0,
-        "reportsSent": len(reports),
+        "reportsSent": 0,
     }
 
     return {
         "stats": stats,
         "rankTrend": build_rank_trend(rank_results),
-        "audits": build_audit_summary(latest_audit),
+        "audits": [],
         "competitors": {
             "items": build_competitor_summary(
                 project.competitors,
                 project.keywords,
-                limits["dashboardCompetitorsPreview"],
+                limits.get("competitorsPerProject", 3),
             ),
             "total": len(project.competitors),
-            "previewLimit": limits["dashboardCompetitorsPreview"],
+            "previewLimit": limits.get("competitorsPerProject", 3),
         },
         "reports": {
-            "items": build_reports_summary(reports),
-            "total": len(reports),
+            "items": [],
+            "total": 0,
         },
         "usage": build_usage_snapshot(db, user),
     }

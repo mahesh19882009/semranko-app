@@ -4,31 +4,15 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { fetchProjects } from '../features/projects/projectsSlice';
-import { fetchNotifications, fetchUnreadCount } from '../features/notifications/notificationsSlice';
 import { fetchCurrentPricing } from '../features/pricing/pricingSlice';
 
 function AppLayout() {
   const dispatch = useDispatch();
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const pollingIntervalRef = useRef(null);
 
   useEffect(() => {
     dispatch(fetchProjects());
-    dispatch(fetchNotifications({ page: 1, limit: 10 }));
-    dispatch(fetchUnreadCount());
     dispatch(fetchCurrentPricing());
-
-    // Set up polling for notifications every 60 seconds
-    pollingIntervalRef.current = setInterval(() => {
-      dispatch(fetchUnreadCount());
-    }, 60000);
-
-    // Cleanup on unmount
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-    };
   }, [dispatch]);
 
   return (

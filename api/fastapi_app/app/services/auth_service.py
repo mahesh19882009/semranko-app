@@ -66,12 +66,14 @@ def register_user(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
-    email_service.send_verification_email(user.email, user.name, verification_url)
+    email_sent = email_service.send_verification_email(user.email, user.name, verification_url)
 
-    return model_to_dict(
+    result = model_to_dict(
         user,
         exclude={"passwordHash", "emailVerificationToken"}
     )
+    result["emailSent"] = email_sent
+    return result
 
 
 def verify_email_token(db: Session, payload: dict) -> dict:
@@ -129,9 +131,9 @@ def resend_verification_email(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
-    email_service.send_verification_email(user.email, user.name, verification_url)
+    email_sent = email_service.send_verification_email(user.email, user.name, verification_url)
 
-    return {"sent": True}
+    return {"sent": email_sent}
 
 
 def login_user(db: Session, payload: dict) -> dict:
@@ -193,9 +195,9 @@ def forgot_password(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     reset_url = f"{frontend_url}/reset-password?token={raw_token}"
 
-    email_service.send_password_reset_email(user.email, user.name, reset_url)
+    email_sent = email_service.send_password_reset_email(user.email, user.name, reset_url)
 
-    return {"sent": True}
+    return {"sent": email_sent}
 
 
 def reset_password(db: Session, payload: dict) -> dict:

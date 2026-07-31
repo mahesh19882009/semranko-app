@@ -6,29 +6,18 @@ import AppLayout from "./components/AppLayout";
 
 import HomePage from "./pages/HomePage";
 import PricingPage from "./pages/PricingPage";
-import FreeToolsPage from "./pages/FreeToolsPage";
-import AboutPage from "./pages/AboutPage";
-import ContactPage from "./pages/ContactPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import VerifyEmailPage from "./pages/VerifyEmailPage";
-import ResendVerificationPage from "./pages/ResendVerificationPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import KeywordsPage from "./pages/KeywordsPage";
 import KeywordResearchPage from "./pages/KeywordResearchPage";
-import ReportsPage from "./pages/ReportsPage";
-import AuditPage from "./pages/AuditPage";
 import CompetitorsPage from "./pages/CompetitorsPage";
-import SettingsPage from "./pages/SettingsPage";
-import NotificationsPage from "./pages/NotificationsPage";
-import BillingPage from "./pages/BillingPage";
-import ApiKeysPage from "./pages/ApiKeysPage";
-import ScheduledReportsPage from "./pages/ScheduledReportsPage";
-import TeamsPage from "./pages/TeamsPage";
-import AgencyDashboardPage from "./pages/AgencyDashboardPage";
+import KeywordListsPage from "./pages/KeywordListsPage";
+import AIODashboardPage from "./pages/AIODashboardPage";
 
 function App() {
   return (
@@ -42,10 +31,6 @@ function App() {
           </PublicLayout>
         }
       />
-      <Route path="/free-tools" element={<FreeToolsPage />}/>
-      <Route path="/about" element={<AboutPage />}/>
-      <Route path="/contact" element={<ContactPage />}/>
-
       <Route
         path="/login"
         element={
@@ -62,20 +47,11 @@ function App() {
           </PublicLayout>
         }
       />
-
       <Route
         path="/verify-email"
         element={
           <PublicLayout>
             <VerifyEmailPage />
-          </PublicLayout>
-        }
-      />
-      <Route
-        path="/resend-verification"
-        element={
-          <PublicLayout>
-            <ResendVerificationPage />
           </PublicLayout>
         }
       />
@@ -108,27 +84,16 @@ function App() {
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="keywords" element={<KeywordsPage />} />
         <Route path="keyword-research" element={<KeywordResearchPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="audit" element={<AuditPage />} />
         <Route path="competitors" element={<CompetitorsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="notifications" element={<NotificationsPage />} />
-        <Route path="billing" element={<BillingPage />} />
-        <Route path="api-keys" element={<ApiKeysPage />} />
-        <Route path="scheduled-reports" element={<ScheduledReportsPage />} />
-        <Route path="teams" element={<TeamsPage />} />
-        <Route path="agency-dashboard" element={<AgencyDashboardPage />} />
+        <Route path="keyword-lists" element={<KeywordListsPage />} />
+        <Route path="aio" element={<AIODashboardPage />} />
+        <Route path="pricing" element={<PricingPage />} />
       </Route>
 
       <Route path="/dashboard" element={<Navigate to="/app" replace />} />
       <Route path="/projects" element={<Navigate to="/app/projects" replace />} />
       <Route path="/keywords" element={<Navigate to="/app/keywords" replace />} />
-      <Route path="/reports" element={<Navigate to="/app/reports" replace />} />
-      <Route path="/audit" element={<Navigate to="/app/audit" replace />} />
       <Route path="/competitors" element={<Navigate to="/app/competitors" replace />} />
-      <Route path="/settings" element={<Navigate to="/app/settings" replace />} />
-      <Route path="/notifications" element={<Navigate to="/app/notifications" replace />} />
-      <Route path="/billing" element={<Navigate to="/app/billing" replace />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

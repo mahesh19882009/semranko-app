@@ -141,7 +141,7 @@ function ProjectsPage() {
         {showForm && (
           <form
             onSubmit={projectToEdit ? handleUpdateProject : handleSubmit}
-            className="grid gap-4 rounded-3xl border border-slate-200 bg-white p-5 md:grid-cols-2"
+            className="grid gap-4 rounded-xs border border-slate-200 bg-white p-5 md:grid-cols-2"
           >
             <Input
               label="Project name"
@@ -182,7 +182,7 @@ function ProjectsPage() {
             <div className="md:col-span-2 flex gap-3">
               <Button
                 type="submit"
-                disabled={creating || updating || projectLimitReached}
+                disabled={creating || updating || (projectLimitReached && !projectToEdit)}
                 loading={creating || updating}
               >
                 {creating ? 'Creating...' : updating ? 'Updating...' : projectToEdit ? 'Update project' : 'Create project'}

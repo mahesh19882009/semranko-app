@@ -91,12 +91,81 @@ export async function resetPasswordApi(token, newPassword) {
   return result;
 }
 
-export async function researchKeywordApi(keyword, projectId) {
-  return apiRequest(`/keyword-research/research?keyword=${encodeURIComponent(keyword)}&project_id=${projectId}`);
+export async function researchKeywordApi(keyword, location = "India") {
+  return apiRequest(`/keyword-research/research?keyword=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}`);
 }
 
-export async function getKeywordOpportunitiesApi(projectId, limit = 20) {
-  return apiRequest(`/keyword-research/opportunities?project_id=${projectId}&limit=${limit}`);
+export async function competitorSpyApi(domain, location = "India", limit = 100) {
+  return apiRequest(`/keyword-research/competitor-spy?domain=${encodeURIComponent(domain)}&location=${encodeURIComponent(location)}&limit=${limit}`);
+}
+
+export async function onboardProjectApi({ name, domain, location, keywords }) {
+  const params = new URLSearchParams();
+  params.set('name', name);
+  params.set('domain', domain);
+  params.set('location', location);
+  keywords.forEach(kw => params.append('keywords', kw));
+  return apiRequest(`/keyword-research/project/onboard?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
+export async function createKeywordListApi(name) {
+  return apiRequest('/keyword-lists/', {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function listKeywordListsApi() {
+  return apiRequest('/keyword-lists/');
+}
+
+export async function addKeywordsToListApi(listId, keywords) {
+  return apiRequest(`/keyword-lists/${listId}/items`, {
+    method: "POST",
+    body: JSON.stringify({ keywords }),
+  });
+}
+
+export async function removeKeywordFromListApi(listId, itemId) {
+  return apiRequest(`/keyword-lists/${listId}/items/${itemId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteKeywordListApi(listId) {
+  return apiRequest(`/keyword-lists/${listId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function exportKeywordListApi(listId) {
+  return apiRequest(`/keyword-lists/${listId}/export`);
+}
+
+export async function trackCompetitorRankingsApi(projectId) {
+  return apiRequest(`/competitor-rankings/${projectId}/track`, {
+    method: "POST",
+  });
+}
+
+export async function getCompetitorComparisonApi(projectId) {
+  return apiRequest(`/competitor-rankings/${projectId}/comparison`);
+}
+
+export async function trackAioApi(projectId) {
+  return apiRequest(`/aio/${projectId}/track`, {
+    method: "POST",
+  });
+}
+
+export async function getAioDashboardApi(projectId) {
+  return apiRequest(`/aio/${projectId}/dashboard`);
+}
+
+export async function getAioCitationsApi(projectId) {
+  return apiRequest(`/aio/${projectId}/citations`);
 }
 
 export async function getLHFOpportunitiesApi(projectId, limit = 20) {

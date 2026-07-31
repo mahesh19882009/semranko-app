@@ -8,12 +8,12 @@ from app.core.config import get_settings
 logger = logging.getLogger("uvicorn.error")
 
 
-def send_verification_email(to_email: str, name: str, verification_url: str) -> None:
+def send_verification_email(to_email: str, name: str, verification_url: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Verification link for %s: %s", to_email, verification_url)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -95,20 +95,21 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
             """
         })
 
-
         logger.info("RESEND EMAIL RESPONSE: %s", response)
         logger.info("VERIFICATION URL SENT: %s", verification_url)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND VERIFICATION EMAIL: %s", exc)
+        return False
 
 
-def send_payment_success_email(to_email: str, name: str, plan_name: str, amount: float, order_id: str) -> None:
+def send_payment_success_email(to_email: str, name: str, plan_name: str, amount: float, order_id: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Payment success email for %s: plan=%s amount=%s order=%s", to_email, plan_name, amount, order_id)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -201,17 +202,19 @@ def send_payment_success_email(to_email: str, name: str, plan_name: str, amount:
         })
 
         logger.info("RESEND PAYMENT SUCCESS EMAIL RESPONSE: %s", response)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PAYMENT SUCCESS EMAIL: %s", exc)
+        return False
 
 
-def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_id: str, error_message: str) -> None:
+def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_id: str, error_message: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Payment failure email for %s: plan=%s order=%s error=%s", to_email, plan_name, order_id, error_message)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -303,19 +306,20 @@ def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_i
             """
         })
 
-
         logger.info("RESEND PAYMENT FAILURE EMAIL RESPONSE: %s", response)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PAYMENT FAILURE EMAIL: %s", exc)
+        return False
 
 
-def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
+def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Password reset link for %s: %s", to_email, reset_url)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -399,17 +403,19 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
 
         logger.info("RESEND PASSWORD RESET EMAIL RESPONSE: %s", response)
         logger.info("PASSWORD RESET URL SENT: %s", reset_url)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PASSWORD RESET EMAIL: %s", exc)
+        return False
 
 
-def send_contact_form_email(name: str, email: str, company: str, message: str) -> None:
+def send_contact_form_email(name: str, email: str, company: str, message: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Contact form submission from %s (%s): %s", name, email, message[:100])
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -505,6 +511,8 @@ def send_contact_form_email(name: str, email: str, company: str, message: str) -
 
         logger.info("RESEND CONTACT FORM EMAIL RESPONSE: %s", response)
         logger.info("CONTACT FORM SUBMISSION: %s (%s)", name, email)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND CONTACT FORM EMAIL: %s", exc)
+        return False

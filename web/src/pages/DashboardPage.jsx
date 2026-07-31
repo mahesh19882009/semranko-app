@@ -4,22 +4,17 @@ import {
   faArrowTrendUp,
   faChartSimple,
   faUsers,
-  faWrench,
-  faLink,
-  faFileCircleCheck,
+  faUsersViewfinder,
 } from '@fortawesome/free-solid-svg-icons';
 import RankTrendList from '../components/RankTrendList';
-import KeywordTable from '../components/KeywordTable';
-import LowHangingFruits from '../components/LowHangingFruits';
-import SerpFeatures from '../components/SerpFeatures';
-import { useNavigate } from 'react-router-dom';
+import StatCard from '../components/StateCard';
+import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
+import { useNavigate } from 'react-router-dom';
 import {
   selectStats,
   selectRankTrend,
-  selectAudits,
   selectCompetitors,
-  selectReports,
   selectDateRange,
   selectSelectedProject,
   selectHasSelectedProjectData,
@@ -35,18 +30,14 @@ import {
   fetchDashboardByProject,
   resetDashboard,
 } from '../features/dashboard/dashboardSlice';
-import StatCard from '../components/StateCard';
-import Card from '../components/ui/Card';
 
 function DashboardPage() {
   const dispatch = useDispatch();
-
   const navigate = useNavigate();
+
   const stats = useSelector(selectStats);
   const trend = useSelector(selectRankTrend);
-  const audits = useSelector(selectAudits);
   const competitors = useSelector(selectCompetitors);
-  const reports = useSelector(selectReports);
   const dateRange = useSelector(selectDateRange);
   const project = useSelector(selectSelectedProject);
   const hasSelectedProjectData = useSelector(selectHasSelectedProjectData);
@@ -80,7 +71,7 @@ function DashboardPage() {
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
               {project
-                ? `Monitor rankings, technical health, competitors, and reports for ${project.name} in one place.`
+                ? `Monitor rankings, competitors, and AIO for ${project.name}.`
                 : 'Select a project to load dashboard data.'}
             </p>
           </div>
@@ -158,36 +149,16 @@ function DashboardPage() {
           hint={stats.estimatedTrafficHint}
           icon={faUsers}
         />
-        <StatCard
-          title="Technical health"
-          value={stats.technicalHealth ? `${stats.technicalHealth}%` : '-'}
-          hint={stats.technicalHealthHint}
-          icon={faWrench}
-          tone="amber"
-        />
-        <StatCard
-          title="Backlinks"
-          value={stats.backlinks.toLocaleString()}
-          hint={stats.backlinksHint}
-          icon={faLink}
-        />
-        <StatCard
-          title="Reports sent"
-          value={stats.reportsSent.toLocaleString()}
-          hint={stats.reportsSentHint}
-          icon={faFileCircleCheck}
-          tone="green"
-        />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
-        <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+        <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Average ranking trend</h3>
               <p className="mt-1 text-sm text-slate-500">
                 {project
-                  ? `Recent ranking movement for ${project.name}. Lower average position means stronger search visibility.`
+                  ? `Recent ranking movement for ${project.name}.`
                   : 'Recent ranking movement for the selected project.'}
               </p>
             </div>
@@ -207,54 +178,12 @@ function DashboardPage() {
           </div>
         </article>
 
-        <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
+        <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Audit summary</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Competitors</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Quick view of technical findings and health indicators.
-              </p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-              Snapshot
-            </span>
-          </div>
-
-          <div className="mt-5 space-y-4">
-            {audits.length > 0 ? (
-              audits.map((item) => (
-                <div
-                  key={item.label}
-                  className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
-                >
-                  <span className="text-sm font-medium text-slate-600">{item.label}</span>
-                  <span className="text-lg font-bold text-slate-900">{item.value}</span>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No audit summary available yet.
-              </div>
-            )}
-          </div>
-        </article>
-      </section>
-
-      <KeywordTable />
-
-      <LowHangingFruits />
-
-      <SerpFeatures />
-
-      <section className="grid gap-6 xl:grid-cols-2">
-        <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Competitor overlap</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {project
-                  ? `Tracked competitors and shared keyword exposure for ${project.name}.`
-                  : 'Current competitor comparison snapshot.'}
+                Tracked competitors and shared keyword exposure.
               </p>
             </div>
             <Button
@@ -288,57 +217,6 @@ function DashboardPage() {
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
                 No competitors tracked for the selected project.
-              </div>
-            )}
-          </div>
-        </article>
-
-        <article className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Scheduled reports</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {project
-                  ? `Reporting activity for ${project.name} within ${dateRange.toLowerCase()}.`
-                  : `Reporting activity filtered for ${dateRange.toLowerCase()}.`}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => navigate('/app/reports')}
-              className="text-brand-700 hover:bg-brand-50"
-            >
-              Create report
-            </Button>
-          </div>
-
-          <div className="mt-5 space-y-4">
-            {reports.length > 0 ? (
-              reports.map((report) => (
-                <div key={report.id} className="rounded-2xl border border-slate-100 p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-semibold text-slate-900">{report.name}</p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {report.schedule} · {report.type}
-                      </p>
-                    </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        report.status === 'Active'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {report.status}
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No reports available for the selected project and range.
               </div>
             )}
           </div>

@@ -4,71 +4,100 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import GST_RATE, get_settings
-from app.services.notification_service import create_notification
 from app.core.errors import ApiError
-from app.db.models import Competitor, Keyword, Project, Report, Subscription, User
+from app.db.models import Competitor, Keyword, KeywordList, Project, Subscription, User, AIOTracking, KeywordListItem
 
 PLAN_DEFINITIONS = {
+    "free_trial": {
+        "key": "free_trial",
+        "name": "Free Trial",
+        "monthlyPrice": 0,
+        "yearlyPrice": 0,
+        "description": "7-day free trial to test RankCare.",
+        "highlighted": False,
+        "cta": "Start Free Trial",
+        "refreshFrequency": "weekly",
+        "limits": {
+            "projects": 1,
+            "keywords": 5,
+            "competitorsPerProject": 3,
+            "reportsPerMonth": 1,
+            "teamMembers": 1,
+            "aioKeywordsMonitored": 0,
+            "keywordResearchCreditsPerMonth": 10,
+            "competitorSpyCreditsPerMonth": 5,
+        },
+    },
     "starter": {
         "key": "starter",
         "name": "Starter",
-        "monthlyPrice": 1999,
-        "yearlyPrice": 17988,
+        "monthlyPrice": 999,
+        "yearlyPrice": 9599,
         "description": "Best for freelancers and small websites starting SEO tracking.",
         "highlighted": False,
-        "cta": "Start Starter Trial",
+        "cta": "Start Starter",
+        "refreshFrequency": "weekly",
         "limits": {
             "projects": 1,
-            "keywords": 25,
+            "keywords": 100,
             "competitorsPerProject": 3,
-            "reportsPerMonth": 2,
+            "reportsPerMonth": 1,
             "teamMembers": 1,
-            "dashboardCompetitorsPreview": 3,
+            "aioKeywordsMonitored": 0,
+            "keywordResearchCreditsPerMonth": 50,
+            "competitorSpyCreditsPerMonth": 10,
         },
     },
     "pro": {
         "key": "pro",
         "name": "Pro",
-        "monthlyPrice": 4999,
-        "yearlyPrice": 47988,
+        "monthlyPrice": 2499,
+        "yearlyPrice": 23999,
         "description": "Ideal for growing businesses that need stronger reporting and tracking.",
         "highlighted": True,
-        "cta": "Start Pro Trial",
+        "cta": "Start Pro",
+        "refreshFrequency": "weekly",
         "limits": {
             "projects": 3,
-            "keywords": 100,
-            "competitorsPerProject": 10,
-            "reportsPerMonth": 10,
-            "teamMembers": 2,
-            "dashboardCompetitorsPreview": 5,
+            "keywords": 200,
+            "competitorsPerProject": 6,
+            "reportsPerMonth": 6,
+            "teamMembers": 3,
+            "aioKeywordsMonitored": 50,
+            "keywordResearchCreditsPerMonth": 200,
+            "competitorSpyCreditsPerMonth": 30,
         },
     },
     "agency": {
         "key": "agency",
         "name": "Agency",
-        "monthlyPrice": 9999,
-        "yearlyPrice": 101988,
+        "monthlyPrice": 4999,
+        "yearlyPrice": 47999,
         "description": "Built for agencies handling multiple clients and organized client delivery.",
         "highlighted": False,
-        "cta": "Start Agency Trial",
+        "cta": "Start Agency",
+        "refreshFrequency": "weekly",
         "limits": {
             "projects": 10,
-            "keywords": 300,
-            "competitorsPerProject": 25,
+            "keywords": 500,
+            "competitorsPerProject": 10,
             "reportsPerMonth": 25,
             "teamMembers": 5,
-            "dashboardCompetitorsPreview": 10,
+            "aioKeywordsMonitored": 200,
+            "keywordResearchCreditsPerMonth": 500,
+            "competitorSpyCreditsPerMonth": 100,
         },
     },
 }
 
 PLAN_ORDER = {
+    "free_trial": 0,
     "starter": 1,
     "pro": 2,
     "agency": 3,
 }
 
-TRIAL_PLAN_KEY = "starter"
+TRIAL_PLAN_KEY = "free_trial"
 
 
 def list_available_plans() -> list[dict]:
@@ -81,6 +110,7 @@ def list_available_plans() -> list[dict]:
             "description": plan["description"],
             "highlighted": plan["highlighted"],
             "cta": plan["cta"],
+            "refreshFrequency": plan.get("refreshFrequency", "weekly"),
             "limits": plan["limits"],
         }
         for plan in PLAN_DEFINITIONS.values()
@@ -200,17 +230,6 @@ def count_project_competitors(db: Session, project_id: str) -> int:
     ) or 0
 
 
-def count_user_reports_this_month(db: Session, user_id: str) -> int:
-    now = datetime.utcnow()
-    month_start = datetime(now.year, now.month, 1)
-    return db.scalar(
-        select(func.count())
-        .select_from(Report)
-        .join(Project, Project.id == Report.projectId)
-        .where(Project.userId == user_id, Report.createdAt >= month_start)
-    ) or 0
-
-
 def get_user_projects(db: Session, user_id: str) -> list[Project]:
     return db.scalars(select(Project).where(Project.userId == user_id)).all()
 
@@ -240,8 +259,9 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "usage": {
             "projects": count_user_projects(db, user.id),
             "keywords": count_user_keywords(db, user.id),
-            "reportsThisMonth": count_user_reports_this_month(db, user.id),
             "maxCompetitorsPerProject": get_user_max_competitors_per_project(db, user.id),
+            "aioKeywordsMonitored": count_user_aio_keywords(db, user.id),
+            "keywordResearchCreditsUsed": count_user_keyword_research_credits_used(db, user.id),
         },
         "limits": {
             "projects": limits["projects"],
@@ -249,7 +269,8 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
             "competitorsPerProject": limits["competitorsPerProject"],
             "reportsPerMonth": limits["reportsPerMonth"],
             "teamMembers": limits["teamMembers"],
-            "dashboardCompetitorsPreview": limits["dashboardCompetitorsPreview"],
+            "aioKeywordsMonitored": limits.get("aioKeywordsMonitored", 0),
+            "keywordResearchCreditsPerMonth": limits.get("keywordResearchCreditsPerMonth", 0),
         },
     }
 
@@ -263,7 +284,6 @@ def build_downgrade_violations(db: Session, user: User, target_plan_key: str) ->
 
     used_projects = count_user_projects(db, user.id)
     used_keywords = count_user_keywords(db, user.id)
-    used_reports = count_user_reports_this_month(db, user.id)
     used_max_competitors = get_user_max_competitors_per_project(db, user.id)
 
     violations = []
@@ -282,14 +302,6 @@ def build_downgrade_violations(db: Session, user: User, target_plan_key: str) ->
             "used": used_keywords,
             "allowed": target_limits["keywords"],
             "remove": used_keywords - target_limits["keywords"],
-        })
-
-    if used_reports > target_limits["reportsPerMonth"]:
-        violations.append({
-            "resource": "reportsThisMonth",
-            "used": used_reports,
-            "allowed": target_limits["reportsPerMonth"],
-            "remove": used_reports - target_limits["reportsPerMonth"],
         })
 
     if used_max_competitors > target_limits["competitorsPerProject"]:
@@ -395,11 +407,59 @@ def ensure_competitor_limit(db: Session, user_id: str, project_id: str) -> None:
         raise ApiError(403, f"Competitor limit reached. Your current plan allows {allowed} competitor(s) per project.")
 
 
-def ensure_report_limit(db: Session, user_id: str) -> None:
+def count_user_aio_keywords(db: Session, user_id: str) -> int:
+    return db.scalar(
+        select(func.count())
+        .select_from(AIOTracking)
+        .join(Project, Project.id == AIOTracking.projectId)
+        .where(Project.userId == user_id)
+    ) or 0
+
+
+def get_user_plan_limits_by_id(db: Session, user_id: str) -> dict:
+    user = get_user_or_404(db, user_id)
+    return get_user_plan_limits(user)
+
+
+def count_user_keyword_research_credits_used(db: Session, user_id: str) -> int:
+    from app.services.cache_service import get_usage
+    from datetime import datetime
+    month_key = datetime.utcnow().strftime("%Y-%m")
+    return get_usage(f"keyword_research:{user_id}:{month_key}")
+
+
+def ensure_keyword_research_limit(db: Session, user_id: str, credits_needed: int = 1) -> None:
     user = get_user_or_404(db, user_id)
     ensure_subscription_active(user)
     limits = get_user_plan_limits(user)
-    used = count_user_reports_this_month(db, user_id)
-    allowed = limits["reportsPerMonth"]
-    if used >= allowed:
-        raise ApiError(403, f"Monthly report limit reached. Your current plan allows {allowed} report(s) per month.")
+    allowed = limits.get("keywordResearchCreditsPerMonth", 0)
+    if allowed <= 0:
+        raise ApiError(403, "Keyword research is not available on your current plan")
+    used = count_user_keyword_research_credits_used(db, user_id)
+    if used + credits_needed > allowed:
+        raise ApiError(403, f"Keyword research credit limit reached. Your current plan allows {allowed} credits per month.")
+
+
+def ensure_competitor_spy_limit(db: Session, user_id: str, credits_needed: int = 1) -> None:
+    user = get_user_or_404(db, user_id)
+    ensure_subscription_active(user)
+    limits = get_user_plan_limits(user)
+    allowed = limits.get("competitorSpyCreditsPerMonth", 0)
+    if allowed <= 0:
+        raise ApiError(403, "Competitor spy is not available on your current plan")
+    from app.services.cache_service import get_usage
+    from datetime import datetime
+    month_key = datetime.utcnow().strftime("%Y-%m")
+    used = get_usage(f"competitor_spy:{user_id}:{month_key}")
+    if used + credits_needed > allowed:
+        raise ApiError(403, f"Competitor spy limit reached. Your current plan allows {allowed} credits per month.")
+
+
+def ensure_aio_tracking_limit(db: Session, user_id: str, aio_keywords_needed: int = 1) -> None:
+    user = get_user_or_404(db, user_id)
+    ensure_subscription_active(user)
+    limits = get_user_plan_limits(user)
+    used = count_user_aio_keywords(db, user_id)
+    allowed = limits.get("aioKeywordsMonitored", 0)
+    if used + aio_keywords_needed > allowed:
+        raise ApiError(403, f"AIO tracking limit reached. Your current plan allows {allowed} AIO keywords.")

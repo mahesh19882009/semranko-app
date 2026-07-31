@@ -2,7 +2,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
-from app.db.models import Keyword, Project, RankResult
+from app.db.models import Keyword, Project, RankResult, User, Competitor
 from app.queues.rank_check_queue import get_rank_check_queue
 from app.utils.serializers import model_to_dict
 
@@ -18,7 +18,7 @@ def run_rank_check(db: Session, user_id: str, project_id: str) -> dict:
 
     queue = get_rank_check_queue()
     payload_keywords = [model_to_dict(keyword) for keyword in keywords]
-    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
+    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords, job_timeout="600")
 
     return {
         "queued": True,
@@ -39,7 +39,7 @@ def queue_rank_check_for_project(db: Session, project_id: str) -> dict | None:
 
     queue = get_rank_check_queue()
     payload_keywords = [model_to_dict(keyword) for keyword in keywords]
-    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords)
+    job = queue.enqueue("fastapi_app.app.workers.tasks.process_rank_check_job", project.id, project.domain, payload_keywords, job_timeout="600")
 
     return {
         "queued": True,
@@ -122,3 +122,123 @@ def delete_project_rankings(db: Session, user_id: str, project_id: str) -> None:
 
     db.execute(delete(RankResult).where(RankResult.projectId == project_id))
     db.commit()
+
+
+def queue_competitor_tracking_for_project(db: Session, project_id: str) -> dict | None:
+    project = db.scalar(select(Project).where(Project.id == project_id))
+    if not project:
+        return None
+
+    competitors = db.scalars(select(Competitor).where(Competitor.projectId == project_id)).all()
+    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id)).all()
+
+    if not competitors or not keywords:
+        return None
+
+    queue = get_rank_check_queue()
+    payload_keywords = [model_to_dict(keyword) for keyword in keywords]
+    competitor_ids = [comp.id for comp in competitors]
+    job = queue.enqueue(
+        "fastapi_app.app.workers.tasks.process_competitor_rank_job",
+        project.id,
+        project.domain,
+        competitor_ids,
+        payload_keywords,
+        job_timeout="600",
+    )
+
+    return {
+        "queued": True,
+        "jobId": job.id,
+        "projectId": project.id,
+        "competitorCount": len(competitors),
+        "keywordCount": len(payload_keywords),
+    }
+
+
+def queue_aio_tracking_for_project(db: Session, project_id: str) -> dict | None:
+    project = db.scalar(select(Project).where(Project.id == project_id))
+    if not project:
+        return None
+
+    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id)).all()
+    if not keywords:
+        return None
+
+    queue = get_rank_check_queue()
+    payload_keywords = [model_to_dict(keyword) for keyword in keywords]
+    job = queue.enqueue(
+        "fastapi_app.app.workers.tasks.process_aio_tracking_job",
+        project.id,
+        payload_keywords,
+        job_timeout="600",
+    )
+
+    return {
+        "queued": True,
+        "jobId": job.id,
+        "projectId": project.id,
+        "keywordCount": len(payload_keywords),
+    }
+
+
+def queue_labs_metrics_refresh_for_project(db: Session, project_id: str) -> dict | None:
+    project = db.scalar(select(Project).where(Project.id == project_id))
+    if not project:
+        return None
+
+    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id)).all()
+    if not keywords:
+        return None
+
+    queue = get_rank_check_queue()
+    payload_keywords = [model_to_dict(keyword) for keyword in keywords]
+    job = queue.enqueue(
+        "fastapi_app.app.workers.tasks.process_labs_metrics_job",
+        project.id,
+        payload_keywords,
+    )
+
+    return {
+        "queued": True,
+        "jobId": job.id,
+        "projectId": project.id,
+        "keywordCount": len(payload_keywords),
+    }
+
+
+def queue_weekly_tracking_for_all_projects(db: Session) -> dict:
+    projects = db.scalars(select(Project)).all()
+
+    queued_projects = 0
+    rank_jobs = []
+    competitor_jobs = []
+    aio_jobs = []
+    labs_jobs = []
+
+    for project in projects:
+        rank_result = queue_rank_check_for_project(db, project.id)
+        if rank_result:
+            queued_projects += 1
+            rank_jobs.append(rank_result["jobId"])
+
+        competitor_result = queue_competitor_tracking_for_project(db, project.id)
+        if competitor_result:
+            competitor_jobs.append(competitor_result["jobId"])
+
+        aio_result = queue_aio_tracking_for_project(db, project.id)
+        if aio_result:
+            aio_jobs.append(aio_result["jobId"])
+
+        labs_result = queue_labs_metrics_refresh_for_project(db, project.id)
+        if labs_result:
+            labs_jobs.append(labs_result["jobId"])
+
+    return {
+        "queued": True,
+        "projectsQueued": queued_projects,
+        "rankJobIds": rank_jobs,
+        "competitorJobIds": competitor_jobs,
+        "aioJobIds": aio_jobs,
+        "labsJobIds": labs_jobs,
+    }

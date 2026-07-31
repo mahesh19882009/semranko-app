@@ -17,7 +17,7 @@ function Card({
   padding = 'p-5',
   shadow = 'shadow-card',
   border = 'border border-slate-200',
-  radius = 'rounded-3xl',
+  radius = 'rounded-xs',
   as: Component = 'div',
   ...props
 }) {

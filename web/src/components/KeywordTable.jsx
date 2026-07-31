@@ -366,7 +366,7 @@ function KeywordTable() {
 
   if (!selectedProjectId) {
     return (
-      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft">
+      <section className="rounded-xs border border-slate-200 bg-white p-6 shadow-soft">
         <p className="text-sm text-slate-500">
           Select a project first to manage keywords and rankings.
         </p>
@@ -377,7 +377,7 @@ function KeywordTable() {
   return (
     <>
       <div className="space-y-6">
-        <section className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+        <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
           <div className="border-b border-slate-200 p-5">
             <h3 className="text-lg font-semibold text-slate-900">Add keywords</h3>
             <p className="mt-1 text-sm text-slate-500">
@@ -437,7 +437,7 @@ function KeywordTable() {
           {error && <Alert variant="error" message={error} />}
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+        <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
           <div className="flex flex-col gap-4 border-b border-slate-200 p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Tracked keywords</h3>
@@ -558,7 +558,7 @@ function KeywordTable() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white shadow-soft">
+        <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
           <div className="flex flex-col gap-4 border-b border-slate-200 p-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Rankings</h3>

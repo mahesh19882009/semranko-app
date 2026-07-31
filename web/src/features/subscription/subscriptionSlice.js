@@ -40,7 +40,6 @@ const subscriptionSlice = createSlice({
         competitorsPerProject: 0,
         reportsPerMonth: 0,
         teamMembers: 0,
-        dashboardCompetitorsPreview: 0,
       },
       creditBalance: 0,
     },

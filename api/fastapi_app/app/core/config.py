@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     
     @computed_field
     @property
+    def effective_serp_login(self) -> Optional[str]:
+        return self.DATAFORSEO_LOGIN
+
+    @computed_field
+    @property
+    def effective_serp_key(self) -> Optional[str]:
+        return self.DATAFORSEO_PASSWORD
+    
+    @computed_field
+    @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         if self.DATABASE_URL:
             return self.DATABASE_URL
@@ -71,6 +81,7 @@ class Settings(BaseSettings):
     # SERP / DataForSEO
     SERP_API_LOGIN: Optional[str] = None
     SERP_API_KEY: Optional[str] = None
+    PINGBACK_URL: Optional[str] = None
     
     # Trial
     TRIAL_DAYS: int = 10

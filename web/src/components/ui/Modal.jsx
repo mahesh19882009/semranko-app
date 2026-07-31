@@ -69,7 +69,7 @@ function Modal({
       aria-labelledby={title ? 'modal-title' : undefined}
     >
       <div
-        className={`relative w-full ${sizeStyles[size]} rounded-3xl bg-white shadow-2xl ${className}`}
+        className={`relative w-full ${sizeStyles[size]} rounded-xl bg-white shadow-2xl ${className}`}
         role="document"
       >
         {title && (

@@ -38,7 +38,7 @@ function HomePage() {
 
   const stats = [
     { label: "Projects", value: "Multi-project" },
-    { label: "Tracking", value: "Daily rank checks" },
+    { label: "Tracking", value: "Weekly rank checks" },
     { label: "Reports", value: "Client-ready workflow" },
     { label: "Focus", value: "SEO teams and agencies" },
   ];

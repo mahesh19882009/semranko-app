@@ -18,14 +18,9 @@ const initialState = {
     totalKeywords: 0,
     avgRank: 0,
     estimatedTraffic: 0,
-    technicalHealth: 0,
-    backlinks: 0,
-    reportsSent: 0,
   },
   rankTrend: [],
-  audits: [],
   competitors: [],
-  reports: [],
   dateRange: 'Last 7 days',
   loading: false,
   error: null,
@@ -41,9 +36,7 @@ const dashboardSlice = createSlice({
     resetDashboard(state) {
       state.stats = initialState.stats;
       state.rankTrend = [];
-      state.audits = [];
       state.competitors = [];
-      state.reports = [];
       state.loading = false;
       state.error = null;
     },
@@ -57,11 +50,10 @@ const dashboardSlice = createSlice({
       .addCase(fetchDashboardByProject.fulfilled, (state, action) => {
         state.loading = false;
         state.error = null;
-        state.stats = action.payload?.stats || initialState.stats;
-        state.rankTrend = action.payload?.rankTrend || [];
-        state.audits = action.payload?.audits || [];
-        state.competitors = action.payload?.competitors || [];
-        state.reports = action.payload?.reports || [];
+        const data = action.payload || {};
+        state.stats = data.stats || initialState.stats;
+        state.rankTrend = data.rankTrend || [];
+        state.competitors = data.competitors?.items || [];
       })
       .addCase(fetchDashboardByProject.rejected, (state, action) => {
         state.loading = false;

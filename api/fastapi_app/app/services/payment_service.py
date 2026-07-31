@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription
 from app.core.config import get_settings
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER
-from app.services.notification_service import create_notification
 from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -281,16 +280,6 @@ def activate_subscription(
         db.commit()
         db.refresh(existing_subscription)
         
-        create_notification(
-            db,
-            user_id=user_id,
-            title="Subscription renewed",
-            message=f"Your {plan['name']} subscription has been renewed.",
-            type="plan_change",
-            severity="info",
-        )
-        db.commit()
-
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0
         email_service.send_payment_success_email(
@@ -325,16 +314,6 @@ def activate_subscription(
         db.add(user)
         db.commit()
         
-        create_notification(
-            db,
-            user_id=user_id,
-            title="Welcome to RankCare",
-            message=f"Your {plan['name']} subscription is now active.",
-            type="plan_change",
-            severity="info",
-        )
-        db.commit()
-
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0
         email_service.send_payment_success_email(

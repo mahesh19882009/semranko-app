@@ -26,6 +26,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 
 const PLAN_ORDER = {
+  free_trial: 0,
   starter: 1,
   pro: 2,
   agency: 3,
@@ -413,7 +414,7 @@ export default function PricingPage() {
 
         {authenticated ? (
           <div className="mt-12 grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-xs border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-slate-900">Current subscription</h2>
                 {userCreditBalance > 0 && (
@@ -451,7 +452,7 @@ export default function PricingPage() {
               </dl>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="rounded-xs border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-slate-900">Current usage</h2>
               <div className="mt-6 space-y-5">
                 <UsageRow label="Projects" used={usage.projects ?? 0} allowed={limits.projects ?? 0} />
@@ -470,7 +471,7 @@ export default function PricingPage() {
             </div>
           </div>
         ) : (
-          <div className="mx-auto mt-12 max-w-3xl rounded-3xl border border-indigo-100 bg-white p-8 text-center shadow-sm">
+          <div className="mx-auto mt-12 max-w-3xl rounded-xs border border-indigo-100 bg-white p-8 text-center shadow-sm">
             <h2 className="text-2xl font-semibold text-slate-900">Start with a free trial</h2>
             <p className="mt-3 text-slate-600">
               Every new account starts with a {trialDays}-day trial. Pick any plan now and continue
@@ -539,7 +540,7 @@ export default function PricingPage() {
                 return (
                   <article
                     key={plan.key}
-                    className={`rounded-3xl border p-6 shadow-sm transition ${
+                    className={`rounded-xs border p-6 shadow-sm transition ${
                       plan.highlighted
                         ? "border-indigo-200 bg-indigo-50/60"
                         : "border-slate-200 bg-white"
@@ -573,7 +574,7 @@ export default function PricingPage() {
                     </ul>
 
                     {showDowngradeWarning ? (
-                      <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                      <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
                         <p className="text-sm font-semibold text-amber-800">
                           Downgrade blocked. Reduce usage first:
                         </p>
@@ -602,7 +603,7 @@ export default function PricingPage() {
                         </Button>
                       )}
                       
-                      {/* Paid upgrade button */}
+                      {/* Paid upgrade button - also for trial users on lower plans */}
                       {authenticated && !isCurrent && !isLowerPlan && (
                         <Button
                           type="button"
@@ -611,9 +612,11 @@ export default function PricingPage() {
                           loading={isProcessingPayment}
                           fullWidth
                           className="bg-indigo-600 hover:bg-indigo-700"
-                        >
-                          Upgrade - ₹{price.toLocaleString('en-IN')}/mo
-                        </Button>
+                         >
+                           {current?.subscriptionStatus === "trialing" && currentPlan === "free_trial"
+                             ? `Upgrade to ${plan.name}`
+                             : `Upgrade - ₹${price.toLocaleString('en-IN')}/mo`}
+                         </Button>
                       )}
                       
                       {/* Start trial button for non-authenticated users */}
@@ -629,28 +632,28 @@ export default function PricingPage() {
                       )}
                       
                        {/* Current plan indicator / Activate for trial users */}
-                       {isCurrent && current?.subscriptionStatus === "trialing" ? (
-                         <Button
-                           type="button"
-                           onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
-                           disabled={isProcessingPayment}
-                           loading={isProcessingPayment}
-                           fullWidth
-                           className="bg-indigo-600 hover:bg-indigo-700"
-                         >
-                           Activate {plan.name} Plan
-                         </Button>
-                       ) : isCurrent ? (
-                         <Button
-                           type="button"
-                           disabled
-                           fullWidth
-                           variant="primary"
-                           className="cursor-not-allowed"
-                         >
-                           Current Plan
-                         </Button>
-                       ) : null}
+                       {isCurrent && current?.subscriptionStatus === "trialing" && currentPlan !== "free_trial" ? (
+                        <Button
+                          type="button"
+                          onClick={() => handleRequestUpgradeWithPayment(plan, selectedBillingCycle)}
+                          disabled={isProcessingPayment}
+                          loading={isProcessingPayment}
+                          fullWidth
+                          className="bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          Activate {plan.name} Plan
+                        </Button>
+                      ) : isCurrent ? (
+                        <Button
+                          type="button"
+                          disabled
+                          fullWidth
+                          variant="primary"
+                          className="cursor-not-allowed"
+                        >
+                          Current Plan
+                        </Button>
+                      ) : null}
                     </div>
                   </article>
                 );
@@ -659,7 +662,7 @@ export default function PricingPage() {
           )}
         </div>
 
-        <div className="mt-16 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="mt-16 overflow-hidden rounded-xs border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-6 py-4">
             <h2 className="text-xl font-semibold text-slate-900">Plan comparison</h2>
           </div>
@@ -725,7 +728,7 @@ export default function PricingPage() {
             className="absolute inset-0 bg-slate-900/60 backdrop-blur-[2px] transition"
           />
 
-          <div className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+          <div className="relative z-10 w-full max-w-md overflow-hidden rounded-xs border border-slate-200 bg-white shadow-2xl">
             {/* Razorpay Brand Header */}
             <div className="bg-indigo-600 px-6 py-5 text-white flex items-center justify-between">
               <div className="flex items-center gap-3">

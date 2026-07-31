@@ -125,7 +125,7 @@ function OnboardingWizard({ onComplete }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-      <div className="w-full max-w-lg rounded-3xl bg-white shadow-soft">
+      <div className="w-full max-w-lg rounded-xs bg-white shadow-soft">
         <div className="p-6">
           {/* Progress */}
           <div className="mb-6 flex items-center justify-between">

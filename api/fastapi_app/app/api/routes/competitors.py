@@ -23,7 +23,14 @@ def list_by_project(project_id: str, user: dict = Depends(get_current_user), db:
 
 @router.post("")
 @enforce_limits(resource_type='competitor')
-def create(payload: dict = Body(...), user: dict = Depends(get_current_user), db: Session = Depends(db_session)) -> JSONResponse:
+def create(
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session)
+) -> JSONResponse:
+    project_id = payload.get("projectId")
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
     competitor = create_competitor(db, user["userId"], payload)
     return JSONResponse(status_code=201, content=ok("Competitor created", competitor))
 

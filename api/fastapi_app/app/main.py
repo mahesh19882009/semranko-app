@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+login = settings.effective_serp_login
+key = settings.effective_serp_key
+logger.info(f"DataForSEO login configured: {bool(login)} value={login}")
+logger.info(f"DataForSEO key configured: {bool(key)} value={key[:10]}..." if key else "DataForSEO key configured: False")
+
 origins = [settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"]
 
 # Properly add CORS middleware

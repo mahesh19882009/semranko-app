@@ -110,7 +110,6 @@ Updates dashboard with new ranking
 The system has intelligent fallback:
 
 1. **Primary**: DataForSEO (if `SERP_API_LOGIN` + `SERP_API_KEY` set)
-2. **Secondary**: SerpAPI (if only `SERP_API_KEY` set)
 3. **Fallback**: Mock data (for development/testing)
 
 This ensures the app always works, even without API keys.
