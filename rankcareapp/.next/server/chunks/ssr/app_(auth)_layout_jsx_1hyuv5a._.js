@@ -1,0 +1,3 @@
+module.exports=[6653,a=>{"use strict";a.s(["default",()=>b]);let b=(0,a.i(11857).registerClientReference)(function(){throw Error("Attempted to call the default export of [project]/app/(auth)/layout.jsx from the server, but it's on the client. It's not possible to invoke a client function from the server, it can only be rendered as a Component or passed to props of a Client Component.")},"[project]/app/(auth)/layout.jsx","default")},20495,a=>{"use strict";var b=a.i(6653);a.n(b)},94151,function(a){a.n(a.i(20495))}];
+
+//# sourceMappingURL=app_%28auth%29_layout_jsx_1hyuv5a._.js.map

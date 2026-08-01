@@ -49,3 +49,6 @@ package-lock.json
 
 # AI tools
 .aider*
+node_modules
+node_modules
+node_modules

@@ -1,0 +1,3 @@
+{
+  "/(auth)/billing/page": "app/(auth)/billing/page.js"
+}

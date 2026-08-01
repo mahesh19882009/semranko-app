@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "RankCare API"
     ENV: str = "development"
     PORT: int = 4000
-    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:3000"
     
     # Security
     SECRET_KEY: str = secrets.token_urlsafe(32)
@@ -70,7 +70,6 @@ class Settings(BaseSettings):
     # Email
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM: str = "noreply@rankcare.com"
-    CONTACT_EMAIL: Optional[str] = None
     EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     
     # Razorpay
