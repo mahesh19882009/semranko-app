@@ -19,15 +19,9 @@ export const selectSelectedProject = createSelector(
     projects.find((item) => item.id === selectedProjectId) || null
 );
 
-export const selectRangeDays = createSelector([selectDateRange], (dateRange) => {
-  if (dateRange === 'Last 30 days') return 30;
-  if (dateRange === 'Last 90 days') return 90;
-  return 7;
-});
-
 export const selectStats = createSelector(
-  [selectSelectedProject, selectGlobalStats, selectRangeDays, selectDateRange],
-  (project, globalStats, rangeDays, dateRange) => {
+  [selectSelectedProject, selectGlobalStats],
+  (project, globalStats) => {
     const projectName = project?.name || '';
 
     const baseStats = {
@@ -59,10 +53,10 @@ export const selectStats = createSelector(
       ...stats,
       totalKeywordsHint: project
         ? `Tracked terms for ${project.name}`
-        : `Across the selected range: ${dateRange}`,
+        : 'Global keyword tracking',
       avgRankHint: project
         ? `Current average position for ${project.name}`
-        : `Updated for ${dateRange.toLowerCase()}`,
+        : 'Updated ranking data',
       estimatedTrafficHint: project
         ? `Estimated organic visits for ${project.name}`
         : 'Projected organic sessions',
@@ -71,23 +65,23 @@ export const selectStats = createSelector(
 );
 
 export const selectRankTrend = createSelector(
-  [selectSelectedProject, selectRankTrendRaw, selectRangeDays],
-  (project, globalTrend, rangeDays) => {
+  [selectSelectedProject, selectRankTrendRaw],
+  (project, globalTrend) => {
     const projectTrend = project?.rankTrend;
 
     if (Array.isArray(projectTrend) && projectTrend.length > 0) {
-      return projectTrend.slice(-Math.min(rangeDays, projectTrend.length));
+      return projectTrend.slice(-Math.min(projectTrend.length, 12));
     }
 
     if (project) {
-      const points = Math.min(rangeDays, 12);
+      const points = Math.min(12, 12);
       return Array.from({ length: points }, (_, index) => ({
         label: `P${index + 1}`,
         value: Math.max(1, 24 - index),
       }));
     }
 
-    return globalTrend.slice(-Math.min(rangeDays, globalTrend.length));
+    return globalTrend.slice(-Math.min(globalTrend.length, 12));
   }
 );
 

@@ -22,7 +22,6 @@ const initialState = {
   },
   rankTrend: [],
   competitors: [],
-  dateRange: 'Last 7 days',
   loading: false,
   error: null,
 };
@@ -31,9 +30,6 @@ const dashboardSlice = createSlice({
   name: 'dashboard',
   initialState,
   reducers: {
-    setDateRange(state, action) {
-      state.dateRange = action.payload;
-    },
     resetDashboard(state) {
       state.stats = initialState.stats;
       state.rankTrend = [];
@@ -63,5 +59,5 @@ const dashboardSlice = createSlice({
   },
 });
 
-export const { setDateRange, resetDashboard } = dashboardSlice.actions;
+export const { resetDashboard } = dashboardSlice.actions;
 export default dashboardSlice.reducer;

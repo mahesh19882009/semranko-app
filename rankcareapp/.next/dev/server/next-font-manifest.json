@@ -1,6 +1,15 @@
 {
   "app": {
-    "[project]/app/register/page": [
+    "[project]/app/(auth)/dashboard/page": [
+      "static/media/83afe278b6a6bb3c-s.p.2bn3s6zvc0dyp.woff2"
+    ],
+    "[project]/app/(auth)/keyword-research/page": [
+      "static/media/83afe278b6a6bb3c-s.p.2bn3s6zvc0dyp.woff2"
+    ],
+    "[project]/app/(auth)/keywords/page": [
+      "static/media/83afe278b6a6bb3c-s.p.2bn3s6zvc0dyp.woff2"
+    ],
+    "[project]/app/(auth)/projects/page": [
       "static/media/83afe278b6a6bb3c-s.p.2bn3s6zvc0dyp.woff2"
     ]
   },

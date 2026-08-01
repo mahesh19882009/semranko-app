@@ -15,7 +15,6 @@ import {
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import { setSelectedProjectId } from "../features/projects/projectsSlice";
-import { selectDateRange } from "../features/dashboard/dashboardSelectors";
 import { fetchSubscriptionStatus } from "../features/subscription/subscriptionSlice";
 
 function Topbar({ onToggleSidebar }) {
@@ -24,7 +23,6 @@ function Topbar({ onToggleSidebar }) {
 
   const projects = useSelector((state) => state.projects.list);
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
-  const dateRange = useSelector(selectDateRange);
 
   const subscriptionData = useSelector((state) => state.subscription.data);
   const subscriptionLoading = useSelector((state) => state.subscription.loading);
@@ -169,18 +167,7 @@ function Topbar({ onToggleSidebar }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <select
-            value={dateRange}
-            onChange={(e) => dispatch(setDateRange(e.target.value))}
-            className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none"
-          >
-            <option>Last 7 days</option>
-            <option>Last 30 days</option>
-            <option>Last 90 days</option>
-          </select>
-
-          <div className="relative" ref={profileRef}>
+        <div className="relative" ref={profileRef}>
             <button
               type="button"
               onClick={() => setProfileOpen((prev) => !prev)}
@@ -248,7 +235,6 @@ function Topbar({ onToggleSidebar }) {
               </div>
             )}
           </div>
-        </div>
       </div>
     </header>
     </>

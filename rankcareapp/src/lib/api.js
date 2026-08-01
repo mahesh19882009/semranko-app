@@ -360,17 +360,6 @@ export const apiRequest = async (endpoint, options = {}) => {
   return data;
 };
 
-export const searchGlobal = async ({ query, projectId }) => {
-  const params = new URLSearchParams();
-  params.set('q', query);
-
-  if (projectId) {
-    params.set('projectId', projectId);
-  }
-
-  return apiRequest(`/search?${params.toString()}`);
-};
-
 export async function registerApi(payload) {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: "POST",

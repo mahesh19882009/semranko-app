@@ -316,9 +316,7 @@ __turbopack_context__.s([
     "fetchDashboardByProject",
     ()=>fetchDashboardByProject,
     "resetDashboard",
-    ()=>resetDashboard,
-    "setDateRange",
-    ()=>setDateRange
+    ()=>resetDashboard
 ]);
 var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f40$reduxjs$2f$toolkit$2f$dist$2f$redux$2d$toolkit$2e$modern$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$locals$3e$__ = __turbopack_context__.i("[project]/node_modules/@reduxjs/toolkit/dist/redux-toolkit.modern.mjs [app-client] (ecmascript) <locals>");
 var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$api$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/src/lib/api.js [app-client] (ecmascript)");
@@ -341,7 +339,6 @@ const initialState = {
     },
     rankTrend: [],
     competitors: [],
-    dateRange: 'Last 7 days',
     loading: false,
     error: null
 };
@@ -349,9 +346,6 @@ const dashboardSlice = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_
     name: 'dashboard',
     initialState,
     reducers: {
-        setDateRange (state, action) {
-            state.dateRange = action.payload;
-        },
         resetDashboard (state) {
             state.stats = initialState.stats;
             state.rankTrend = [];
@@ -377,7 +371,7 @@ const dashboardSlice = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_
         });
     }
 });
-const { setDateRange, resetDashboard } = dashboardSlice.actions;
+const { resetDashboard } = dashboardSlice.actions;
 const __TURBOPACK__default__export__ = dashboardSlice.reducer;
 if (typeof globalThis.$RefreshHelpers$ === 'object' && globalThis.$RefreshHelpers !== null) {
     __turbopack_context__.k.registerExports(__turbopack_context__.m, globalThis.$RefreshHelpers$);
@@ -1562,8 +1556,6 @@ __turbopack_context__.s([
     ()=>resendVerificationApi,
     "resetPasswordApi",
     ()=>resetPasswordApi,
-    "searchGlobal",
-    ()=>searchGlobal,
     "setRazorpayKey",
     ()=>setRazorpayKey,
     "syncSerpFeaturesApi",
@@ -1898,14 +1890,6 @@ const apiRequest = async (endpoint, options = {})=>{
         throw new Error(errorMessage);
     }
     return data;
-};
-const searchGlobal = async ({ query, projectId })=>{
-    const params = new URLSearchParams();
-    params.set('q', query);
-    if (projectId) {
-        params.set('projectId', projectId);
-    }
-    return apiRequest(`/search?${params.toString()}`);
 };
 async function registerApi(payload) {
     const response = await fetch(`${API_BASE_URL}/auth/register`, {

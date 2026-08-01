@@ -16,7 +16,6 @@ import {
   selectStats,
   selectRankTrend,
   selectCompetitors,
-  selectDateRange,
   selectSelectedProject,
   selectHasSelectedProjectData,
   selectDashboardLoading,
@@ -39,7 +38,6 @@ function DashboardPage() {
   const stats = useSelector(selectStats);
   const trend = useSelector(selectRankTrend);
   const competitors = useSelector(selectCompetitors);
-  const dateRange = useSelector(selectDateRange);
   const project = useSelector(selectSelectedProject);
   const hasSelectedProjectData = useSelector(selectHasSelectedProjectData);
   const loading = useSelector(selectDashboardLoading);
@@ -77,13 +75,7 @@ function DashboardPage() {
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Date range
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">{dateRange}</p>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 px-4 py-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Status
@@ -163,9 +155,6 @@ function DashboardPage() {
                   : 'Recent ranking movement for the selected project.'}
               </p>
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-              {dateRange}
-            </span>
           </div>
 
           <div className="mt-6">
