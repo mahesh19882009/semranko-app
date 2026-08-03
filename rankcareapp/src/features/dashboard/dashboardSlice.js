@@ -14,6 +14,10 @@ export const fetchDashboardByProject = createAsyncThunk(
   }
 );
 
+// Optional: Add a thunk for overview if you want it in Redux, 
+// but your component currently fetches it locally. 
+// Let's keep it local as per your current pattern to minimize changes.
+
 const initialState = {
   stats: {
     totalKeywords: 0,
@@ -22,6 +26,8 @@ const initialState = {
   },
   rankTrend: [],
   competitors: [],
+  keywords: [],
+  overview: null, // Added for future use if moved from local state
   loading: false,
   error: null,
 };
@@ -34,9 +40,13 @@ const dashboardSlice = createSlice({
       state.stats = initialState.stats;
       state.rankTrend = [];
       state.competitors = [];
+      state.overview = null;
       state.loading = false;
       state.error = null;
     },
+    setOverview(state, action) {
+      state.overview = action.payload;
+    }
   },
   extraReducers: (builder) => {
     builder
@@ -51,6 +61,7 @@ const dashboardSlice = createSlice({
         state.stats = data.stats || initialState.stats;
         state.rankTrend = data.rankTrend || [];
         state.competitors = data.competitors?.items || [];
+        state.keywords = data.keywords || [];
       })
       .addCase(fetchDashboardByProject.rejected, (state, action) => {
         state.loading = false;
@@ -59,5 +70,5 @@ const dashboardSlice = createSlice({
   },
 });
 
-export const { resetDashboard } = dashboardSlice.actions;
+export const { resetDashboard, setOverview } = dashboardSlice.actions;
 export default dashboardSlice.reducer;

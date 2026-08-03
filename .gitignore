@@ -1,59 +1,153 @@
+--- .gitignore (原始)
+```
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Dependencies
-.venv/
+# Virtual environments
 venv/
-env/
+ENV/
+env.bak/
+.venv/
 
-# Environment files
-.env
-.env.local
-.env.*.local
-.env.*
-**/.env
-**/.env.local
-**/.env.*.local
-**/.env.*
-api/.env
-
-*.log
-
-# Coverage
+# FastAPI/Python specific
 .coverage
-coverage/
 htmlcov/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Build artifacts
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+```
+
++++ .gitignore (修改后)
+```
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env.bak/
+.venv/
+env/
+
+# FastAPI/Python specific
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.nojekyll
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build artifacts
 dist/
 build/
-*.egg-info/
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-dump.rdb
-
-# Node
-node_modules/
-package-lock.json
-
-# AI tools
-.aider*
-node_modules
-node_modules
-node_modules
-
-
-rankcareapp/.next/
+coverage/
+.nyc_output/
 .next/
+.nuxt/
+public/dist/
+public/build/
+
+# Environment variables
+.env
+.env.local
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Icon?
+iTunes_Control/
+@__thumb
+*.tmp
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+```

@@ -179,7 +179,10 @@ def get_subscription_status(user: User) -> str:
 
 
 def get_plan_key(user: User) -> str:
-    return (getattr(user, "selectedPlan", None) or "starter").strip().lower()
+    plan = getattr(user, "selectedPlan", None)
+    if not plan or plan.strip() == "":
+        return "free_trial"
+    return plan.strip().lower()
 
 
 def get_effective_plan_key(user: User) -> str:

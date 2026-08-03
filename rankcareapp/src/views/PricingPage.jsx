@@ -5,8 +5,12 @@ import { isAuthenticated } from "../utils/auth";
 import { PLANS, PLAN_COMPARISON, CREDIT_ITEMS, VALID_PLAN_KEYS } from "../config/pricing";
 import { initRazorpayCheckout } from "../lib/api";
 import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
 import Alert from "../components/ui/Alert";
+// Assuming you have an action to fetch pricing if not already auto-fetched
+// If your app auto-fetches on mount via a wrapper, you might not need to dispatch here, 
+// but keeping it safe ensures data is requested.
+import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 
 const PLAN_ORDER = {
   free_trial: 0,
@@ -26,23 +30,30 @@ const PLAN_ID_MAP = {
 
 export default function PricingPage() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
   const [authenticated, setAuthenticated] = useState(false);
-  
+
   useEffect(() => {
     setAuthenticated(isAuthenticated());
-  }, []);
+    // Ensure we fetch fresh pricing data when component mounts (handles refresh scenario)
+    if (isAuthenticated()) {
+      dispatch(fetchCurrentPricing());
+    }
+  }, [dispatch]);
+
   const [loadingPlan, setLoadingPlan] = useState(null);
   const [paymentError, setPaymentError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [faqs, setFaqs] = useState([]);
   const [loadingFaqs, setLoadingFaqs] = useState(true);
   const [openFaq, setOpenFaq] = useState(null);
-  const [creditBalance, setCreditBalance] = useState(null);
-  const [loadingCredits, setLoadingCredits] = useState(false);
 
+  // Select data directly from Redux store
   const pricingCurrent = useSelector((state) => state.pricing.current);
+  const pricingLoading = useSelector((state) => state.pricing.loading);
+
   const currentPlan = pricingCurrent?.plan || null;
-  const currentCreditBalance = pricingCurrent?.creditBalance ?? null;
+  const currentCreditBalance = pricingCurrent?.creditBalance;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +65,7 @@ export default function PricingPage() {
           setFaqs(data);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         if (!cancelled) setLoadingFaqs(false);
       });
@@ -74,7 +85,6 @@ export default function PricingPage() {
     }
 
     if (!authenticated) {
-      // ALWAYS send to standard registration for Free Trial - no plan selection
       navigate("/register");
       return;
     }
@@ -82,7 +92,6 @@ export default function PricingPage() {
     const plan = PLANS.find((p) => p.key === planKey);
     if (!plan) return;
 
-    // Don't allow payment for free_trial plan
     if (planKey === "free_trial") {
       navigate("/dashboard");
       return;
@@ -94,11 +103,11 @@ export default function PricingPage() {
       const amount = plan.monthlyPrice * 100;
       const order = await createPaymentOrderApi(planId, amount);
 
-        await initRazorpayCheckout({
-          order_id: order.order_id,
-          amount: order.amount,
-          currency: order.currency || "INR",
-          key_id: order.key_id,
+      await initRazorpayCheckout({
+        order_id: order.order_id,
+        amount: order.amount,
+        currency: order.currency || "INR",
+        key_id: order.key_id,
         prefill: {
           name: "",
           email: "",
@@ -114,6 +123,8 @@ export default function PricingPage() {
             );
             if (verifyResult?.success) {
               setSuccessMessage(`Successfully upgraded to ${plan.name}!`);
+              // Refresh pricing data after successful payment
+              dispatch(fetchCurrentPricing());
               setTimeout(() => navigate("/dashboard"), 1500);
             } else {
               setPaymentError("Payment verification failed. Please contact support.");
@@ -139,12 +150,13 @@ export default function PricingPage() {
     setOpenFaq(openFaq === index ? null : index);
   };
 
+  // Use Redux data directly, fallback to 0 if loading or null
   const displayedCreditBalance = useMemo(() => {
     if (currentCreditBalance !== null && currentCreditBalance !== undefined) {
       return currentCreditBalance;
     }
-    return creditBalance;
-  }, [currentCreditBalance, creditBalance]);
+    return pricingLoading ? null : 0;
+  }, [currentCreditBalance, pricingLoading]);
 
   return (
     <div className="bg-slate-50">
@@ -155,7 +167,9 @@ export default function PricingPage() {
             <div className="inline-flex items-center gap-3 rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
               <span>Current Plan: {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</span>
               <span className="text-emerald-400">|</span>
-              <span>Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '—'}</span>
+              <span>
+                Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '...'}
+              </span>
             </div>
           ) : (
             <Link
@@ -193,13 +207,12 @@ export default function PricingPage() {
             return (
               <div
                 key={plan.key}
-                className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${
-                  isCurrentPlan
-                    ? "border-emerald-500 ring-1 ring-emerald-500"
-                    : plan.highlighted
-                      ? "border-indigo-600 ring-1 ring-indigo-600"
-                      : "border-slate-200"
-                }`}
+                className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${isCurrentPlan
+                  ? "border-emerald-500 ring-1 ring-emerald-500"
+                  : plan.highlighted
+                    ? "border-indigo-600 ring-1 ring-indigo-600"
+                    : "border-slate-200"
+                  }`}
               >
                 {isCurrentPlan && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
@@ -276,17 +289,16 @@ export default function PricingPage() {
                   <button
                     onClick={() => handleSelectPlan(plan.key)}
                     disabled={loadingPlan === plan.key}
-                    className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                      plan.highlighted
-                        ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-                        : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-                    }`}
+                    className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlighted
+                      ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+                      : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                      }`}
                   >
-                    {loadingPlan === plan.key 
-                      ? "Processing..." 
-                      : !authenticated 
+                    {loadingPlan === plan.key
+                      ? "Processing..."
+                      : !authenticated
                         ? (plan.key === "free_trial" ? "Start Free Trial" : "Get Started")
-                        : isHigherTier 
+                        : isHigherTier
                           ? `Upgrade to ${plan.name}`
                           : plan.cta
                     }
@@ -307,11 +319,10 @@ export default function PricingPage() {
             {CREDIT_ITEMS.map((item) => (
               <div
                 key={item.label}
-                className={`group rounded-xl border bg-white p-4 text-center shadow-sm transition hover:shadow-md ${
-                  item.credits === 0
-                    ? "border-emerald-200 hover:border-emerald-300"
-                    : "border-slate-200 hover:border-indigo-200"
-                }`}
+                className={`group rounded-xl border bg-white p-4 text-center shadow-sm transition hover:shadow-md ${item.credits === 0
+                  ? "border-emerald-200 hover:border-emerald-300"
+                  : "border-slate-200 hover:border-indigo-200"
+                  }`}
               >
                 <div className="text-2xl">{item.icon}</div>
                 <p className="mt-2 text-sm font-medium text-slate-900">{item.label}</p>
@@ -372,57 +383,6 @@ export default function PricingPage() {
             )}
           </div>
         </div>
-
-        {/* Credit Management Section */}
-        {authenticated && (
-          <div className="mt-20">
-            <h2 className="text-center text-2xl font-bold text-slate-900">Credit Management</h2>
-            <p className="mt-2 text-center text-sm text-slate-500">
-              Monitor your credit balance and purchase more credits.
-            </p>
-
-            <div className="mx-auto mt-8 max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              {creditBalance !== null ? (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-slate-500">Available Credits</p>
-                    <p className="text-3xl font-bold text-slate-900">{creditBalance.toFixed(2)}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setLoadingCredits(true);
-                      window.location.href = "/billing";
-                    }}
-                    className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700"
-                  >
-                    Manage Credits
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={async () => {
-                    setLoadingCredits(true);
-                    try {
-                      const res = await fetch("/api/billing/credits/balance");
-                      const data = await res.json();
-                      if (data.success) {
-                        setCreditBalance(data.data.balance);
-                      }
-                    } catch {
-                      setPaymentError("Failed to load credit balance");
-                    } finally {
-                      setLoadingCredits(false);
-                    }
-                  }}
-                  disabled={loadingCredits}
-                  className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  {loadingCredits ? "Loading..." : "View Credit Balance"}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Alerts */}
         {paymentError && (

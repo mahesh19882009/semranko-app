@@ -4,10 +4,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   faArrowTrendUp,
   faChartSimple,
-  faUsers,
   faUsersViewfinder,
 } from '@fortawesome/free-solid-svg-icons';
-import RankTrendList from '../components/RankTrendList';
 import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -18,6 +16,7 @@ import {
   selectStats,
   selectRankTrend,
   selectCompetitors,
+  selectKeywords,
   selectSelectedProject,
   selectHasSelectedProjectData,
   selectDashboardLoading,
@@ -33,6 +32,15 @@ import {
   resetDashboard,
 } from '../features/dashboard/dashboardSlice';
 
+// Helper for trend color/icon
+const getTrendInfo = (current, previous) => {
+  if (!current || !previous) return { color: 'text-gray-400', label: '-' };
+  const diff = previous - current; // Lower rank is better
+  if (diff > 0) return { color: 'text-green-600', label: '↑' }; // Improved
+  if (diff < 0) return { color: 'text-red-600', label: '↓' }; // Dropped
+  return { color: 'text-gray-400', label: '-' };
+};
+
 function DashboardPage() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -40,6 +48,7 @@ function DashboardPage() {
   const stats = useSelector(selectStats);
   const trend = useSelector(selectRankTrend);
   const competitors = useSelector(selectCompetitors);
+  const keywords = useSelector(selectKeywords);
   const project = useSelector(selectSelectedProject);
   const hasSelectedProjectData = useSelector(selectHasSelectedProjectData);
   const loading = useSelector(selectDashboardLoading);
@@ -92,20 +101,13 @@ function DashboardPage() {
     };
   }, []);
 
-  // Prepare chart data for dual-axis chart (position fluctuations + credit usage)
+  // Prepare chart data for dual-axis chart
   const chartData = useMemo(() => {
-    const positionData = trend.map(item => item.value || 0);
-    const labels = trend.map(item => item.label);
+    if (!overview?.chart_data) return null;
 
-    let creditData = [];
-    if (overview?.chart_data && overview.chart_data.length > 0) {
-      creditData = overview.chart_data.map(item => item.value || 0);
-      if (labels.length === 0) {
-        labels.push(...overview.chart_data.map(item => item.label));
-      }
-    }
+    const { labels, positions, credits } = overview.chart_data;
 
-    if (labels.length === 0 && positionData.length === 0 && creditData.length === 0) {
+    if (labels.length === 0 && positionData.length === 0 && creditData.length === 0 && keywords.length === 0) {
       return null;
     }
 
@@ -115,7 +117,7 @@ function DashboardPage() {
         {
           type: 'line',
           label: 'Average Position',
-          data: positionData,
+          data: positions,
           borderColor: '#3B82F6',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           yAxisID: 'y',
@@ -125,13 +127,13 @@ function DashboardPage() {
         {
           type: 'bar',
           label: 'Credit Usage',
-          data: creditData,
+          data: credits,
           backgroundColor: '#10B981',
           yAxisID: 'y1',
         },
       ],
     };
-  }, [trend, overview]);
+  }, [overview]);
 
   const chartOptions = {
     responsive: true,
@@ -146,7 +148,7 @@ function DashboardPage() {
       },
       tooltip: {
         callbacks: {
-          label: function(context) {
+          label: function (context) {
             let label = context.dataset.label || '';
             if (label) {
               label += ': ';
@@ -154,7 +156,7 @@ function DashboardPage() {
             if (context.parsed.y !== null) {
               label += context.parsed.y;
               if (context.dataset.yAxisID === 'y') {
-                label += ' (Position)';
+                label += ' (Pos)';
               } else {
                 label += ' (Credits)';
               }
@@ -198,6 +200,8 @@ function DashboardPage() {
     },
   };
 
+  const keywordsList = overview?.keywords || [];
+
   return (
     <div className="space-y-6">
       <Card padding="p-6">
@@ -230,15 +234,7 @@ function DashboardPage() {
                 Data state
               </p>
               <p className="mt-1 text-sm font-semibold text-slate-900">
-                {loading
-                  ? 'Loading'
-                  : error
-                  ? 'Error'
-                  : project
-                  ? hasSelectedProjectData
-                    ? 'Data available'
-                    : 'No dashboard data'
-                  : 'Idle'}
+                {overviewLoading ? 'Loading...' : error ? 'Error' : 'Live'}
               </p>
             </div>
           </div>
@@ -249,17 +245,6 @@ function DashboardPage() {
         <Card padding="p-6 text-center" border="border-rose-200" className="bg-rose-50/70">
           <h3 className="text-lg font-semibold text-slate-900">Dashboard failed to load</h3>
           <p className="mt-2 text-sm text-slate-600">{error}</p>
-        </Card>
-      )}
-
-      {project && !loading && !error && !hasSelectedProjectData && (
-        <Card padding="p-6 text-center" border="border-dashed border-amber-300" className="bg-amber-50/70">
-          <h3 className="text-lg font-semibold text-slate-900">
-            No dashboard data for {project.name}
-          </h3>
-          <p className="mt-2 text-sm text-slate-600">
-            This project is selected, but no dashboard records are available yet.
-          </p>
         </Card>
       )}
 
@@ -292,9 +277,7 @@ function DashboardPage() {
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Position & Credit Tracking</h3>
               <p className="mt-1 text-sm text-slate-500">
-                {project
-                  ? `Ranking position and credit usage for ${project.name}.`
-                  : 'Ranking position and credit usage for the selected project.'}
+                Ranking position and credit usage over the last 7 days.
               </p>
             </div>
           </div>
@@ -303,8 +286,8 @@ function DashboardPage() {
             {chartData ? (
               <Chart type="line" data={chartData} options={chartOptions} />
             ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No trend data is available for the current selection.
+              <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
+                {overviewLoading ? 'Loading chart data...' : 'No trend data available yet'}
               </div>
             )}
           </div>
@@ -353,6 +336,68 @@ function DashboardPage() {
             )}
           </div>
         </article>
+      </section>
+
+      {/* New Section: Detailed Keywords Table */}
+      <section className="rounded-xs border border-slate-200 bg-white p-6 shadow-soft">
+        <h3 className="text-lg font-semibold text-slate-900 mb-4">Recent Keywords Details</h3>
+        {overviewLoading ? (
+          <div className="text-center py-8 text-slate-500">Loading keyword details...</div>
+        ) : keywordsList.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-600">
+              <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 rounded-l-lg">Keyword</th>
+                  <th className="px-4 py-3">Rank</th>
+                  <th className="px-4 py-3">Trend</th>
+                  <th className="px-4 py-3">KD</th>
+                  <th className="px-4 py-3">CPC</th>
+                  <th className="px-4 py-3">Intent</th>
+                  <th className="px-4 py-3">Volume</th>
+                  <th className="px-4 py-3 rounded-r-lg">Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {keywordsList.map((kw) => {
+                  const trendInfo = getTrendInfo(kw.current_rank, kw.previous_rank);
+                  return (
+                    <tr key={kw.id} className="hover:bg-slate-50 transition">
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        {kw.keyword}
+                        <div className="text-xs text-slate-400 truncate max-w-[150px]">{kw.location}</div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {kw.current_rank ? `#${kw.current_rank}` : '-'}
+                      </td>
+                      <td className={`px-4 py-3 font-bold ${trendInfo.color}`}>
+                        {trendInfo.label}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset ${kw.difficulty > 70 ? 'bg-red-50 text-red-700 ring-red-600/20' :
+                          kw.difficulty > 40 ? 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' :
+                            'bg-green-50 text-green-700 ring-green-600/20'
+                          }`}>
+                          {kw.difficulty}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">${parseFloat(kw.cpc || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 capitalize">{kw.intent || '-'}</td>
+                      <td className="px-4 py-3">{kw.search_volume?.toLocaleString() || 0}</td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">
+                        {kw.last_updated ? new Date(kw.last_updated).toLocaleDateString() : '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-8 text-slate-500">
+            No keywords tracked yet. Add keywords to see detailed metrics like KD, CPC, and Intent.
+          </div>
+        )}
       </section>
     </div>
   );

@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.db.models import User
 
 
-def get_current_user(authorization: Optional[str] = Header(default=None)) -> dict:
+def get_current_user(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)) -> dict:
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1]
@@ -25,6 +25,14 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> dic
     user_id = payload.get("userId")
     if not user_id:
         raise ApiError(401, "Invalid token")
+        # Fetch fresh user data from database to ensure selectedPlan and other fields are up-to-date
+        user = db.scalar(select(User).where(User.id == user_id))
+        if user:
+            # Enrich payload with latest user data from DB
+            payload["selectedPlan"] = user.selectedPlan
+            payload["subscriptionStatus"] = user.subscriptionStatus
+            payload["trialEndsAt"] = user.trialEndsAt.isoformat() if user.trialEndsAt else None
+            payload["creditBalance"] = user.creditBalance
 
     payload["id"] = user_id
     return payload

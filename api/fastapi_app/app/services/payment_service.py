@@ -275,12 +275,8 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
-        if effective_plan_key == "starter":
-            user.balanceCredits = 4000
-        elif effective_plan_key == "pro":
-            user.balanceCredits = 10000
-        elif effective_plan_key == "agency":
-            user.balanceCredits = 25000
+        credit_map = {"starter": 4000, "pro": 10000, "agency": 25000}
+        user.creditBalance = float(credit_map.get(effective_plan_key, 0))
         db.add(user)
         
         db.commit()
@@ -317,12 +313,8 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
-        if effective_plan_key == "starter":
-            user.balanceCredits = 4000
-        elif effective_plan_key == "pro":
-            user.balanceCredits = 10000
-        elif effective_plan_key == "agency":
-            user.balanceCredits = 25000
+        credit_map = {"starter": 4000, "pro": 10000, "agency": 25000}
+        user.creditBalance = float(credit_map.get(effective_plan_key, 0))
         db.add(user)
         db.commit()
         db.refresh(user)
