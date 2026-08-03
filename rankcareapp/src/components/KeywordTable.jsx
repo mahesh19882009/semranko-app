@@ -12,6 +12,7 @@ import ConfirmModal from './ConfirmModal';
 import Button from './ui/Button';
 import Alert from './ui/Alert';
 import {
+  addKeywordToProject,
   bulkAddKeywords,
   bulkDeleteKeywords,
   bulkDeleteRankings,
@@ -266,13 +267,22 @@ function KeywordTable() {
     }
 
     const resultAction = await dispatch(
-      bulkAddKeywords({
-        projectId: selectedProjectId,
-        keywords: parsed,
-      })
+      parsed.length === 1
+        ? addKeywordToProject({
+            projectId: selectedProjectId,
+            payload: { keyword: parsed[0], location: location },
+          })
+        : bulkAddKeywords({
+            projectId: selectedProjectId,
+            keywords: parsed,
+          })
     );
 
-    if (bulkAddKeywords.fulfilled.match(resultAction)) {
+    if (
+      parsed.length === 1
+        ? addKeywordToProject.fulfilled.match(resultAction)
+        : bulkAddKeywords.fulfilled.match(resultAction)
+    ) {
       setKeywordText('');
     }
   };
@@ -525,7 +535,7 @@ function KeywordTable() {
                         {row.location || '-'}
                       </td>
                       <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.createdAt ? new Date(row.createdAt).toLocaleString() : '-'}
+                        {row.createdAt ? new Date(row.createdAt).toLocaleString('en-US') : '-'}
                       </td>
                       <td className="px-5 py-4">
                         <Button
@@ -674,7 +684,7 @@ function KeywordTable() {
                         {row.location || '-'}
                       </td>
                       <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.checkedAt ? new Date(row.checkedAt).toLocaleString() : '-'}
+                        {row.checkedAt ? new Date(row.checkedAt).toLocaleString('en-US') : '-'}
                       </td>
                       <td className="px-5 py-4">
                         <Button

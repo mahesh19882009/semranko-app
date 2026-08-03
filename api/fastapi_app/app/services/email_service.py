@@ -410,3 +410,40 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
         return False
 
 
+def send_email_with_attachment(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    attachment_bytes: bytes,
+    attachment_filename: str,
+) -> bool:
+    settings = get_settings()
+
+    if not settings.RESEND_API_KEY:
+        logger.info("[EMAIL DISABLED] Attachment email for %s: %s", to_email, attachment_filename)
+        return False
+
+    resend.api_key = settings.RESEND_API_KEY
+    sender = settings.EMAIL_FROM or "onboarding@resend.dev"
+
+    try:
+        response = resend.Emails.send({
+            "from": sender,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+            "attachments": [
+                {
+                    "filename": attachment_filename,
+                    "content": attachment_bytes.decode("latin-1"),
+                }
+            ],
+        })
+        logger.info("RESEND ATTACHMENT EMAIL RESPONSE: %s", response)
+        return True
+    except Exception as exc:
+        logger.exception("FAILED TO SEND ATTACHMENT EMAIL: %s", exc)
+        return False
+
+
+

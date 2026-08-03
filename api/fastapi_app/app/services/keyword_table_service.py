@@ -1,7 +1,7 @@
 import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.models import AIOTracking, Keyword, RankResult
+from app.db.models import AIOTracking, Keyword, RankResult, TrackedKeyword
 from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,13 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "checkedAt": track.checkedAt.isoformat() if track.checkedAt else None,
         }
 
+    tracked_aio_map = {}
+    tracked_rows = db.scalars(
+        select(TrackedKeyword).where(TrackedKeyword.userId == user_id, TrackedKeyword.isActive == True)
+    ).all()
+    for row in tracked_rows:
+        tracked_aio_map[row.keyword] = row.trackAio
+
     results = []
     for kw in project_keywords:
         rank_info = latest_ranks.get(kw.keyword, {})
@@ -57,6 +64,7 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "rankCheckedAt": rank_info.get("checkedAt"),
             "hasAIOverview": aio_info.get("hasAIOverview", False),
             "aioCheckedAt": aio_info.get("checkedAt"),
+            "trackAio": tracked_aio_map.get(kw.keyword, False),
             "createdAt": kw.createdAt.isoformat() if kw.createdAt else None,
         })
 

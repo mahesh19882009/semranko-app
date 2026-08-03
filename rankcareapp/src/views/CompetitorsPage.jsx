@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { Chart } from 'primereact/chart';
 import ConfirmModal from '../components/ConfirmModal';
 import { formatDate } from '../utils/date';
 import {
@@ -40,6 +41,82 @@ export default function Competitors() {
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+
+  // Prepare chart data for competitor analysis
+  const competitorChartData = useMemo(() => {
+    if (!competitors || competitors.length === 0) return null;
+
+    const labels = competitors.map(c => c.name || c.domain);
+    const sharedKeywords = competitors.map(c => c.sharedKeywords || 0);
+    const overlapPercentages = competitors.map(c => c.overlap || 0);
+
+    return {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Shared Keywords',
+          data: sharedKeywords,
+          backgroundColor: '#3B82F6',
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: 'Overlap %',
+          data: overlapPercentages,
+          borderColor: '#10B981',
+          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          yAxisID: 'y1',
+          tension: 0.4,
+        },
+      ],
+    };
+  }, [competitors]);
+
+  const competitorChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top',
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+      },
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        title: {
+          display: true,
+          text: 'Shared Keywords',
+        },
+        grid: {
+          color: 'rgba(0, 0, 0, 0.05)',
+        },
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        title: {
+          display: true,
+          text: 'Overlap %',
+        },
+        grid: {
+          drawOnChartArea: false,
+      },
+      },
+    },
+  };
 
   const selectedProject = useMemo(() => {
     if (!selectedProjectId) return null;
@@ -401,6 +478,23 @@ export default function Competitors() {
             <p className="mt-3 text-sm font-medium text-emerald-600">{actionMessage}</p>
           ) : null}
         </section>
+
+        {/* Competitor Analysis Chart */}
+        {competitorChartData && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Competitor Analysis</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Shared keywords and overlap percentage for tracked competitors.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6" style={{ height: '300px' }}>
+              <Chart type="bar" data={competitorChartData} options={competitorChartOptions} />
+            </div>
+          </section>
+        )}
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

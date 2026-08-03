@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.config import get_settings
+
 
 class ApiError(Exception):
     def __init__(self, status_code: int, message: str, data=None):
@@ -10,11 +12,25 @@ class ApiError(Exception):
         self.data = data
 
 
+def _cors_headers(request: Request) -> dict:
+    origin = request.headers.get("origin")
+    settings = get_settings()
+    allowed = [settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"]
+    if "*" in allowed or origin in allowed:
+        return {
+            "access-control-allow-origin": origin or "*",
+            "access-control-allow-credentials": "true",
+            "access-control-allow-methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+        }
+    return {}
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
-    async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
+    async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
+            headers=_cors_headers(request),
             content={
                 "success": False,
                 "message": exc.message,
@@ -23,8 +39,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
+    async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(
             status_code=500,
+            headers=_cors_headers(request),
             content={"success": False, "message": str(exc) or "Internal server error"},
         )

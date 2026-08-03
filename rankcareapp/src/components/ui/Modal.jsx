@@ -63,7 +63,7 @@ function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[var(--z-modal-backdrop)] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"

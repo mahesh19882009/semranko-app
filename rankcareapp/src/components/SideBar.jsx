@@ -7,9 +7,10 @@ import {
   faMagnifyingGlassChart,
   faLightbulb,
   faUsersViewfinder,
-  faListCheck,
   faBrain,
   faFileInvoiceDollar,
+  faUsers,
+  faChartSimple,
 } from '@fortawesome/free-solid-svg-icons';
 import Button from './ui/Button';
 
@@ -19,8 +20,10 @@ const navItems = [
   { to: '/keywords', label: 'Keywords', icon: faMagnifyingGlassChart },
   { to: '/keyword-research', label: 'Keyword Research', icon: faLightbulb },
   { to: '/competitors', label: 'Competitors', icon: faUsersViewfinder },
-  { to: '/keyword-lists', label: 'Keyword Lists', icon: faListCheck },
   { to: '/aio', label: 'AIO Overview', icon: faBrain },
+  { to: '/dashboard/billing', label: 'Billing', icon: faFileInvoiceDollar },
+  { to: '/dashboard/team', label: 'Team', icon: faUsers },
+  { to: '/dashboard/usage', label: 'Usage', icon: faChartSimple },
 ];
 
 function Sidebar({ open, onToggle }) {

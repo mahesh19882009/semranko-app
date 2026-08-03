@@ -1,5 +1,5 @@
 'use client'
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   faArrowTrendUp,
@@ -12,6 +12,8 @@ import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useNavigate } from '../lib/navigation';
+import { Chart } from 'primereact/chart';
+import { apiRequest } from '../lib/api';
 import {
   selectStats,
   selectRankTrend,
@@ -43,6 +45,12 @@ function DashboardPage() {
   const loading = useSelector(selectDashboardLoading);
   const error = useSelector(selectDashboardError);
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
+  const pricingCurrent = useSelector((state) => state.pricing.current);
+  const creditBalance = pricingCurrent?.creditBalance ?? 0;
+
+  const [overview, setOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState(null);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -56,6 +64,139 @@ function DashboardPage() {
     dispatch(fetchRankingsByProject(selectedProjectId));
     dispatch(fetchDashboardByProject(selectedProjectId));
   }, [dispatch, selectedProjectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOverviewLoading(true);
+    setOverviewError(null);
+
+    apiRequest('/dashboard/overview')
+      .then((response) => {
+        if (!cancelled) {
+          setOverview(response?.data || null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setOverviewError(err.message || 'Failed to load overview');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setOverviewLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Prepare chart data for dual-axis chart (position fluctuations + credit usage)
+  const chartData = useMemo(() => {
+    const positionData = trend.map(item => item.value || 0);
+    const labels = trend.map(item => item.label);
+
+    let creditData = [];
+    if (overview?.chart_data && overview.chart_data.length > 0) {
+      creditData = overview.chart_data.map(item => item.value || 0);
+      if (labels.length === 0) {
+        labels.push(...overview.chart_data.map(item => item.label));
+      }
+    }
+
+    if (labels.length === 0 && positionData.length === 0 && creditData.length === 0) {
+      return null;
+    }
+
+    return {
+      labels,
+      datasets: [
+        {
+          type: 'line',
+          label: 'Average Position',
+          data: positionData,
+          borderColor: '#3B82F6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          yAxisID: 'y',
+          tension: 0.4,
+          fill: true,
+        },
+        {
+          type: 'bar',
+          label: 'Credit Usage',
+          data: creditData,
+          backgroundColor: '#10B981',
+          yAxisID: 'y1',
+        },
+      ],
+    };
+  }, [trend, overview]);
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    plugins: {
+      legend: {
+        position: 'top',
+      },
+      tooltip: {
+        callbacks: {
+          label: function(context) {
+            let label = context.dataset.label || '';
+            if (label) {
+              label += ': ';
+            }
+            if (context.parsed.y !== null) {
+              label += context.parsed.y;
+              if (context.dataset.yAxisID === 'y') {
+                label += ' (Position)';
+              } else {
+                label += ' (Credits)';
+              }
+            }
+            return label;
+          }
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false,
+        },
+      },
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        title: {
+          display: true,
+          text: 'Average Position',
+        },
+        reverse: true, // Lower position is better
+        grid: {
+          color: 'rgba(0, 0, 0, 0.05)',
+        },
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        title: {
+          display: true,
+          text: 'Credit Usage',
+        },
+        grid: {
+          drawOnChartArea: false,
+        },
+      },
+    },
+  };
 
   return (
     <div className="space-y-6">
@@ -125,22 +266,23 @@ function DashboardPage() {
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatCard
           title="Tracked keywords"
-          value={stats.totalKeywords.toLocaleString()}
-          hint={stats.totalKeywordsHint}
+          value={(overview?.tracked_keywords_count ?? stats.totalKeywords).toLocaleString('en-US')}
+          hint={overviewLoading ? 'Loading...' : 'Active tracked keywords'}
           icon={faChartSimple}
         />
         <StatCard
           title="Average rank"
-          value={stats.avgRank ? `#${stats.avgRank}` : '-'}
-          hint={stats.avgRankHint}
+          value={overview?.average_rank ? `#${overview.average_rank}` : '-'}
+          hint={overviewLoading ? 'Loading...' : 'Updated ranking data'}
           icon={faArrowTrendUp}
           tone="green"
         />
         <StatCard
-          title="Estimated traffic"
-          value={stats.estimatedTraffic.toLocaleString()}
-          hint={stats.estimatedTrafficHint}
-          icon={faUsers}
+          title="Credit balance"
+          value={creditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          hint="Available credits"
+          icon={faUsersViewfinder}
+          tone="purple"
         />
       </section>
 
@@ -148,18 +290,18 @@ function DashboardPage() {
         <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Average ranking trend</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Position & Credit Tracking</h3>
               <p className="mt-1 text-sm text-slate-500">
                 {project
-                  ? `Recent ranking movement for ${project.name}.`
-                  : 'Recent ranking movement for the selected project.'}
+                  ? `Ranking position and credit usage for ${project.name}.`
+                  : 'Ranking position and credit usage for the selected project.'}
               </p>
             </div>
           </div>
 
-          <div className="mt-6">
-            {trend.length > 0 ? (
-              <RankTrendList data={trend} />
+          <div className="mt-6" style={{ height: '300px' }}>
+            {chartData ? (
+              <Chart type="line" data={chartData} options={chartOptions} />
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
                 No trend data is available for the current selection.

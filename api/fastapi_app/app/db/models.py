@@ -53,6 +53,13 @@ class User(Base):
     orders: Mapped[list["PaymentOrder"]] = relationship(back_populates="user")
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
     keywordLists: Mapped[list["KeywordList"]] = relationship(back_populates="user")
+    creditLedgerEntries: Mapped[list["CreditLedger"]] = relationship(
+        "CreditLedger",
+        back_populates="user",
+        primaryjoin="and_(CreditLedger.userId == User.id, CreditLedger.userId != None)",
+    )
+    ownedTeams: Mapped[list["Team"]] = relationship("Team", back_populates="owner")
+    teamMemberships: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="user")
 
 
 class KeywordList(Base):
@@ -213,6 +220,7 @@ class PaymentOrder(Base):
     credit_applied_paise: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # in paise
     currency: Mapped[str] = mapped_column(String, nullable=False, default="INR")
     status: Mapped[str] = mapped_column(String, nullable=False, default="created", server_default="created")
+    purchaseType: Mapped[str] = mapped_column(String, nullable=False, default="SUBSCRIPTION_UPGRADE", server_default="SUBSCRIPTION_UPGRADE")  # SUBSCRIPTION_UPGRADE or CREDIT_TOP_UP
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -299,4 +307,143 @@ class ScheduledReport(Base):
     __table_args__ = (
         Index("ScheduledReport_userId_idx", "userId"),
         Index("ScheduledReport_projectId_idx", "projectId"),
+    )
+
+
+class TrackedKeyword(Base):
+    __tablename__ = "TrackedKeyword"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    keyword: Mapped[str] = mapped_column(String, nullable=False)
+    location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    lockedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    lockedUntil: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    lastPosition: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    lastCheckedAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    trackAio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+
+    user: Mapped[User] = relationship("User")
+
+    __table_args__ = (
+        Index("TrackedKeyword_userId_idx", "userId"),
+        Index("TrackedKeyword_userId_keyword_key", "userId", "keyword", unique=True),
+    )
+
+
+class KeywordCache(Base):
+    __tablename__ = "KeywordCache"
+
+    keyword: Mapped[str] = mapped_column(String, primary_key=True)
+    location: Mapped[str] = mapped_column(String, primary_key=True)
+    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    cpc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    competition: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    updatedAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class CompetitorCache(Base):
+    __tablename__ = "CompetitorCache"
+
+    domain: Mapped[str] = mapped_column(String, primary_key=True)
+    location: Mapped[str] = mapped_column(String, primary_key=True)
+    keywordsJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updatedAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class CreditLedger(Base):
+    __tablename__ = "CreditLedger"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False, server_default="")
+    triggeredByUserId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    actionType: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    relatedOrderId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    amountPaidInr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="completed", server_default="completed")
+    invoiceNumber: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    queryTarget: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    creditsSpent: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    planName: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    user: Mapped[User] = relationship("User", back_populates="creditLedgerEntries", foreign_keys=[userId])
+    owner: Mapped[User] = relationship("User", foreign_keys=[ownerId])
+    triggeredByUser: Mapped[Optional[User]] = relationship("User", foreign_keys=[triggeredByUserId])
+
+    __table_args__ = (
+        Index("CreditLedger_userId_idx", "userId"),
+        Index("CreditLedger_ownerId_idx", "ownerId"),
+        Index("CreditLedger_actionType_idx", "actionType"),
+        Index("CreditLedger_timestamp_idx", "timestamp"),
+    )
+
+
+class UserCacheUnlock(Base):
+    __tablename__ = "UserCacheUnlock"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    targetString: Mapped[str] = mapped_column(String, nullable=False)
+    unlockedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    owner: Mapped[User] = relationship("User")
+
+    __table_args__ = (
+        Index("UserCacheUnlock_ownerId_idx", "ownerId"),
+        Index("UserCacheUnlock_ownerId_targetString_key", "ownerId", "targetString", unique=True),
+    )
+
+
+class Team(Base):
+    __tablename__ = "Team"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    owner: Mapped[User] = relationship("User")
+    members: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+
+
+class TeamMember(Base):
+    __tablename__ = "TeamMember"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    teamId: Mapped[str] = mapped_column(String, ForeignKey("Team.id", ondelete="CASCADE"), nullable=False)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="Viewer")
+    joinedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    team: Mapped[Team] = relationship("Team", back_populates="members")
+    user: Mapped[User] = relationship("User")
+
+    __table_args__ = (
+        Index("TeamMember_teamId_idx", "teamId"),
+        Index("TeamMember_userId_idx", "userId"),
+        Index("TeamMember_team_user_key", "teamId", "userId", unique=True),
+        # Check constraint will be added via migration
     )

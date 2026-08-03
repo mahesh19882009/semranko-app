@@ -44,7 +44,7 @@ services:
       REDIS_PASSWORD: ""
       JWT_ACCESS_SECRET: replace-with-a-secure-secret
       JWT_ACCESS_EXPIRES_IN_DAYS: 1
-      FRONTEND_URL: http://localhost:5173
+      FRONTEND_URL: http://localhost:3000
       DATAFORSEO_LOGIN: mahesh1988.2009@gmail.com
       DATAFORSEO_PASSWORD: ca0dbcc1f131b2a7
     depends_on:
@@ -71,7 +71,7 @@ services:
       REDIS_PASSWORD: ""
       JWT_ACCESS_SECRET: replace-with-a-secure-secret
       JWT_ACCESS_EXPIRES_IN_DAYS: 1
-      FRONTEND_URL: http://localhost:5173
+      FRONTEND_URL: http://localhost:3000
       DATAFORSEO_LOGIN: mahesh1988.2009@gmail.com
       DATAFORSEO_PASSWORD: ca0dbcc1f131b2a7
       PINGBACK_URL: ""

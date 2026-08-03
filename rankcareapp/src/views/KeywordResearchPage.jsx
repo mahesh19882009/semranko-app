@@ -1,6 +1,7 @@
 'use client'
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSelector } from "react-redux";
+import { Chart } from 'primereact/chart';
 import {
   researchKeywordApi,
   competitorSpyApi,
@@ -25,6 +26,71 @@ export default function KeywordResearchPage() {
   const [spyResults, setSpyResults] = useState([]);
   const [spyLoading, setSpyLoading] = useState(false);
   const [spyError, setSpyError] = useState("");
+
+  // Prepare chart data for keyword research metrics
+  const keywordChartData = useMemo(() => {
+    if (!researchData) return null;
+
+    const metrics = researchData;
+    return {
+      labels: ['Volume', 'KD', 'CPC', 'Competition'],
+      datasets: [{
+        data: [
+          metrics.volume || 0,
+          metrics.kd || 0,
+          metrics.cpc || 0,
+          metrics.competition || 0,
+        ],
+        backgroundColor: [
+          '#3B82F6',
+          '#10B981',
+          '#F59E0B',
+          '#EF4444',
+        ],
+      }],
+    };
+  }, [researchData]);
+
+  const keywordChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+  };
+
+  // Prepare chart data for competitor spy results
+  const spyChartData = useMemo(() => {
+    if (!spyResults || spyResults.length === 0) return null;
+
+    const top10 = spyResults.slice(0, 10);
+    return {
+      labels: top10.map(k => k.keyword || 'Unknown'),
+      datasets: [{
+        label: 'Keyword Volume',
+        data: top10.map(k => k.volume || 0),
+        backgroundColor: '#3B82F6',
+      }],
+    };
+  }, [spyResults]);
+
+  const spyChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    indexAxis: 'y',
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+    scales: {
+      x: {
+        beginAtZero: true,
+      },
+    },
+  };
 
   const handleResearch = async (e) => {
     e.preventDefault();
@@ -125,6 +191,16 @@ export default function KeywordResearchPage() {
             {researchData && (
               <div className="mt-6 space-y-4">
                 <h3 className="text-lg font-semibold text-slate-900">Results</h3>
+                
+                {/* Keyword Metrics Chart */}
+                {keywordChartData && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div style={{ height: '250px' }}>
+                      <Chart type="polarArea" data={keywordChartData} options={keywordChartOptions} />
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="p-4 bg-slate-50 rounded-lg">
                     <p className="text-sm text-slate-600 mb-1">Volume</p>
@@ -191,30 +267,41 @@ export default function KeywordResearchPage() {
             {spyError && <Alert variant="error" message={spyError} />}
 
             {spyResults.length > 0 && (
-              <div className="mt-6 overflow-x-auto">
-                <div className="max-h-[420px] overflow-y-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
-                        <th className="text-left py-3 px-4 font-medium">Keyword</th>
-                        <th className="text-left py-3 px-4 font-medium">Position</th>
-                        <th className="text-left py-3 px-4 font-medium">URL</th>
-                        <th className="text-left py-3 px-4 font-medium">Volume</th>
-                        <th className="text-left py-3 px-4 font-medium">Difficulty</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {spyResults.map((item, index) => (
-                        <tr key={index} className="border-b border-slate-100">
-                          <td className="py-3 px-4 text-sm text-slate-900 font-medium">{item.keyword}</td>
-                          <td className="py-3 px-4 text-sm text-slate-600">#{item.position ?? "—"}</td>
-                          <td className="py-3 px-4 text-sm text-slate-600 truncate max-w-xs">{item.url || "—"}</td>
-                          <td className="py-3 px-4 text-sm text-slate-600">{item.volume ?? "—"}</td>
-                          <td className="py-3 px-4 text-sm text-slate-600">{item.difficulty ?? "—"}</td>
+              <div className="mt-6 space-y-4">
+                {/* Competitor Spy Chart */}
+                {spyChartData && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                    <div style={{ height: '300px' }}>
+                      <Chart type="bar" data={spyChartData} options={spyChartOptions} />
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <div className="max-h-[420px] overflow-y-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-200 sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
+                          <th className="text-left py-3 px-4 font-medium">Keyword</th>
+                          <th className="text-left py-3 px-4 font-medium">Position</th>
+                          <th className="text-left py-3 px-4 font-medium">URL</th>
+                          <th className="text-left py-3 px-4 font-medium">Volume</th>
+                          <th className="text-left py-3 px-4 font-medium">Difficulty</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {spyResults.map((item, index) => (
+                          <tr key={index} className="border-b border-slate-100">
+                            <td className="py-3 px-4 text-sm text-slate-900 font-medium">{item.keyword}</td>
+                            <td className="py-3 px-4 text-sm text-slate-600">#{item.position ?? "—"}</td>
+                            <td className="py-3 px-4 text-sm text-slate-600 truncate max-w-xs">{item.url || "—"}</td>
+                            <td className="py-3 px-4 text-sm text-slate-600">{item.volume ?? "—"}</td>
+                            <td className="py-3 px-4 text-sm text-slate-600">{item.difficulty ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}

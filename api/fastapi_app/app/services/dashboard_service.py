@@ -1,11 +1,11 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ApiError
-from app.db.models import Project
+from app.db.models import Project, TrackedKeyword, CreditLedger, Team, TeamMember
 from app.services.plan_service import build_usage_snapshot, get_user_or_404, get_user_plan_limits
 
 
@@ -123,4 +123,56 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
             "total": 0,
         },
         "usage": build_usage_snapshot(db, user),
+    }
+
+
+def get_dashboard_overview(db: Session, user_id: str) -> dict:
+    owner_id = get_user_or_404(db, user_id).id
+
+    tracked_keywords_count = db.scalar(
+        select(func.count())
+        .select_from(TrackedKeyword)
+        .where(
+            TrackedKeyword.userId == user_id,
+            TrackedKeyword.isActive.is_(True),
+        )
+    ) or 0
+
+    rank_rows = db.scalars(
+        select(TrackedKeyword.lastPosition).where(
+            TrackedKeyword.userId == user_id,
+            TrackedKeyword.isActive.is_(True),
+            TrackedKeyword.lastPosition.is_not(None),
+        )
+    ).all()
+
+    valid_positions = [int(pos) for pos in rank_rows if pos and int(pos) > 0]
+    average_rank = round(sum(valid_positions) / len(valid_positions), 1) if valid_positions else 0
+
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    credit_rows = db.scalars(
+        select(CreditLedger)
+        .where(
+            CreditLedger.ownerId == owner_id,
+            CreditLedger.timestamp >= thirty_days_ago,
+            CreditLedger.creditsSpent.is_not(None),
+        )
+        .order_by(CreditLedger.timestamp.asc())
+    ).all()
+
+    daily_spend: dict[str, float] = defaultdict(float)
+    for row in credit_rows:
+        if row.timestamp:
+            date_key = row.timestamp.date().isoformat()
+            daily_spend[date_key] += float(row.creditsSpent or 0)
+
+    chart_data = [
+        {"label": date_key, "value": round(total, 2)}
+        for date_key, total in sorted(daily_spend.items())
+    ]
+
+    return {
+        "tracked_keywords_count": tracked_keywords_count,
+        "average_rank": average_rank,
+        "chart_data": chart_data,
     }

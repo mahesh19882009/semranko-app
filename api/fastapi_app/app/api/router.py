@@ -14,6 +14,12 @@ from app.api.routes.keyword_lists import router as keyword_lists_router
 from app.api.routes.competitor_rankings import router as competitor_rankings_router
 from app.api.routes.aio import router as aio_router
 from app.api.routes.webhooks import router as webhooks_router
+from app.api.routes.credits import router as credits_router
+from app.api.routes.keyword_metrics import router as keyword_metrics_router
+from app.api.routes.marketing import router as marketing_router
+from app.api.routes.tracked_keywords import router as tracked_keywords_router
+from app.api.routes.teams import router as teams_router
+from app.api.routes.reports import router as reports_router
 
 api_router = APIRouter(prefix="/api")
 
@@ -31,3 +37,9 @@ api_router.include_router(keyword_lists_router)
 api_router.include_router(competitor_rankings_router)
 api_router.include_router(aio_router)
 api_router.include_router(webhooks_router)
+api_router.include_router(credits_router)
+api_router.include_router(keyword_metrics_router)
+api_router.include_router(marketing_router)
+api_router.include_router(tracked_keywords_router)
+api_router.include_router(teams_router)
+api_router.include_router(reports_router)

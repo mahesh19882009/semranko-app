@@ -275,10 +275,17 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
+        if effective_plan_key == "starter":
+            user.balanceCredits = 4000
+        elif effective_plan_key == "pro":
+            user.balanceCredits = 10000
+        elif effective_plan_key == "agency":
+            user.balanceCredits = 25000
         db.add(user)
         
         db.commit()
         db.refresh(existing_subscription)
+        db.refresh(user)
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0
@@ -308,11 +315,17 @@ def activate_subscription(
         db.commit()
         db.refresh(subscription)
         
-        # Also update user's subscription status and selected plan
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
+        if effective_plan_key == "starter":
+            user.balanceCredits = 4000
+        elif effective_plan_key == "pro":
+            user.balanceCredits = 10000
+        elif effective_plan_key == "agency":
+            user.balanceCredits = 25000
         db.add(user)
         db.commit()
+        db.refresh(user)
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0

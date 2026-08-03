@@ -67,3 +67,42 @@ a {
   text-decoration: none;
   color: inherit;
 }
+
+.compact-datatable .p-datatable-thead > tr > th {
+  padding-top: 0.4rem !important;
+  padding-bottom: 0.4rem !important;
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+  font-size: 0.75rem !important;
+  font-weight: 600 !important;
+}
+
+.compact-datatable .p-datatable-tbody > tr > td {
+  padding-top: 0.4rem !important;
+  padding-bottom: 0.4rem !important;
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+  font-size: 0.8125rem !important;
+}
+
+.compact-datatable .p-datatable-tbody > tr {
+  min-height: 2.5rem;
+}
+
+.compact-datatable .p-paginator {
+  padding: 0.4rem !important;
+}
+
+.compact-datatable .p-paginator .p-paginator-pages .p-paginator-page {
+  min-width: 1.75rem !important;
+  height: 1.75rem !important;
+  font-size: 0.8125rem !important;
+}
+
+.compact-datatable .p-column-filter-overlay {
+  font-size: 0.8125rem;
+}
+
+.compact-datatable .p-datatable-header {
+  padding: 0.75rem 1rem !important;
+}

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 import requests
 from sqlalchemy import delete, select
-from app.db.models import RankResult, CompetitorRank, AIOTracking
+from app.db.models import RankResult, CompetitorRank, AIOTracking, TrackedKeyword
 from app.db.session import SessionLocal
 from app.core.config import get_settings
 
@@ -17,7 +17,28 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -
 
     from app.services.dataforseo_client import DataForSEOClient
 
-    rank_map = DataForSEOClient.get_rank_batch(keywords, domain)
+    db = SessionLocal()
+    try:
+        keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
+        aio_keyword_texts = set(
+            row.keyword
+            for row in db.scalars(
+                select(TrackedKeyword).where(
+                    TrackedKeyword.userId.in_(
+                        select(Project.userId).where(Project.id == project_id)
+                    ),
+                    TrackedKeyword.isActive == True,
+                    TrackedKeyword.trackAio == True,
+                    TrackedKeyword.keyword.in_(keyword_texts),
+                )
+            ).all()
+        )
+    except Exception:
+        aio_keyword_texts = set()
+    finally:
+        db.close()
+
+    rank_map = DataForSEOClient.get_rank_batch(keywords, domain, aio_keyword_texts=aio_keyword_texts)
 
     rows = []
     for keyword in keywords:

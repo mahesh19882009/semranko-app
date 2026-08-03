@@ -70,6 +70,17 @@ async def get_current_user(
     return user
 
 
+def require_credits(amount: float):
+    def _checker(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ):
+        from app.services.credit_service import check_credits
+        check_credits(db, current_user.id, amount)
+        return current_user
+    return _checker
+
+
 def enforce_limits(resource_type: str = None):
     """
     Decorator to enforce subscription status and plan limits.

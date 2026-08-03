@@ -111,40 +111,6 @@ export async function onboardProjectApi({ name, domain, location, keywords }) {
   });
 }
 
-export async function createKeywordListApi(name) {
-  return apiRequest('/keyword-lists/', {
-    method: "POST",
-    body: JSON.stringify({ name }),
-  });
-}
-
-export async function listKeywordListsApi() {
-  return apiRequest('/keyword-lists/');
-}
-
-export async function addKeywordsToListApi(listId, keywords) {
-  return apiRequest(`/keyword-lists/${listId}/items`, {
-    method: "POST",
-    body: JSON.stringify({ keywords }),
-  });
-}
-
-export async function removeKeywordFromListApi(listId, itemId) {
-  return apiRequest(`/keyword-lists/${listId}/items/${itemId}`, {
-    method: "DELETE",
-  });
-}
-
-export async function deleteKeywordListApi(listId) {
-  return apiRequest(`/keyword-lists/${listId}`, {
-    method: "DELETE",
-  });
-}
-
-export async function exportKeywordListApi(listId) {
-  return apiRequest(`/keyword-lists/${listId}/export`);
-}
-
 export async function trackCompetitorRankingsApi(projectId) {
   return apiRequest(`/competitor-rankings/${projectId}/track`, {
     method: "POST",
@@ -153,12 +119,6 @@ export async function trackCompetitorRankingsApi(projectId) {
 
 export async function getCompetitorComparisonApi(projectId) {
   return apiRequest(`/competitor-rankings/${projectId}/comparison`);
-}
-
-export async function trackAioApi(projectId) {
-  return apiRequest(`/aio/${projectId}/track`, {
-    method: "POST",
-  });
 }
 
 export async function getAioDashboardApi(projectId) {

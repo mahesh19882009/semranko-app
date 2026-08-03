@@ -64,3 +64,123 @@ export const markPaymentFailedApi = async (orderId) => {
   });
   return response || null;
 };
+
+export const createCreditPurchaseOrderApi = async (credits) => {
+  const response = await apiRequest("/billing/credit-purchase-order", {
+    method: "POST",
+    body: JSON.stringify({ credits }),
+  });
+  return response.data || null;
+};
+
+export const fetchCreditBalanceApi = async () => {
+  const response = await apiRequest("/billing/credits/balance");
+  return response.data || null;
+};
+
+export const verifyCreditPaymentApi = async (orderId, paymentId, signature) => {
+  const response = await apiRequest("/billing/verify-credit-payment", {
+    method: "POST",
+    body: JSON.stringify({
+      razorpay_order_id: orderId,
+      razorpay_payment_id: paymentId,
+      razorpay_signature: signature,
+    }),
+  });
+  return response.data || null;
+};
+
+export const getBillingHistoryApi = async () => {
+  const response = await apiRequest("/billing/history");
+  return response || { history: [] };
+};
+
+export const downloadInvoiceApi = async (ledgerId) => {
+  const token = localStorage.getItem('accessToken');
+  const url = `${API_BASE_URL}/billing/invoice/${encodeURIComponent(ledgerId)}/download`;
+  const response = await fetch(url, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Failed to download invoice (${response.status})`);
+  }
+
+  return response.blob();
+};
+
+export const createTeamApi = async (name) => {
+  const response = await apiRequest('/teams/', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  return response.data || null;
+};
+
+export const listTeamsApi = async () => {
+  const response = await apiRequest('/teams/');
+  return response.data || { teams: [] };
+};
+
+export const getTeamApi = async (teamId) => {
+  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}`);
+  return response.data || null;
+};
+
+export const addTeamMemberApi = async (teamId, email, role = 'Viewer') => {
+  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  });
+  return response.data || null;
+};
+
+export const updateTeamMemberRoleApi = async (teamId, userId, role) => {
+  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+  });
+  return response.data || null;
+};
+
+export const removeTeamMemberApi = async (teamId, userId) => {
+  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+  });
+  return response.data || null;
+};
+
+export const exportProjectReportApi = async (projectId, payload) => {
+  const response = await apiRequest(`/projects/${projectId}/export-report`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return response.data || null;
+};
+
+export const toggleTrackedKeywordAioApi = async (keywordId) => {
+  const response = await apiRequest(`/tracked-keywords/toggle-aio/${encodeURIComponent(keywordId)}`, {
+    method: 'POST',
+  });
+  return response.data || null;
+};
+
+export const bulkToggleTrackedKeywordAioApi = async (keywordIds, targetAio) => {
+  const response = await apiRequest('/tracked-keywords/toggle-aio-bulk', {
+    method: 'POST',
+    body: JSON.stringify({ keyword_ids: keywordIds, target_aio: targetAio }),
+  });
+  return response.data || null;
+};
+
+export const getUsageLogApi = async (page = 1, limit = 20, actionType = null) => {
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  params.set('limit', String(limit));
+  if (actionType) params.set('action_type', actionType);
+  const response = await apiRequest(`/billing/usage-log?${params.toString()}`);
+  return response.data || null;
+};

@@ -1,10 +1,10 @@
-import PricingPage from '@/src/views/PricingPage'
+import CreditManagementPage from '@/src/views/CreditManagementPage'
 
 export const metadata = {
-  title: 'Billing - RankCare',
-  description: 'Manage your subscription and billing details.',
+  title: 'Billing & Credits - RankCare',
+  description: 'Manage your credits, view balance, and purchase credit packs.',
 }
 
 export default function Page() {
-  return <PricingPage />
+  return <CreditManagementPage />
 }

@@ -18,6 +18,7 @@ env/
 **/.env.local
 **/.env.*.local
 **/.env.*
+api/.env
 
 *.log
 
@@ -55,3 +56,4 @@ node_modules
 
 
 rankcareapp/.next/
+.next/
