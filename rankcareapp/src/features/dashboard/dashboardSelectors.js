@@ -106,6 +106,11 @@ export const selectKeywords = createSelector(
   (dashboard) => dashboard.keywords || []
 );
 
+export const selectKeywordsTableRows = createSelector(
+  [selectDashboard],
+  (dashboard) => dashboard.keywords_table_rows || []
+);
+
 export const selectHasSelectedProjectData = createSelector(
   [selectSelectedProject, selectCompetitors, selectRankTrend, selectStats, selectKeywords],
   (project, competitors, rankTrend, stats, keywords) => {

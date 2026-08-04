@@ -6,6 +6,9 @@ import Button from "./ui/Button";
 
 function PublicLayout({ children }) {
   const navigate = useNavigate();
+  const navigateHandler = (path) => {
+    navigate(path);
+  }
   const location = useLocation();
   const [authenticated, setAuthenticated] = useState(false);
 
@@ -55,12 +58,8 @@ function PublicLayout({ children }) {
                 </div>
               ) : (
                 <div style={styles.authActions}>
-                  <Link to="/login" style={styles.dashboardBtn}>
-                    Login
-                  </Link>
-                  <Link to="/register" style={styles.logoutBtn}>
-                    Register
-                  </Link>
+                  <Button onClick={() => navigateHandler('/login')} variant="primary">Login</Button>
+                  <Button onClick={() => navigateHandler('/register')} variant="danger">Register</Button>
                 </div>
               )}
             </nav>

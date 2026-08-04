@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
 import { PLANS, PLAN_COMPARISON, CREDIT_ITEMS, VALID_PLAN_KEYS } from "../config/pricing";
-import { initRazorpayCheckout } from "../lib/api";
+import { initRazorpayCheckout, apiRequest } from "../lib/api";
 import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
 import { useSelector, useDispatch } from "react-redux";
 import Alert from "../components/ui/Alert";
@@ -21,11 +21,9 @@ const PLAN_ORDER = {
 };
 
 const PLAN_ID_MAP = {
-  free_trial: 0,
-  starter: 1,
-  pro: 2,
-  agency: 3,
-  enterprise: 4,
+  starter: 0,
+  pro: 1,
+  agency: 2,
 };
 
 export default function PricingPage() {
@@ -51,9 +49,12 @@ export default function PricingPage() {
   // Select data directly from Redux store
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const pricingLoading = useSelector((state) => state.pricing.loading);
+  const pricingPlans = useSelector((state) => state.pricing.plans);
 
   const currentPlan = pricingCurrent?.plan || null;
   const currentCreditBalance = pricingCurrent?.creditBalance;
+
+  const plans = pricingPlans?.length > 0 ? pricingPlans : PLANS;
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +90,7 @@ export default function PricingPage() {
       return;
     }
 
-    const plan = PLANS.find((p) => p.key === planKey);
+    const plan = plans.find((p) => p.key === planKey);
     if (!plan) return;
 
     if (planKey === "free_trial") {
@@ -135,9 +136,20 @@ export default function PricingPage() {
             setLoadingPlan(null);
           }
         },
-        onPaymentError: (error) => {
+        onPaymentError: async (error) => {
           setPaymentError(error?.description || "Payment failed. Please try again.");
           setLoadingPlan(null);
+
+          try {
+            if (order?.order_id) {
+              await apiRequest("/payments/mark-failed", {
+                method: "POST",
+                body: JSON.stringify({ razorpay_order_id: order.order_id }),
+              });
+            }
+          } catch (err) {
+            console.error("Failed to mark payment as failed:", err);
+          }
         },
       });
     } catch (err) {
@@ -192,12 +204,16 @@ export default function PricingPage() {
         </div>
 
         {/* Pricing Grid */}
-        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {PLANS.map((plan) => {
+        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 justify-center">
+          {plans.map((plan) => {
             const isEnterprise = plan.key === "enterprise";
+            const discountPct = plan.individual_discount_pct || 0;
+            const basePrice = plan.monthlyPrice;
+            const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
+            const cleanDisplayPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
             const priceDisplay = isEnterprise
               ? "Custom"
-              : `₹${plan.monthlyPrice.toLocaleString('en-US')} / month`;
+              : `₹${cleanDisplayPrice.toLocaleString('en-US')} / month`;
             const isCurrentPlan = authenticated && currentPlan === plan.key;
             const currentPlanOrder = currentPlan ? PLAN_ORDER[currentPlan] : -1;
             const planOrder = PLAN_ORDER[plan.key];
@@ -242,9 +258,23 @@ export default function PricingPage() {
                 </div>
 
                 <div className="mb-6">
-                  <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
-                  {!isEnterprise && (
-                    <span className="text-sm text-slate-500">/ month</span>
+                  {discountPct > 0 && !isEnterprise ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-slate-400 line-through">
+                        ₹{basePrice.toLocaleString('en-US')}
+                      </span>
+                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
+                      <span className="text-xs font-medium text-emerald-600">
+                        Save {discountPct}%
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
+                      {!isEnterprise && (
+                        <span className="text-sm text-slate-500">/ month</span>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -253,21 +283,37 @@ export default function PricingPage() {
                     {plan.monthlyCredits.toLocaleString('en-US')} Monthly Credits
                   </p>
                   <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Bulk max: {plan.bulkMaxKeywords.toLocaleString('en-US')} keywords/list
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Competitor spy: {plan.competitorSpyLimit.toLocaleString('en-US')} rows
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Weekly tracking:{" "}
-                      {plan.weeklyTrackingEnabled
-                        ? `${plan.maxWeeklyTrackedKeywords.toLocaleString('en-US')} keywords`
-                        : "Disabled"}
-                    </li>
+                    {plan.key === "free_trial" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>7-day free trial</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>{plan.monthlyCredits.toLocaleString('en-US')} platform credits to use across all features dynamically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Basic keyword tracking</li>
+                      </>
+                    ) : plan.key === "starter" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 100 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Keyword Research tool</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Competitor Spy module</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
+                      </>
+                    ) : plan.key === "pro" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 500 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full access to advanced search utilities</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
+                      </>
+                    ) : (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 2,000 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full Agency White-Label brand logo engine</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Priority bulk processing background queues</li>
+                      </>
+                    )}
                   </ul>
                 </div>
 
@@ -309,36 +355,49 @@ export default function PricingPage() {
           })}
         </div>
 
-        {/* Credit Legend */}
+        {/* Credit Costing Calculator */}
         <div className="mt-20">
-          <h2 className="text-center text-2xl font-bold text-slate-900">How Credits Work</h2>
-          <p className="mt-2 text-center text-sm text-slate-500">
-            Credits are our internal currency. The more you use, the more you need.
-          </p>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {CREDIT_ITEMS.map((item) => (
-              <div
-                key={item.label}
-                className={`group rounded-xl border bg-white p-4 text-center shadow-sm transition hover:shadow-md ${item.credits === 0
-                  ? "border-emerald-200 hover:border-emerald-300"
-                  : "border-slate-200 hover:border-indigo-200"
-                  }`}
-              >
-                <div className="text-2xl">{item.icon}</div>
-                <p className="mt-2 text-sm font-medium text-slate-900">{item.label}</p>
-                <p className="mt-1 text-xs text-slate-500">{item.description}</p>
-                {item.credits === 0 ? (
-                  <div className="mt-3">
-                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
-                      System Savings
-                    </span>
-                    <p className="mt-2 text-lg font-bold text-emerald-600">FREE</p>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-lg font-bold text-indigo-600">{item.credits} Credits</p>
-                )}
-              </div>
-            ))}
+          <div className="mx-auto max-w-3xl text-center">
+            <h2 className="text-2xl font-bold text-slate-900">How Credits are Calculated (Pure Consumption Model)</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              There are no hidden keyword limits. Every tool action burns tokens transparently based on the table below.
+            </p>
+          </div>
+          <div className="mx-auto mt-8 max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-4 font-medium">Tool / Action</th>
+                  <th className="px-6 py-4 font-medium text-right">Credit Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[
+                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "15 Credits / Keyword", note: "Includes automated Monday weekly update" },
+                  { label: "Keyword Research Search Query", cost: "4 Credits / Search", note: "Live keyword ideas / metrics lookup" },
+                  { label: "Competitor Domain Spy Lookup", cost: "6 Credits / Domain Check", note: "Full competitor analysis per domain" },
+                  { label: "Add Extra Multi-Domain Project", cost: "10 Credits / New Property", note: "Create additional website property" },
+                  { label: "Premium CSV Report Download", cost: "10 Credits / Download Click", note: "Export downloadable spreadsheet report" },
+                ].map((row, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{row.label}</p>
+                        <p className="text-xs text-slate-500">{row.note}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm font-semibold text-slate-900">
+                      {row.cost}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
+              <p className="text-xs text-slate-600">
+                ➕ Need more? Top up <span className="font-semibold">1,000 credits</span> at any time on our Billing Page for flat <span className="font-semibold">₹500</span>.
+              </p>
+            </div>
           </div>
         </div>
 
