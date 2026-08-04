@@ -37,9 +37,9 @@ async def research_keyword_endpoint(
         })
     
     try:
-        check_credits(db, current_user["userId"], 4)
+        check_credits(db, current_user["userId"], 10)
         result = research_keyword(db, current_user["userId"], keyword, location)
-        deduct_credits(db, current_user["userId"], 4, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
+        deduct_credits(db, current_user["userId"], 10, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
         return ok("Keyword research completed", result)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

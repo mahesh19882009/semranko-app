@@ -84,8 +84,6 @@ function KeywordsPage() {
   });
   const [bulkAioLoading, setBulkAioLoading] = useState(false);
 
-  const keywordLimitRemaining = (pricingCurrent?.limits?.keywords || 0) - (pricingCurrent?.usage?.keywords || 0);
-
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
     setTableLoading(true);
@@ -162,25 +160,6 @@ function KeywordsPage() {
     const parsed = parseKeywords(keywordText);
     if (parsed.length === 0) return;
 
-    if (parsed.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      setConfirmState({
-        open: true,
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          setConfirmState((s) => ({ ...s, open: false }));
-          setIsAddModalOpen(false);
-          window.location.href = '/pricing';
-        },
-      });
-      return;
-    }
-
     let resultAction;
     if (parsed.length === 1) {
       resultAction = await dispatch(
@@ -227,25 +206,6 @@ function KeywordsPage() {
   const handleCsvConfirm = async () => {
     setShowCsvConfirm(false);
     if (!selectedProjectId || csvPreview.length === 0) return;
-
-    if (csvPreview.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      setConfirmState({
-        open: true,
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          setConfirmState((s) => ({ ...s, open: false }));
-          setIsAddModalOpen(false);
-          window.location.href = '/pricing';
-        },
-      });
-      return;
-    }
 
     const resultAction = await dispatch(
       bulkAddKeywords({
@@ -470,8 +430,8 @@ function KeywordsPage() {
         onClick={() => handleAioToggle(rowData)}
         disabled={isLoading}
         className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${isActive
-            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-            : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
+          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+          : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
           }`}
         title={isActive ? 'Disable premium AI tracking' : 'Enable premium AI tracking'}
       >
@@ -585,7 +545,7 @@ function KeywordsPage() {
           <Column field="intent" header="Intent" style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
           <Column field="position" header="Position" sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
           {hasAioEnabled && <Column header="AIO" style={{ width: '6rem' }} body={aioBodyTemplate} />}
-          <Column header="✨ AI" style={{ width: '7rem' }} body={aioToggleBodyTemplate} />
+          <Column header="✨&nbsp;AI" style={{ width: '7rem' }} body={aioToggleBodyTemplate} />
           <Column header="Actions" body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
 
@@ -697,14 +657,10 @@ function KeywordsPage() {
           open={showCsvConfirm}
           title="Confirm CSV import"
           message={`Import ${csvPreview.length} keywords from CSV?`}
-          description={
-            keywordLimitRemaining < csvPreview.length
-              ? `Warning: You can only add ${keywordLimitRemaining} more keywords.`
-              : 'This will add the keywords to the current project.'
-          }
+          description="This will add the keywords to the current project."
           confirmText="Import"
           cancelText="Cancel"
-          tone={keywordLimitRemaining < csvPreview.length ? 'warning' : 'info'}
+          tone="info"
           icon={faUpload}
           loading={false}
           onConfirm={handleCsvConfirm}

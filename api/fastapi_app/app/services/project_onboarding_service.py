@@ -17,7 +17,7 @@ def create_project_with_keywords(db: Session, user_id: str, name: str, domain: s
     db.flush()
 
     for kw in keywords:
-        keyword = Keyword(projectId=project.id, keyword=kw, location=location)
+        keyword = Keyword(projectId=project.id, userId=user_id, keyword=kw, location=location)
         db.add(keyword)
 
     db.commit()

@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 def spy_competitor_keywords(db: Session, user_id: str, domain: str, location: str = "India", limit: int = 100) -> list:
-    check_credits(db, user_id, 6)
-    deduct_credits(db, user_id, 6, "COMPETITOR_SPY", f"Competitor spy: {domain}")
+    check_credits(db, user_id, 20)
+    deduct_credits(db, user_id, 20, "COMPETITOR_SPY", f"Competitor spy: {domain}")
 
     try:
         result = DataForSEOClient.get_competitor_keywords_cached(db, user_id, domain, location, limit)
@@ -29,5 +29,5 @@ def spy_competitor_keywords(db: Session, user_id: str, domain: str, location: st
     except Exception as exc:
         db.rollback()
         logger.error(f"Competitor spy failed for {domain}: {exc}")
-        refund_credits(db, user_id, 6, f"Refund: competitor spy failed for {domain}")
+        refund_credits(db, user_id, 20, f"Refund: competitor spy failed for {domain}")
         raise ApiError(502, f"Competitor spy failed: {exc}") from exc

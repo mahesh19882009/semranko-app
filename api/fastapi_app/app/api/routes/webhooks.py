@@ -177,19 +177,154 @@ async def dataforseo_webhook(request: Request):
 
     logger.info(f"DataForSEO webhook received: task_id={task_id}")
 
-    result_type = data.get("result_type", "regular")
+    tasks = data.get("tasks", []) or []
+    if not tasks:
+        logger.warning(f"DataForSEO webhook: no tasks in payload for task_id={task_id}")
+        return {"success": True, "message": f"Task {task_id} no tasks in payload"}
 
-    serp_data = DataForSEOClient._retrieve_task_result(task_id, result_type)
-    if serp_data:
-        keyword_text = serp_data.get("keyword", "")
-        location = serp_data.get("location", "India")
-        device = serp_data.get("device", "desktop")
-        parsed = DataForSEOClient._parse_serp_result(serp_data)
-        if parsed:
-            for kw_text, parsed_data in parsed.items():
-                set_cached("serp", ("serp", kw_text, location, device), parsed_data, ttl_seconds=3600)
-            logger.info(f"DataForSEO webhook cached results: task_id={task_id} keywords={len(parsed)}")
-        return {"success": True, "message": f"Task {task_id} results cached"}
-    else:
-        logger.warning(f"DataForSEO webhook: no results for task_id={task_id}")
-        return {"success": True, "message": f"Task {task_id} no results yet"}
+    db = SessionLocal()
+    try:
+        updated_count = 0
+        for task_data in tasks:
+            if not task_data:
+                continue
+
+            current_keyword = task_data.get("data", {}).get("keyword")
+            if not current_keyword:
+                continue
+
+            location = task_data.get("data", {}).get("location_code", 2840)
+            location_name = "India"
+            if isinstance(location, int):
+                location_name = "India"
+            elif isinstance(location, str):
+                location_name = location
+
+            detected_position = None
+            has_aio_badge = None
+            keyword_difficulty = None
+            cost_per_click = None
+            competition_level = None
+            search_intent = None
+            backlinks_count = None
+            referring_domains = None
+            search_volume = None
+
+            results_list = task_data.get("result", []) or []
+            if isinstance(results_list, list) and len(results_list) > 0:
+                first_block = results_list[0]
+
+                keyword_properties = first_block.get("keyword_properties", {})
+                if isinstance(keyword_properties, dict):
+                    keyword_difficulty = keyword_properties.get("keyword_difficulty")
+                    search_intent = keyword_properties.get("search_intent")
+
+                keyword_info = first_block.get("keyword_info", {})
+                if isinstance(keyword_info, dict):
+                    search_volume = keyword_info.get("search_volume")
+                    cost_per_click = keyword_info.get("cpc")
+                    competition_level = keyword_info.get("competition")
+
+                serp_items = first_block.get("items", []) or []
+                if isinstance(serp_items, list):
+                    for item in serp_items:
+                        if not item:
+                            continue
+
+                        if item.get("type") == "organic" and item.get("url"):
+                            detected_position = item.get("rank_absolute")
+
+                        if item.get("type") == "ai_overview":
+                            references = item.get("ai_overview_reference", []) or []
+                            if isinstance(references, list):
+                                for ref in references:
+                                    if ref and ref.get("url"):
+                                        has_aio_badge = "AIO"
+
+            volume_int = None
+            kd_int = None
+            cpc_float = None
+            competition_float = None
+            backlinks_float = None
+            referring_domains_float = None
+            position_int = None
+
+            if search_volume is not None and str(search_volume).replace(".", "", 1).isdigit():
+                volume_int = int(float(search_volume))
+            if keyword_difficulty is not None and str(keyword_difficulty).replace(".", "", 1).isdigit():
+                kd_int = int(float(keyword_difficulty))
+            if cost_per_click is not None and str(cost_per_click).replace(".", "", 1).isdigit():
+                cpc_float = float(cost_per_click)
+            if competition_level is not None and str(competition_level).replace(".", "", 1).isdigit():
+                competition_float = float(competition_level)
+            if backlinks_count is not None and str(backlinks_count).replace(".", "", 1).isdigit():
+                backlinks_float = float(backlinks_count)
+            if referring_domains is not None and str(referring_domains).replace(".", "", 1).isdigit():
+                referring_domains_float = float(referring_domains)
+            if detected_position is not None and str(detected_position).replace(".", "", 1).isdigit():
+                position_int = int(float(detected_position))
+
+            cache_entry = db.scalar(
+                select(KeywordCache).where(
+                    KeywordCache.keyword == current_keyword,
+                    KeywordCache.location == location_name,
+                )
+            )
+            if cache_entry:
+                cache_entry.volume = volume_int
+                cache_entry.kd = kd_int
+                cache_entry.cpc = cpc_float
+                cache_entry.competition = competition_float
+                cache_entry.backlinks = backlinks_float
+                cache_entry.referring_domains = referring_domains_float
+                cache_entry.intent = search_intent
+                cache_entry.position = position_int
+                cache_entry.ai_badge = has_aio_badge
+                cache_entry.updatedAt = datetime.utcnow()
+            else:
+                cache_entry = KeywordCache(
+                    keyword=current_keyword,
+                    location=location_name,
+                    volume=volume_int,
+                    kd=kd_int,
+                    cpc=cpc_float,
+                    competition=competition_float,
+                    backlinks=backlinks_float,
+                    referring_domains=referring_domains_float,
+                    intent=search_intent,
+                    position=position_int,
+                    ai_badge=has_aio_badge,
+                    updatedAt=datetime.utcnow(),
+                )
+                db.add(cache_entry)
+
+            keyword_row = db.scalar(
+                select(Keyword).where(Keyword.keyword == current_keyword)
+            )
+            if keyword_row:
+                keyword_row.volume = volume_int
+                keyword_row.kd = kd_int
+                keyword_row.cpc = cpc_float
+                keyword_row.competition = competition_float
+                keyword_row.backlinks = backlinks_float
+                keyword_row.referring_domains = referring_domains_float
+                keyword_row.intent = search_intent
+                keyword_row.position = position_int
+                keyword_row.ai_badge = has_aio_badge
+                keyword_row.updatedAt = datetime.utcnow()
+
+            updated_count += 1
+
+        db.commit()
+        logger.info(
+            "DataForSEO webhook processed: task_id=%s updated_keywords=%d",
+            task_id,
+            updated_count,
+        )
+        return {"success": True, "message": f"Task {task_id} processed", "updated_keywords": updated_count}
+    except Exception as exc:
+        db.rollback()
+        logger.exception(f"DataForSEO webhook processing failed: {exc}")
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
+    finally:
+        db.close()

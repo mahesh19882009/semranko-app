@@ -155,114 +155,48 @@ def run_monday_tracker() -> dict:
                 "total_deducted": total_deducted,
             }
 
-        helper = DataForSeoDashboardHelper(
-            settings.effective_serp_login,
-            settings.effective_serp_key,
-        )
+        if stale_and_missing_demanded_keywords:
+            pingback_url = settings.PINGBACK_URL or f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
+            helper = DataForSeoDashboardHelper()
+            target_domain = _get_user_domains(db, list(active_user_ids)[0])[0] if _get_user_domains(db, list(active_user_ids)[0]) else None
+            if not target_domain:
+                target_domain = "example.com"
 
-        target_domain = _get_user_domains(db, list(active_user_ids)[0])[0] if _get_user_domains(db, list(active_user_ids)[0]) else None
-        if not target_domain:
-            target_domain = "example.com"
-
-        try:
-            fresh_data = helper.fetch_cheapest_dashboard_data(
-                stale_and_missing_demanded_keywords,
-                target_domain,
-                location_code=2840,
-            )
-        except Exception as exc:
-            db.rollback()
-            logger.error(f"Monday tracker DataForSEO failed, refunding {len(deducted_users)} users: {exc}")
-            for refund_user_id, refund_info in deducted_users.items():
-                try:
-                    refund_credits(
-                        db,
-                        refund_info["owner_id"],
-                        refund_info["amount"],
-                        f"Refund: Monday weekly refresh failed for user {refund_user_id}",
-                    )
-                except Exception as refund_exc:
-                    logger.error(f"Failed to refund user {refund_user_id}: {refund_exc}")
-            db.commit()
-            raise
-
-        upsert_count = 0
-        if fresh_data:
-            for row in fresh_data:
-                keyword_text = row.get("Keyword")
-                if not keyword_text:
-                    continue
-
-                cache_entry = db.scalar(
-                    select(KeywordCache).where(KeywordCache.keyword == keyword_text)
+            try:
+                helper.fetch_cheapest_dashboard_data(
+                    stale_and_missing_demanded_keywords,
+                    target_domain,
+                    location_code=2840,
+                    pingback_url=pingback_url,
+                    user_id=None,
+                    project_id=None,
                 )
-
-                volume = int(row.get("Search Volume")) if str(row.get("Search Volume", "—")).replace('.', '', 1).isdigit() else None
-                kd = int(row.get("KD")) if str(row.get("KD", "—")).replace('.', '', 1).isdigit() else None
-                cpc = float(row.get("CPC")) if str(row.get("CPC", "—")).replace('.', '', 1).isdigit() else None
-                competition = float(row.get("Competition")) if str(row.get("Competition", "—")).replace('.', '', 1).isdigit() else None
-                backlinks = float(row.get("Backlinks")) if str(row.get("Backlinks", "—")).replace('.', '', 1).isdigit() else None
-                referring_domains = float(row.get("Domains")) if str(row.get("Domains", "—")).replace('.', '', 1).isdigit() else None
-                position = int(row.get("Position")) if str(row.get("Position", "—")).replace('.', '', 1).isdigit() else None
-                ai_badge = row.get("AI") if row.get("AI") == "AIO" else None
-                intent = row.get("Intent") if row.get("Intent") not in ["—", None] else None
-
-                if cache_entry:
-                    cache_entry.volume = volume
-                    cache_entry.kd = kd
-                    cache_entry.intent = intent
-                    cache_entry.cpc = cpc
-                    cache_entry.competition = competition
-                    cache_entry.backlinks = backlinks
-                    cache_entry.referring_domains = referring_domains
-                    cache_entry.position = position
-                    cache_entry.ai_badge = ai_badge
-                    cache_entry.updatedAt = datetime.utcnow()
-                else:
-                    cache_entry = KeywordCache(
-                        keyword=keyword_text,
-                        location="India",
-                        volume=volume,
-                        kd=kd,
-                        intent=intent,
-                        cpc=cpc,
-                        competition=competition,
-                        backlinks=backlinks,
-                        referring_domains=referring_domains,
-                        position=position,
-                        ai_badge=ai_badge,
-                        updatedAt=datetime.utcnow(),
-                    )
-                    db.add(cache_entry)
-
-                keyword_row = db.scalar(
-                    select(Keyword).where(Keyword.keyword == keyword_text)
-                )
-                if keyword_row:
-                    keyword_row.volume = volume
-                    keyword_row.kd = kd
-                    keyword_row.cpc = cpc
-                    keyword_row.competition = competition
-                    keyword_row.backlinks = backlinks
-                    keyword_row.referring_domains = referring_domains
-                    keyword_row.intent = intent
-                    keyword_row.position = position
-                    keyword_row.ai_badge = ai_badge
-                    keyword_row.updatedAt = datetime.utcnow()
-
-                upsert_count += 1
+            except Exception as exc:
+                logger.error(f"Monday tracker DataForSEO POST failed: {exc}")
+                for refund_user_id, refund_info in deducted_users.items():
+                    try:
+                        refund_credits(
+                            db,
+                            refund_info["owner_id"],
+                            refund_info["amount"],
+                            f"Refund: Monday weekly refresh POST failed for user {refund_user_id}",
+                        )
+                    except Exception as refund_exc:
+                        logger.error(f"Failed to refund user {refund_user_id}: {refund_exc}")
+                db.commit()
+                raise
 
         db.commit()
         logger.info(
             "Monday tracker completed: users=%d unique_keywords=%d refreshed=%d deducted=%d",
             len(active_user_ids),
             len(unique_active_keywords),
-            upsert_count,
+            0,
             total_deducted,
         )
         return {
             "scanned_users": len(active_user_ids),
-            "updated_keywords": upsert_count,
+            "updated_keywords": 0,
             "total_deducted": total_deducted,
         }
 
