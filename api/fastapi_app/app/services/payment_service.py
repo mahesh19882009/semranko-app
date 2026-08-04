@@ -3,7 +3,7 @@ import uuid
 import logging
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
-from app.db.models import User, PaymentOrder, Subscription
+from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.core.config import get_settings
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER
 from app.services import email_service
@@ -204,37 +204,20 @@ def activate_subscription(
     order_id: str,
     billing_cycle: str = "monthly"
 ) -> Subscription:
-    """
-    Activate subscription after successful payment
-    
-    Args:
-        db: Database session
-        user_id: User ID
-        plan_id: ID of the purchased plan
-        payment_id: Razorpay payment ID (or mock payment ID for dev mode)
-        order_id: Razorpay order ID (or mock order ID for dev mode)
-        billing_cycle: 'monthly' or 'yearly'
-    
-    Returns:
-        Activated subscription object
-    """
     plan = get_plan_by_id(db, plan_id, billing_cycle)
     if not plan:
         raise Exception("Plan not found")
     
-    # Get user object
     user = db.scalar(select(User).where(User.id == user_id))
     if not user:
         raise Exception("User not found")
     
-    # Upsert PaymentOrder: mark existing as paid, or create it if somehow missing
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
     if order:
         order.status = "paid"
         order.razorpayPaymentId = payment_id
         db.add(order)
     else:
-        # Fallback: create the PaymentOrder record if it wasn't saved during create-order
         fallback_order = PaymentOrder(
             userId=user_id,
             razorpayOrderId=order_id,
@@ -247,7 +230,6 @@ def activate_subscription(
         )
         db.add(fallback_order)
     
-    # Check if user has existing subscription
     existing_subscription = db.scalar(
         select(Subscription).where(
             Subscription.userId == user_id,
@@ -257,6 +239,9 @@ def activate_subscription(
     
     effective_plan_id = plan_id
     effective_plan_key = plan["key"]
+    now = datetime.utcnow()
+    
+    logger.info(f"[activate_subscription] user={user_id} plan_id={plan_id} plan_key={effective_plan_key} existing_sub={existing_subscription is not None}")
     
     if existing_subscription:
         existing_subscription.planId = effective_plan_id
@@ -264,24 +249,36 @@ def activate_subscription(
         existing_subscription.isActive = True
         existing_subscription.razorpayPaymentId = payment_id
         existing_subscription.razorpayOrderId = order_id
-        
-        if existing_subscription.endDate and existing_subscription.endDate > datetime.utcnow():
-            new_end_date = existing_subscription.endDate
-        else:
-            new_end_date = datetime.utcnow() + timedelta(days=plan["duration_days"])
-        
-        existing_subscription.endDate = new_end_date
+        existing_subscription.startDate = now
+        existing_subscription.endDate = now + timedelta(days=plan["duration_days"])
         db.add(existing_subscription)
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
-        credit_map = {"starter": 4000, "pro": 10000, "agency": 25000}
-        user.creditBalance = float(credit_map.get(effective_plan_key, 0))
+        credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
+        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
+        new_balance = round(old_balance + credits_to_add, 2)
+        logger.info(f"[activate_subscription] UPGRADE path old_balance={old_balance} credits_to_add={credits_to_add} new_balance={new_balance}")
+        user.creditBalance = new_balance
         db.add(user)
         
         db.commit()
         db.refresh(existing_subscription)
         db.refresh(user)
+        
+        logger.info(f"[activate_subscription] UPGRADE path AFTER COMMIT creditBalance={user.creditBalance}")
+        
+        ledger = CreditLedger(
+            userId=user_id,
+            ownerId=user_id,
+            amount=credits_to_add,
+            actionType="purchase",
+            description=f"Subscription purchase: {plan['name']} (Order {order_id})",
+            relatedOrderId=order_id,
+            status="success",
+        )
+        db.add(ledger)
+        db.commit()
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0
@@ -295,14 +292,13 @@ def activate_subscription(
         
         return existing_subscription
     else:
-        # Create new subscription
         subscription = Subscription(
             userId=user_id,
             planId=effective_plan_id,
             status='active',
             isActive=True,
-            startDate=datetime.utcnow(),
-            endDate=datetime.utcnow() + timedelta(days=plan["duration_days"]),
+            startDate=now,
+            endDate=now + timedelta(days=plan["duration_days"]),
             razorpayPaymentId=payment_id,
             razorpayOrderId=order_id
         )
@@ -313,11 +309,28 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
-        credit_map = {"starter": 4000, "pro": 10000, "agency": 25000}
-        user.creditBalance = float(credit_map.get(effective_plan_key, 0))
+        credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
+        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
+        new_balance = round(old_balance + credits_to_add, 2)
+        logger.info(f"[activate_subscription] NEW path old_balance={old_balance} credits_to_add={credits_to_add} new_balance={new_balance}")
+        user.creditBalance = new_balance
         db.add(user)
         db.commit()
         db.refresh(user)
+        
+        logger.info(f"[activate_subscription] NEW path AFTER COMMIT creditBalance={user.creditBalance}")
+        
+        ledger = CreditLedger(
+            userId=user_id,
+            ownerId=user_id,
+            amount=credits_to_add,
+            actionType="purchase",
+            description=f"Subscription purchase: {plan['name']} (Order {order_id})",
+            relatedOrderId=order_id,
+            status="success",
+        )
+        db.add(ledger)
+        db.commit()
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0

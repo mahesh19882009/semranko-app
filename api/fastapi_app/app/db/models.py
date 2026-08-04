@@ -125,6 +125,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     domain: Mapped[str] = mapped_column(String, nullable=False)
     userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    client_logo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -145,6 +146,7 @@ class Keyword(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
     keyword: Mapped[str] = mapped_column(String, nullable=False)
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -155,7 +157,11 @@ class Keyword(Base):
     backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
 
     project: Mapped[Project] = relationship(back_populates="keywords")
     rankResults: Mapped[list["RankResult"]] = relationship(back_populates="keyword")
@@ -345,6 +351,8 @@ class KeywordCache(Base):
     competition: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,

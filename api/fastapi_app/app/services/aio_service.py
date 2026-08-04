@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.models import AIOTracking, Keyword, Project, User
 from app.services.dataforseo_client import DataForSEOClient
-from app.services.plan_service import ensure_aio_tracking_limit, get_user_plan_limits
 from app.services.cache_service import get_cached, set_cached
 from app.core.errors import ApiError
 
@@ -13,16 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
-    limits = get_user_plan_limits_by_id(db, user_id)
-    allowed_aio = limits.get("aioKeywordsMonitored", 0)
-    if allowed_aio <= 0:
-        raise ApiError(403, "AIO tracking is not available on your current plan")
-
     project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
     if not project:
         raise ApiError(404, "Project not found")
 
-    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id).limit(allowed_aio)).all()
+    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id)).all()
     if not keywords:
         return {"tracked": 0}
 

@@ -23,11 +23,12 @@ from app.schemas.common import ok
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency"}
+PLAN_KEY_TO_ID = {v: k for k, v in PLAN_ID_TO_KEY.items()}
 GST_RATE = Decimal(str(GST_RATE))
 PLAN_KEY_PRICES = {
-    "starter": {"monthly": 639, "yearly": 6932},
-    "pro":     {"monthly": 1589, "yearly": 17235},
-    "agency":  {"monthly": 3969, "yearly": 43058},
+    "starter": {"monthly": 999, "yearly": 10789},
+    "pro":     {"monthly": 3999, "yearly": 43189},
+    "agency":  {"monthly": 15999, "yearly": 172789},
 }
 
 def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
@@ -79,56 +80,34 @@ def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> di
 @router.post("/create-order")
 async def create_payment_order(
     plan_id: int = Query(..., description="Plan ID to upgrade to"),
-    amount: int = Query(..., description="Amount in smallest currency unit (e.g., paise)"),
+    amount: int = Query(0, description="Amount in smallest currency unit (e.g., paise) - server will override with plan price"),
     billing_cycle: str = Query("monthly", description="Billing cycle: monthly or yearly"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Create a Razorpay payment order for subscription upgrade.
-    Expects query parameters: ?plan_id=2&amount=999900
+    Server calculates discounted INR amount from plan definitions.
     """
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
-    
     try:
         from app.db.models import PaymentOrder as PO
-        from datetime import datetime, timedelta
 
-        # Calculate prorated amount for upgrades
-        existing_subscription = db.query(Subscription).filter(
-            Subscription.userId == current_user.id,
-            Subscription.isActive == True
-        ).first()
-        
-        prorated_discount_paise = 0
-        if existing_subscription and existing_subscription.endDate:
-            # Calculate remaining days in current subscription
-            remaining_days = (existing_subscription.endDate - datetime.utcnow()).days
-            if remaining_days > 0:
-                # Get current plan price
-                current_plan_id = existing_subscription.planId
-                current_plan_key = PLAN_ID_TO_KEY.get(current_plan_id, "starter")
-                current_plan_price = PLAN_KEY_PRICES.get(current_plan_key, {}).get("monthly", 639)
-                
-                # Calculate daily rate and remaining value
-                daily_rate = current_plan_price / 30  # Assuming 30-day month
-                remaining_value = daily_rate * remaining_days
-                
-                # Convert to paise and apply as discount
-                prorated_discount_paise = int(round(remaining_value * 100))
-        
-        # Apply prorated discount to amount
-        amount_after_proration = max(0, amount - prorated_discount_paise)
-        
-        # Check credit balance
-        available_credit = float(getattr(current_user, "creditBalance", 0.0) or 0.0)
-        available_credit_paise = int(round(available_credit * 100))
-        applied_credit_paise = min(amount_after_proration, available_credit_paise)
-        net_amount_paise = amount_after_proration - applied_credit_paise
+        plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
+        plan_def = PLAN_DEFINITIONS.get(plan_key, {})
+        base_price_inr = float(plan_def.get("monthlyPrice", 0))
+        individual_discount_pct = float(plan_def.get("individual_discount_pct", 0))
 
-        # 100% Credit Coverage Case — paid entirely by account credit
-        if net_amount_paise == 0:
+        if billing_cycle == "yearly":
+            base_price_inr = float(plan_def.get("yearlyPrice", base_price_inr))
+
+        discounted_inr = base_price_inr - (base_price_inr * (individual_discount_pct / 100))
+        amount_in_inr = discounted_inr + (discounted_inr * float(GST_RATE))
+        amount_in_paise = int(round(amount_in_inr * 100))
+
+        if amount_in_paise <= 0:
+            raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
+
+        if amount_in_paise == 0:
             pay_id = f"pay_credit_{uuid.uuid4().hex[:8]}"
             order_id = f"order_credit_{uuid.uuid4().hex[:16]}"
 
@@ -138,7 +117,7 @@ async def create_payment_order(
                 razorpayPaymentId=pay_id,
                 planId=plan_id,
                 amount=0,
-                credit_applied_paise=amount,
+                credit_applied_paise=0,
                 currency="INR",
                 status="paid",
             )
@@ -153,16 +132,13 @@ async def create_payment_order(
                 order_id=order_id,
                 billing_cycle=billing_cycle
             )
-            credit_deducted = round(applied_credit_paise / 100.0, 2)
-            current_user.creditBalance = round(max(0.0, available_credit - credit_deducted), 2)
-            db.add(current_user)
             db.commit()
 
             return {
                 "order_id": order_id,
-                "amount": amount,
-                "prorated_discount": round(prorated_discount_paise / 100.0, 2),
-                "amount_after_proration": round(amount_after_proration / 100.0, 2),
+                "amount": 0,
+                "prorated_discount": 0,
+                "amount_after_proration": 0,
                 "net_amount": 0,
                 "currency": "INR",
                 "key_id": "rzp_credit",
@@ -170,56 +146,42 @@ async def create_payment_order(
                 "user_id": current_user.id,
                 "is_mock": True,
                 "is_fully_credited": True,
-                "credit_applied": credit_deducted,
-                "remaining_credit": current_user.creditBalance
+                "credit_applied": 0
             }
 
         settings = get_settings()
         force_mock = getattr(settings, "RAZORPAY_FORCE_MOCK", False)
         
-        order = create_order(amount=net_amount_paise, currency="INR", force_mock=force_mock)
+        order = create_order(amount=amount_in_paise, currency="INR", force_mock=force_mock)
 
-        plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
-        plan_name = PLAN_DEFINITIONS.get(plan_key, {}).get("name", "Unknown")
+        plan_name = plan_def.get("name", "Unknown")
 
         credit_order = PO(
             userId=current_user.id,
             razorpayOrderId=order["id"],
             planId=plan_id,
-            amount=net_amount_paise,
-            credit_applied_paise=applied_credit_paise,
+            amount=amount_in_paise,
+            credit_applied_paise=0,
             currency=order["currency"],
             status="created",
         )
         db.add(credit_order)
         db.flush()
-
-        create_pending_ledger_entry(
-            db=db,
-            user_id=current_user.id,
-            owner_id=current_user.id,
-            amount=float(net_amount_paise) / 100.0,
-            action_type="purchase",
-            description=f"Subscription purchase: {plan_name} (Order {order['id']})",
-            related_order_id=order["id"],
-            plan_name=plan_name,
-        )
-
         db.commit()
 
         return {
             "order_id": order["id"],
-            "amount": amount,
-            "prorated_discount": round(prorated_discount_paise / 100.0, 2),
-            "amount_after_proration": round(amount_after_proration / 100.0, 2),
-            "net_amount": net_amount_paise,
+            "amount": amount_in_paise,
+            "prorated_discount": 0,
+            "amount_after_proration": amount_in_paise,
+            "net_amount": amount_in_paise / 100.0,
             "currency": order["currency"],
             "key_id": order["key"],
             "plan_id": plan_id,
             "user_id": current_user.id,
             "is_mock": order.get("mock", False),
             "is_fully_credited": False,
-            "credit_applied": round(applied_credit_paise / 100.0, 2)
+            "credit_applied": 0
         }
     except HTTPException:
         raise
@@ -229,16 +191,80 @@ async def create_payment_order(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to create payment order: {str(e)}")
 
+@router.post("/create-top-up-order")
+async def create_top_up_order(
+    multiplier: int = Query(..., ge=1, description="Multiplier of 1,000 credits to purchase"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Create a Razorpay payment order for credit top-up.
+    1 multiplier = 1,000 credits at flat ₹500 per 1,000 credits.
+    """
+    try:
+        from app.db.models import PaymentOrder as PO
+
+        base_top_up_inr = float(multiplier) * 500.0
+        individual_discount_pct = float(getattr(current_user, "individual_discount_pct", 0.0) or 0.0)
+        discounted_top_up_inr = base_top_up_inr - (base_top_up_inr * (individual_discount_pct / 100.0))
+        amount_in_paise = int(round(discounted_top_up_inr * 100))
+
+        if amount_in_paise <= 0:
+            raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
+
+        settings = get_settings()
+        force_mock = getattr(settings, "RAZORPAY_FORCE_MOCK", False)
+        order = create_order(amount=amount_in_paise, currency="INR", force_mock=force_mock)
+
+        credit_order = PO(
+            userId=current_user.id,
+            razorpayOrderId=order["id"],
+            planId=multiplier,
+            amount=amount_in_paise,
+            credit_applied_paise=0,
+            currency=order["currency"],
+            status="created",
+            purchaseType="CREDIT_TOP_UP",
+        )
+        db.add(credit_order)
+        db.flush()
+
+        create_pending_ledger_entry(
+            db=db,
+            user_id=current_user.id,
+            owner_id=current_user.id,
+            amount=float(amount_in_paise) / 100.0,
+            action_type="CREDIT_TOP_UP",
+            description=f"Credit top-up: {multiplier * 1000} credits",
+            related_order_id=order["id"],
+            plan_name="Credit Top-Up",
+        )
+
+        db.commit()
+
+        return {
+            "order_id": order["id"],
+            "amount": amount_in_paise,
+            "currency": order["currency"],
+            "key_id": order["key"],
+            "multiplier": multiplier,
+            "credits": multiplier * 1000,
+            "is_mock": order.get("mock", False),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR: Failed to create top-up order: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create top-up order: {str(e)}")
+
 @router.post("/verify-payment")
 async def verify_payment(
     request_data: Dict[str, Any],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Verify Razorpay payment signature and activate subscription.
-    Expected body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id, credit_applied, billing_cycle }
-    """
     razorpay_order_id = request_data.get("razorpay_order_id")
     razorpay_payment_id = request_data.get("razorpay_payment_id")
     razorpay_signature = request_data.get("razorpay_signature")
@@ -246,7 +272,7 @@ async def verify_payment(
     credit_applied = float(request_data.get("credit_applied", 0.0) or 0.0)
     billing_cycle = request_data.get("billing_cycle", "monthly")
     
-    if razorpay_order_id is None or razorpay_payment_id is None or razorpay_signature is None or plan_id is None:
+    if razorpay_order_id is None or razorpay_payment_id is None or razorpay_signature is None:
         raise HTTPException(status_code=400, detail="Missing required payment fields")
     
     try:
@@ -256,11 +282,12 @@ async def verify_payment(
             signature=razorpay_signature
         )
         
+        logger.info(f"[verify-payment] signature_valid={is_valid} user={current_user.id} plan_id={plan_id} order_id={razorpay_order_id}")
+        
         if not is_valid:
-            # Mark payment order as failed
             from app.db.models import PaymentOrder as PO
             payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
-            plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown")
+            plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown") if plan_id is not None else "Unknown"
             if payment_order:
                 payment_order.status = "failed"
                 payment_order.razorpayPaymentId = razorpay_payment_id
@@ -275,6 +302,44 @@ async def verify_payment(
             )
             raise HTTPException(status_code=400, detail="Invalid payment signature")
         
+        from app.db.models import PaymentOrder as PO
+        payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
+        if not payment_order:
+            raise HTTPException(status_code=404, detail="Payment order not found")
+
+        if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
+            payment_order.status = "paid"
+            payment_order.razorpayPaymentId = razorpay_payment_id
+            db.add(payment_order)
+            db.commit()
+
+            multiplier = getattr(payment_order, "planId", 0)
+            credits_to_add = int(multiplier) * 1000
+            current_user.creditBalance = round(float(getattr(current_user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
+            db.add(current_user)
+            db.commit()
+
+            top_up_ledger = CreditLedger(
+                userId=current_user.id,
+                ownerId=current_user.id,
+                amount=float(credits_to_add),
+                actionType="CREDIT_TOP_UP",
+                description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment {razorpay_payment_id}",
+                relatedOrderId=razorpay_order_id,
+                status="success",
+            )
+            db.add(top_up_ledger)
+            db.commit()
+
+            return ok("Credits added successfully", {
+                "credits_added": credits_to_add,
+                "new_balance": current_user.creditBalance,
+            })
+
+        if plan_id is None:
+            raise HTTPException(status_code=400, detail="Missing plan_id for subscription payment")
+
+        logger.info(f"[verify-payment] Calling activate_subscription user={current_user.id} plan_id={plan_id} order_id={razorpay_order_id}")
         subscription = activate_subscription(
             db=db,
             user_id=current_user.id,
@@ -283,11 +348,8 @@ async def verify_payment(
             order_id=razorpay_order_id,
             billing_cycle=billing_cycle
         )
-
-        if credit_applied > 0:
-            current_user.creditBalance = round(max(0.0, (getattr(current_user, "creditBalance", 0.0) or 0.0) - credit_applied), 2)
-            db.add(current_user)
-            db.commit()
+        
+        logger.info(f"[verify-payment] activate_subscription done subscription_id={subscription.id} plan_id={subscription.planId}")
         
         return ok("Payment verified successfully", {
             "subscription": {
@@ -299,10 +361,9 @@ async def verify_payment(
     except HTTPException:
         raise
     except Exception as e:
-        # Mark payment order as failed on any other error
         from app.db.models import PaymentOrder as PO
         payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
-        plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown")
+        plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown") if plan_id is not None else "Unknown"
         if payment_order:
             payment_order.status = "failed"
             payment_order.razorpayPaymentId = razorpay_payment_id
@@ -484,31 +545,59 @@ async def razorpay_webhook(
             plan_name=plan_name,
         )
 
-        try:
-            subscription = activate_subscription(
-                db=db,
-                user_id=user.id,
-                plan_id=plan_id if plan_id is not None else payment_order.planId,
-                payment_id=payment_id,
-                order_id=order_id,
-                billing_cycle="monthly"
-            )
-            user = db.scalar(select(User).where(User.id == user.id))
-            if user:
-                user.selectedPlan = PLAN_ID_TO_KEY.get(plan_id if plan_id is not None else payment_order.planId, "starter")
-                db.add(user)
-                db.commit()
-                db.refresh(user)
-        except Exception as exc:
-            logger.exception("Webhook subscription activation failed: %s", exc)
+        if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
+            multiplier = getattr(payment_order, "planId", 0)
+            credits_to_add = int(multiplier) * 1000
+            user.creditBalance = round(float(getattr(user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
+            db.add(user)
+            db.commit()
 
-        email_service.send_payment_success_email(
-            to_email=user.email,
-            name=user.name,
-            plan_name=plan_name,
-            amount=float(payment_order.amount) / 100,
-            order_id=order_id
-        )
+            top_up_ledger = CreditLedger(
+                userId=user.id,
+                ownerId=user.id,
+                amount=float(credits_to_add),
+                actionType="CREDIT_TOP_UP",
+                description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment {payment_id}",
+                relatedOrderId=order_id,
+                status="success",
+            )
+            db.add(top_up_ledger)
+            db.commit()
+
+            email_service.send_payment_success_email(
+                to_email=user.email,
+                name=user.name,
+                plan_name="Credit Top-Up",
+                amount=float(payment_order.amount) / 100,
+                order_id=order_id
+            )
+        else:
+            logger.info(f"[payments-webhook] Calling activate_subscription user={user.id} plan_id={plan_id if plan_id is not None else payment_order.planId} order_id={order_id}")
+            try:
+                subscription = activate_subscription(
+                    db=db,
+                    user_id=user.id,
+                    plan_id=plan_id if plan_id is not None else payment_order.planId,
+                    payment_id=payment_id,
+                    order_id=order_id,
+                    billing_cycle="monthly"
+                )
+                user = db.scalar(select(User).where(User.id == user.id))
+                if user:
+                    user.selectedPlan = PLAN_ID_TO_KEY.get(plan_id if plan_id is not None else payment_order.planId, "starter")
+                    db.add(user)
+                    db.commit()
+                    db.refresh(user)
+            except Exception as exc:
+                logger.exception("Webhook subscription activation failed: %s", exc)
+
+            email_service.send_payment_success_email(
+                to_email=user.email,
+                name=user.name,
+                plan_name=plan_name,
+                amount=float(payment_order.amount) / 100,
+                order_id=order_id
+            )
 
     elif event_type == "payment.failed":
         payment_order.status = "failed"
@@ -551,9 +640,15 @@ async def mark_payment_failed(
     if not order_id:
         raise HTTPException(status_code=400, detail="Missing order ID")
 
-    payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id, PO.userId == current_user.id))
+    payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id))
+    if not payment_order:
+        payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id, PO.userId == current_user.id))
+    
     if not payment_order:
         raise HTTPException(status_code=404, detail="Payment order not found")
+    
+    if payment_order.userId != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your payment order")
 
     if payment_order.status == "paid":
         return ok("Order already paid", None)

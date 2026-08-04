@@ -7,6 +7,7 @@ from app.schemas.common import ok
 from app.services.keyword_research_service import research_keyword, add_keywords_to_project
 from app.services.competitor_spy_service import spy_competitor_keywords
 from app.services.project_onboarding_service import create_project_with_keywords
+from app.services.credit_service import check_credits, deduct_credits, refund_credits
 
 router = APIRouter(prefix="/keyword-research", tags=["keyword-research"])
 
@@ -36,7 +37,9 @@ async def research_keyword_endpoint(
         })
     
     try:
+        check_credits(db, current_user["userId"], 4)
         result = research_keyword(db, current_user["userId"], keyword, location)
+        deduct_credits(db, current_user["userId"], 4, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
         return ok("Keyword research completed", result)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
