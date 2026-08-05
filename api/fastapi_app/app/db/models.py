@@ -353,6 +353,7 @@ class KeywordCache(Base):
     referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    lastApiCallAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)  # Track when API was last called for this keyword
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
         nullable=False,
@@ -454,4 +455,36 @@ class TeamMember(Base):
         Index("TeamMember_userId_idx", "userId"),
         Index("TeamMember_team_user_key", "teamId", "userId", unique=True),
         # Check constraint will be added via migration
+    )
+
+
+class AsyncTaskQueue(Base):
+    __tablename__ = "AsyncTaskQueue"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # DataForSEO task ID
+    taskType: Mapped[str] = mapped_column(String, nullable=False)  # 'rank_tracking', 'competitor_spy', 'keyword_research'
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")  # pending, processing, completed, failed
+    keywordsJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of keywords
+    domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Target domain for rank tracking
+    locationCode: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    device: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="desktop")
+    userId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)  # Null for global bulk jobs
+    projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
+    resultJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON result data
+    errorMessage: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    completedAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        Index("AsyncTaskQueue_status_idx", "status"),
+        Index("AsyncTaskQueue_taskType_idx", "taskType"),
+        Index("AsyncTaskQueue_createdAt_idx", "createdAt"),
     )
