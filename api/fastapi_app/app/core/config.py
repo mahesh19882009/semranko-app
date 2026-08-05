@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "RankCare API"
     ENV: str = "development"
     PORT: int = 4000
-    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:3000"
     
     # Security
     SECRET_KEY: str = secrets.token_urlsafe(32)
@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     #DataForSEO
     DATAFORSEO_LOGIN: Optional[str] = None
     DATAFORSEO_PASSWORD: Optional[str] = None
+    
+    @computed_field
+    @property
+    def effective_serp_login(self) -> Optional[str]:
+        return self.DATAFORSEO_LOGIN
+
+    @computed_field
+    @property
+    def effective_serp_key(self) -> Optional[str]:
+        return self.DATAFORSEO_PASSWORD
     
     @computed_field
     @property
@@ -60,7 +70,6 @@ class Settings(BaseSettings):
     # Email
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM: str = "noreply@rankcare.com"
-    CONTACT_EMAIL: Optional[str] = None
     EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     
     # Razorpay
@@ -71,6 +80,7 @@ class Settings(BaseSettings):
     # SERP / DataForSEO
     SERP_API_LOGIN: Optional[str] = None
     SERP_API_KEY: Optional[str] = None
+    PINGBACK_URL: Optional[str] = None
     
     # Trial
     TRIAL_DAYS: int = 10

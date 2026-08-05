@@ -92,8 +92,8 @@ trap cleanup SIGINT SIGTERM
 # Start FastAPI in background
 echo "Starting FastAPI server on http://localhost:4000..."
 cd "$PROJECT_DIR"
-export PYTHONPATH="$PROJECT_DIR/fastapi_app:$PYTHONPATH"
-python3 -m uvicorn --app-dir fastapi_app app.main:app --reload --host 0.0.0.0 --port 4000 &
+export PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/fastapi_app:$PYTHONPATH"
+"$PROJECT_DIR/.venv/bin/python" -m uvicorn --app-dir fastapi_app app.main:app --reload --host 0.0.0.0 --port 4000 &
 FASTAPI_PID=$!
 sleep 2
 
@@ -106,7 +106,7 @@ echo "✓ FastAPI server started (PID: $FASTAPI_PID)"
 
 # Start RQ worker in background
 echo "Starting RQ worker..."
-export PYTHONPATH="$PROJECT_DIR/fastapi_app:$PYTHONPATH"
+export PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/fastapi_app:$PYTHONPATH"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 "$PROJECT_DIR/.venv/bin/rq" worker rank-check &
 WORKER_PID=$!

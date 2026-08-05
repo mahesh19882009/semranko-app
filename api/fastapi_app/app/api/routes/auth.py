@@ -40,13 +40,16 @@ def resend_verification(payload: dict = Body(...), db: Session = Depends(db_sess
     if result.get("alreadyVerified"):
         return ok("Email is already verified", result)
 
+    if not result.get("sent"):
+        return ok("Verification email could not be sent. Please try again later or contact support.", result)
+
     return ok("Verification email sent", result)
 
 
 @router.post("/forgot-password")
 def forgot_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = forgot_password(db, payload)
-    return ok("If your email is registered, you will receive a password reset link", result)
+    return ok("Password reset email sent if your email is registered", result)
 
 
 @router.post("/reset-password")

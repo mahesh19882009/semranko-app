@@ -1,7 +1,10 @@
+import logging
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from app.db.models import SerpFeature, RankResult, Project
+
+logger = logging.getLogger(__name__)
 
 
 SERP_FEATURE_TYPES = [
@@ -116,7 +119,7 @@ def get_serp_features_summary(db: Session, project_id: str) -> Dict:
         
         return summary
     except Exception as e:
-        print(f"Error getting SERP features summary: {e}")
+        logger.error(f"Error getting SERP features summary: {e}")
         return {
             "totalFeatures": 0,
             "byType": {},
@@ -154,9 +157,9 @@ def get_keywords_with_serp_features(db: Session, project_id: str, limit: int = 5
                 "featureCount": count
             }
             for keyword, count in results
-        ]
+            ]
     except Exception as e:
-        print(f"Error getting keywords with SERP features: {e}")
+        logger.error(f"Error getting keywords with SERP features: {e}")
         return []
 
 
@@ -231,5 +234,5 @@ def sync_serp_features_from_rank_results(db: Session, project_id: str) -> int:
         
         return synced_count
     except Exception as e:
-        print(f"Error syncing SERP features: {e}")
+        logger.error(f"Error syncing SERP features: {e}")
         return 0

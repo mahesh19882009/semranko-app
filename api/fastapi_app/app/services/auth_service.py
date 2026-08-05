@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
 from app.core.config import get_settings
 from app.core.errors import ApiError
@@ -16,8 +17,6 @@ from app.db.models import User
 from app.services import email_service
 from app.utils.serializers import model_to_dict
 
-VALID_PLAN_KEYS = {"starter", "pro", "agency"}
-
 
 def register_user(db: Session, payload: dict) -> dict:
     settings = get_settings()
@@ -25,13 +24,9 @@ def register_user(db: Session, payload: dict) -> dict:
     name = payload.get("name")
     email = payload.get("email")
     password = payload.get("password")
-    selected_plan = (payload.get("selectedPlan") or "starter").strip().lower()
 
     if not name or not email or not password:
         raise ApiError(400, "Name, email and password are required")
-
-    if selected_plan not in VALID_PLAN_KEYS:
-        selected_plan = "starter"
 
     normalized_email = email.strip().lower()
 
@@ -45,6 +40,7 @@ def register_user(db: Session, payload: dict) -> dict:
     trial_starts_at = datetime.utcnow()
     trial_ends_at = trial_starts_at + timedelta(days=settings.TRIAL_DAYS)
 
+    # HARDCODED SANDBOX DEFAULTS - All new accounts start on Free Trial
     user = User(
         name=name.strip(),
         email=normalized_email,
@@ -53,10 +49,11 @@ def register_user(db: Session, payload: dict) -> dict:
         emailVerificationToken=token_hash,
         emailVerificationExpiresAt=expires_at,
         authProvider="local",
-        selectedPlan=selected_plan,
+        selectedPlan="free_trial",  # LOCKED: Always free_trial
         subscriptionStatus="trialing",
         trialStartsAt=trial_starts_at,
         trialEndsAt=trial_ends_at,
+        creditBalance=150.0,  # LOCKED: Always 150 credits
     )
 
     db.add(user)
@@ -66,12 +63,14 @@ def register_user(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
-    email_service.send_verification_email(user.email, user.name, verification_url)
+    email_sent = email_service.send_verification_email(user.email, user.name, verification_url)
 
-    return model_to_dict(
+    result = model_to_dict(
         user,
         exclude={"passwordHash", "emailVerificationToken"}
     )
+    result["emailSent"] = email_sent
+    return result
 
 
 def verify_email_token(db: Session, payload: dict) -> dict:
@@ -129,9 +128,9 @@ def resend_verification_email(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
-    email_service.send_verification_email(user.email, user.name, verification_url)
+    email_sent = email_service.send_verification_email(user.email, user.name, verification_url)
 
-    return {"sent": True}
+    return {"sent": email_sent}
 
 
 def login_user(db: Session, payload: dict) -> dict:
@@ -150,8 +149,9 @@ def login_user(db: Session, payload: dict) -> dict:
     if not user.passwordHash or not verify_password(password, user.passwordHash):
         raise ApiError(401, "Invalid email or password")
 
+    # CRITICAL: Block unverified users - terminate immediately without generating token
     if not user.isVerified:
-        raise ApiError(403, "Please verify your email before logging in")
+        raise HTTPException(status_code=403, detail="Please verify your email before logging in")
 
     access_token = create_access_token(str(user.id), user.email)
 
@@ -193,9 +193,9 @@ def forgot_password(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     reset_url = f"{frontend_url}/reset-password?token={raw_token}"
 
-    email_service.send_password_reset_email(user.email, user.name, reset_url)
+    email_sent = email_service.send_password_reset_email(user.email, user.name, reset_url)
 
-    return {"sent": True}
+    return {"sent": email_sent}
 
 
 def reset_password(db: Session, payload: dict) -> dict:

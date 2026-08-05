@@ -8,12 +8,12 @@ from app.core.config import get_settings
 logger = logging.getLogger("uvicorn.error")
 
 
-def send_verification_email(to_email: str, name: str, verification_url: str) -> None:
+def send_verification_email(to_email: str, name: str, verification_url: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Verification link for %s: %s", to_email, verification_url)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -95,20 +95,21 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
             """
         })
 
-
         logger.info("RESEND EMAIL RESPONSE: %s", response)
         logger.info("VERIFICATION URL SENT: %s", verification_url)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND VERIFICATION EMAIL: %s", exc)
+        return False
 
 
-def send_payment_success_email(to_email: str, name: str, plan_name: str, amount: float, order_id: str) -> None:
+def send_payment_success_email(to_email: str, name: str, plan_name: str, amount: float, order_id: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Payment success email for %s: plan=%s amount=%s order=%s", to_email, plan_name, amount, order_id)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -201,17 +202,19 @@ def send_payment_success_email(to_email: str, name: str, plan_name: str, amount:
         })
 
         logger.info("RESEND PAYMENT SUCCESS EMAIL RESPONSE: %s", response)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PAYMENT SUCCESS EMAIL: %s", exc)
+        return False
 
 
-def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_id: str, error_message: str) -> None:
+def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_id: str, error_message: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Payment failure email for %s: plan=%s order=%s error=%s", to_email, plan_name, order_id, error_message)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -303,19 +306,20 @@ def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_i
             """
         })
 
-
         logger.info("RESEND PAYMENT FAILURE EMAIL RESPONSE: %s", response)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PAYMENT FAILURE EMAIL: %s", exc)
+        return False
 
 
-def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
+def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
         logger.info("[EMAIL DISABLED] Password reset link for %s: %s", to_email, reset_url)
-        return
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
@@ -399,112 +403,47 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> None:
 
         logger.info("RESEND PASSWORD RESET EMAIL RESPONSE: %s", response)
         logger.info("PASSWORD RESET URL SENT: %s", reset_url)
+        return True
 
     except Exception as exc:
         logger.exception("FAILED TO SEND PASSWORD RESET EMAIL: %s", exc)
+        return False
 
 
-def send_contact_form_email(name: str, email: str, company: str, message: str) -> None:
+def send_email_with_attachment(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    attachment_bytes: bytes,
+    attachment_filename: str,
+) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
-        logger.info("[EMAIL DISABLED] Contact form submission from %s (%s): %s", name, email, message[:100])
-        return
+        logger.info("[EMAIL DISABLED] Attachment email for %s: %s", to_email, attachment_filename)
+        return False
 
     resend.api_key = settings.RESEND_API_KEY
     sender = settings.EMAIL_FROM or "onboarding@resend.dev"
-    recipient = settings.CONTACT_EMAIL or settings.EMAIL_FROM or "hello@rankcare.com"
-    subject = f"Contact Form Submission from {name}"
 
     try:
         response = resend.Emails.send({
             "from": sender,
-            "to": [recipient],
+            "to": [to_email],
             "subject": subject,
-            "html": f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Contact Form Submission</title>
-                </head>
-                <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 32px 16px;">
-                    <tr>
-                    <td align="center">
-                        <!-- Main Card Container -->
-                        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                        
-                        <!-- Header Banner -->
-                        <tr>
-                            <td style="background-color: #0f172a; padding: 32px 24px; text-align: center;">
-                            <!-- Mail Icon Wrapper -->
-                            <div style="display: inline-block; background-color: #2563eb; width: 48px; height: 48px; border-radius: 50%; text-align: center; margin-bottom: 16px;">
-                                <span style="color: #ffffff; font-size: 20px; line-height: 46px; font-weight: bold;">✉️</span>
-                            </div>
-                            <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.025em;">New Contact Form Submission</h1>
-                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">RankCare Website</p>
-                            </td>
-                        </tr>
-
-                        <!-- Content Body -->
-                        <tr>
-                            <td style="padding: 24px;">
-                            <!-- Contact Information Table -->
-                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
-                                <tr>
-                                <td style="padding-bottom: 12px; font-size: 13px; color: #64748b; font-weight: 500;">Name:</td>
-                                <td style="padding-bottom: 12px; font-size: 15px; font-weight: 600; color: #0f172a;">{name}</td>
-                                </tr>
-                                <tr>
-                                <td style="padding-bottom: 12px; font-size: 13px; color: #64748b; font-weight: 500;">Email:</td>
-                                <td style="padding-bottom: 12px; font-size: 15px; font-weight: 600; color: #0f172a;"><a href="mailto:{email}" style="color: #2563eb; text-decoration: none;">{email}</a></td>
-                                </tr>
-                                <tr>
-                                <td style="font-size: 13px; color: #64748b; font-weight: 500;">Company:</td>
-                                <td style="font-size: 15px; font-weight: 600; color: #0f172a;">{company if company else 'Not provided'}</td>
-                                </tr>
-                            </table>
-
-                            <!-- Message Section -->
-                            <div style="margin-bottom: 24px;">
-                                <p style="margin: 0 0 8px 0; font-size: 13px; color: #64748b; font-weight: 500;">Message:</p>
-                                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px;">
-                                    <p style="margin: 0; font-size: 15px; color: #334155; line-height: 1.6; white-space: pre-wrap;">{message}</p>
-                                </div>
-                            </div>
-
-                            <!-- Action Button -->
-                            <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                                <tr>
-                                <td align="center">
-                                    <a href="mailto:{email}" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Reply to {name}</a>
-                                </td>
-                                </tr>
-                            </table>
-                            </td>
-                        </tr>
-
-                        <!-- Footer -->
-                        <tr>
-                            <td style="padding: 0 24px 24px 24px; text-align: center;">
-                            <p style="margin: 0; font-size: 12px; color: #94a3b8;">This message was sent from the RankCare contact form.</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
-                            </td>
-                        </tr>
-
-                        </table>
-                    </td>
-                    </tr>
-                </table>
-                </body>
-                </html>
-            """
+            "html": html_body,
+            "attachments": [
+                {
+                    "filename": attachment_filename,
+                    "content": attachment_bytes.decode("latin-1"),
+                }
+            ],
         })
-
-        logger.info("RESEND CONTACT FORM EMAIL RESPONSE: %s", response)
-        logger.info("CONTACT FORM SUBMISSION: %s (%s)", name, email)
-
+        logger.info("RESEND ATTACHMENT EMAIL RESPONSE: %s", response)
+        return True
     except Exception as exc:
-        logger.exception("FAILED TO SEND CONTACT FORM EMAIL: %s", exc)
+        logger.exception("FAILED TO SEND ATTACHMENT EMAIL: %s", exc)
+        return False
+
+
+

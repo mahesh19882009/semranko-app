@@ -1,10 +1,17 @@
+import logging
+import math
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project
 from app.services.plan_service import ensure_keyword_limit, count_user_keywords, get_user_plan_limits, get_user_or_404
+from app.services.dataforseo_client import DataForSEOClient
+from app.services.credit_service import check_credits
+from app.services.team_service import get_team_owner_id
 from app.utils.serializers import model_to_dict
+
+logger = logging.getLogger(__name__)
 
 
 def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> dict:
@@ -32,15 +39,41 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
 
     ensure_keyword_limit(db, user_id)
 
+    owner_id_for_check = get_team_owner_id(db, user_id)
+    check_credits(db, owner_id_for_check, 15)
+
     keyword = Keyword(
         projectId=project_id,
         keyword=normalized_keyword,
-        location=(payload.get("location") or None),
+        location=(payload.get("location") or "India"),
         device=(payload.get("device") or "desktop"),
     )
     db.add(keyword)
     db.commit()
     db.refresh(keyword)
+
+    try:
+        metrics = DataForSEOClient.get_keyword_metrics(
+            db,
+            user_id,
+            [{"keyword": normalized_keyword, "location": keyword.location or "India"}],
+        )
+        batch_data = {item.get("seed", ""): item for item in metrics.get("results", [])}
+        data = batch_data.get(normalized_keyword)
+        if data:
+            keyword.volume = data.get("volume")
+            keyword.kd = data.get("difficulty")
+            keyword.cpc = data.get("cpc")
+            keyword.competition = data.get("competition")
+            keyword.backlinks = data.get("backlinks")
+            keyword.referring_domains = data.get("referring_domains")
+            keyword.intent = data.get("intent")
+        db.commit()
+        db.refresh(keyword)
+    except Exception as e:
+        logger.error(f"Failed to fetch keyword metrics for {normalized_keyword}: {e}")
+        raise
+
     return model_to_dict(keyword)
 
 
@@ -55,7 +88,7 @@ def get_project_keywords(db: Session, user_id: str, project_id: str) -> list[dic
     return [model_to_dict(keyword) for keyword in keywords]
 
 
-def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list[str]) -> dict:
+def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list[str], location: str = "India") -> dict:
     project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
     if not project:
         raise ApiError(404, "Project not found")
@@ -77,6 +110,9 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         if kw:
             normalized_keywords.append(kw)
 
+    if not normalized_keywords:
+        return {"added": 0, "skipped": 0, "keywords": []}
+
     existing = db.scalars(
         select(Keyword.keyword).where(
             Keyword.projectId == project_id,
@@ -93,14 +129,40 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         keyword = Keyword(
             projectId=project_id,
             keyword=kw,
-            location=None,
+            location=location,
             device="desktop",
         )
         db.add(keyword)
         added.append(kw)
         existing_set.add(kw)
 
+    if added:
+        owner_id_for_check = get_team_owner_id(db, user_id)
+        credits_needed = 15 * len(added)
+        check_credits(db, owner_id_for_check, credits_needed)
+
     db.commit()
+
+    if added:
+        metrics = DataForSEOClient.bulk_keyword_lookup(
+            db,
+            user_id,
+            [{"keyword": kw_text, "location": location} for kw_text in added],
+        )
+        batch_data = {item.get("seed", ""): item for item in metrics.get("results", [])}
+        for kw_text in added:
+            data = batch_data.get(kw_text)
+            if data:
+                keyword = db.scalar(select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text))
+                if keyword:
+                    keyword.volume = data.get("volume")
+                    keyword.kd = data.get("difficulty")
+                    keyword.cpc = data.get("cpc")
+                    keyword.competition = data.get("competition")
+                    keyword.backlinks = data.get("backlinks")
+                    keyword.referring_domains = data.get("referring_domains")
+                    keyword.intent = data.get("intent")
+        db.commit()
 
     return {
         "added": len(added),

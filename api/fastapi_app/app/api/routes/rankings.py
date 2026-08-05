@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -13,6 +14,19 @@ from app.services.ranking_service import (
 )
 
 router = APIRouter(prefix="/rankings", tags=["rankings"])
+
+
+@router.get("/schedule")
+def get_schedule(
+    user: dict = Depends(get_current_user),
+) -> dict:
+    now = datetime.utcnow()
+    days_ahead = (0 - now.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    next_run = now + timedelta(days=days_ahead)
+    next_run = next_run.replace(hour=1, minute=0, second=0, microsecond=0)
+    return ok("Schedule fetched", {"nextRunAt": next_run.isoformat() + "Z"})
 
 
 @router.get("/{project_id}")

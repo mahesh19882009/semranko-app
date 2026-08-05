@@ -1,268 +1,190 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from pydantic import BaseModel
-from typing import Optional, List
 
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
-from app.db.models import Team, TeamMember
+from app.schemas.team import (
+    TeamCreate,
+    TeamUpdate,
+    TeamMemberAdd,
+    TeamMemberUpdate,
+    TeamResponse,
+    TeamMemberResponse,
+)
 from app.services.team_service import (
     create_team,
     get_user_teams,
-    get_team,
+    get_team_by_id,
     get_team_members,
     add_team_member,
-    remove_team_member,
     update_team_member_role,
-    delete_team,
-    invite_user_to_team,
-    get_team_invites,
-    accept_team_invite,
-    cancel_team_invite,
+    remove_team_member,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
-class CreateTeamRequest(BaseModel):
-    name: str
-
-
-class AddTeamMemberRequest(BaseModel):
-    email: str
-    role: str = "member"
-
-
-class UpdateTeamMemberRequest(BaseModel):
-    role: str
-
-
-@router.post("/create")
+@router.post("/")
 async def create_team_endpoint(
-    request: CreateTeamRequest,
+    payload: TeamCreate,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Create a new team
-    """
-    team = create_team(db, current_user["id"], request.name)
-    
+    team = create_team(db, current_user["id"], payload.name)
+    members = get_team_members(db, team.id)
+    member_list = [
+        {
+            "id": m.id,
+            "team_id": m.teamId,
+            "user_id": m.userId,
+            "role": m.role,
+            "joined_at": m.joinedAt.isoformat() if m.joinedAt else None,
+            "user_name": m.user.name if m.user else None,
+            "user_email": m.user.email if m.user else None,
+        }
+        for m in members
+    ]
     return ok("Team created", {
         "id": team.id,
+        "owner_id": team.ownerId,
         "name": team.name,
-        "ownerId": team.ownerId,
-        "createdAt": team.createdAt.isoformat()
+        "created_at": team.createdAt.isoformat() if team.createdAt else None,
+        "members": member_list,
     })
 
 
-@router.get("/list")
+@router.get("/")
 async def list_teams(
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    List all teams for the current user
-    """
     teams = get_user_teams(db, current_user["id"])
-    
-    teams_data = [
-        {
+    result = []
+    for team in teams:
+        members = get_team_members(db, team.id)
+        member_list = [
+            {
+                "id": m.id,
+                "team_id": m.teamId,
+                "user_id": m.userId,
+                "role": m.role,
+                "joined_at": m.joinedAt.isoformat() if m.joinedAt else None,
+                "user_name": m.user.name if m.user else None,
+                "user_email": m.user.email if m.user else None,
+            }
+            for m in members
+        ]
+        result.append({
             "id": team.id,
+            "owner_id": team.ownerId,
             "name": team.name,
-            "ownerId": team.ownerId,
-            "createdAt": team.createdAt.isoformat()
-        }
-        for team in teams
-    ]
-    
-    return ok("Teams retrieved", {"teams": teams_data})
+            "created_at": team.createdAt.isoformat() if team.createdAt else None,
+            "members": member_list,
+        })
+    return ok("Teams retrieved", {"teams": result})
 
 
 @router.get("/{team_id}")
-async def get_team_endpoint(
+async def get_team(
     team_id: str,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get a specific team
-    """
-    team = get_team(db, team_id, current_user["id"])
-    
+    team = get_team_by_id(db, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
+    members = get_team_members(db, team_id)
+    member_list = [
+        {
+            "id": m.id,
+            "team_id": m.teamId,
+            "user_id": m.userId,
+            "role": m.role,
+            "joined_at": m.joinedAt.isoformat() if m.joinedAt else None,
+            "user_name": m.user.name if m.user else None,
+            "user_email": m.user.email if m.user else None,
+        }
+        for m in members
+    ]
     return ok("Team retrieved", {
         "id": team.id,
+        "owner_id": team.ownerId,
         "name": team.name,
-        "ownerId": team.ownerId,
-        "createdAt": team.createdAt.isoformat()
+        "created_at": team.createdAt.isoformat() if team.createdAt else None,
+        "members": member_list,
     })
 
 
-@router.get("/{team_id}/members")
-async def get_team_members_endpoint(
+@router.post("/{team_id}/members")
+async def add_member(
     team_id: str,
+    payload: TeamMemberAdd,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Get all members of a team
-    """
-    # Verify user is a member
-    team = get_team(db, team_id, current_user["id"])
+    team = get_team_by_id(db, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    if team.ownerId != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Only team owner can add members")
     
-    members = get_team_members(db, team_id)
+    # Query user by email to get UUID
+    from app.db.models import User
+    target_user = db.scalar(select(User).where(User.email == payload.email))
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User account not registered on this system")
     
-    return ok("Team members retrieved", {"members": members})
-
-
-@router.post("/{team_id}/invite")
-async def invite_team_member_endpoint(
-    team_id: str,
-    request: AddTeamMemberRequest,
-    db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Invite a user to a team by email
-    """
-    result = invite_user_to_team(db, team_id, request.email, request.role, current_user["id"])
-    
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    return ok("User invited to team", {
-        "success": True,
-        "invite": result.get("invite")
+    member = add_team_member(db, team_id, target_user.id, payload.role)
+    return ok("Member added", {
+        "id": member.id,
+        "team_id": member.teamId,
+        "user_id": member.userId,
+        "role": member.role,
+        "joined_at": member.joinedAt.isoformat() if member.joinedAt else None,
     })
 
 
-@router.put("/{team_id}/members/{user_id}/role")
-async def update_team_member_role_endpoint(
+@router.put("/{team_id}/members/{user_id}")
+async def update_member_role(
     team_id: str,
     user_id: str,
-    request: UpdateTeamMemberRequest,
+    payload: TeamMemberUpdate,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Update a team member's role
-    """
-    success = update_team_member_role(db, team_id, user_id, request.role, current_user["id"])
-    
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to update member role")
-    
-    return ok("Member role updated", {"success": True})
+    team = get_team_by_id(db, team_id)
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team.ownerId != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Only team owner can update members")
+    member = update_team_member_role(db, team_id, user_id, payload.role)
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return ok("Member updated", {
+        "id": member.id,
+        "team_id": member.teamId,
+        "user_id": member.userId,
+        "role": member.role,
+    })
 
 
 @router.delete("/{team_id}/members/{user_id}")
-async def remove_team_member_endpoint(
+async def remove_member(
     team_id: str,
     user_id: str,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
 ):
-    """
-    Remove a member from a team
-    """
-    result = remove_team_member(db, team_id, user_id, current_user["id"])
-    
-    if not result:
-        # Check specific failure reason
-        requesting_member = db.execute(
-            select(TeamMember)
-            .where(TeamMember.teamId == team_id)
-            .where(TeamMember.userId == current_user["id"])
-        ).scalar_one_or_none()
-        
-        if not requesting_member or requesting_member.role not in ["admin", "owner"]:
-            raise HTTPException(status_code=403, detail="Only admins and owners can remove team members")
-        
-        team = db.execute(
-            select(Team)
-            .where(Team.id == team_id)
-        ).scalar_one_or_none()
-        
-        if team and team.ownerId == user_id:
-            raise HTTPException(status_code=400, detail="Cannot remove the team owner")
-        
-        raise HTTPException(status_code=400, detail="Failed to remove member")
-    
-    return ok("Member removed", {"success": True})
-
-
-@router.delete("/{team_id}")
-async def delete_team_endpoint(
-    team_id: str,
-    db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Delete a team
-    """
-    try:
-        delete_team(db, team_id, current_user["id"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    return ok("Team deleted", {"success": True})
-
-
-@router.get("/{team_id}/invites")
-async def get_team_invites_endpoint(
-    team_id: str,
-    db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Get all pending invitations for a team
-    """
-    # Verify user is a member of the team
-    team = get_team(db, team_id, current_user["id"])
+    team = get_team_by_id(db, team_id)
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
-    invites = get_team_invites(db, team_id)
-    return ok("Team invitations retrieved", {"invites": invites})
-
-
-@router.post("/{team_id}/invites/{invite_id}/accept")
-async def accept_team_invite_endpoint(
-    team_id: str,
-    invite_id: str,
-    db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Accept a team invitation
-    """
-    result = accept_team_invite(db, invite_id, current_user["id"])
-    
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    return ok(result["message"], {"success": True})
-
-
-@router.delete("/{team_id}/invites/{invite_id}")
-async def cancel_team_invite_endpoint(
-    team_id: str,
-    invite_id: str,
-    db: Session = Depends(db_session),
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Cancel a team invitation
-    """
-    result = cancel_team_invite(db, invite_id, team_id, current_user["id"])
-    
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    return ok(result["message"], {"success": True})
+    if team.ownerId != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Only team owner can remove members")
+    success = remove_team_member(db, team_id, user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return ok("Member removed")

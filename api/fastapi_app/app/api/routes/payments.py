@@ -13,6 +13,7 @@ from app.db.models import User, Subscription
 from app.services.payment_service import create_order, verify_payment_signature, activate_subscription
 from app.services import email_service
 from app.services.plan_service import PLAN_DEFINITIONS
+from app.services.credit_service import create_pending_ledger_entry, finalize_pending_ledger_entry, add_purchased_credits
 from app.core.config import FREE_PLAN_LIMITS, GST_RATE, get_settings
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -24,9 +25,9 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency"}
 GST_RATE = Decimal(str(GST_RATE))
 PLAN_KEY_PRICES = {
-    "starter": {"monthly": 1999, "yearly": 1499},
-    "pro":     {"monthly": 4999, "yearly": 3999},
-    "agency":  {"monthly": 9999, "yearly": 7999},
+    "starter": {"monthly": 639, "yearly": 6932},
+    "pro":     {"monthly": 1589, "yearly": 17235},
+    "agency":  {"monthly": 3969, "yearly": 43058},
 }
 
 def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
@@ -79,6 +80,7 @@ def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> di
 async def create_payment_order(
     plan_id: int = Query(..., description="Plan ID to upgrade to"),
     amount: int = Query(..., description="Amount in smallest currency unit (e.g., paise)"),
+    billing_cycle: str = Query("monthly", description="Billing cycle: monthly or yearly"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -107,7 +109,7 @@ async def create_payment_order(
                 # Get current plan price
                 current_plan_id = existing_subscription.planId
                 current_plan_key = PLAN_ID_TO_KEY.get(current_plan_id, "starter")
-                current_plan_price = PLAN_KEY_PRICES.get(current_plan_key, {}).get("monthly", 1999)
+                current_plan_price = PLAN_KEY_PRICES.get(current_plan_key, {}).get("monthly", 639)
                 
                 # Calculate daily rate and remaining value
                 daily_rate = current_plan_price / 30  # Assuming 30-day month
@@ -148,7 +150,8 @@ async def create_payment_order(
                 user_id=current_user.id,
                 plan_id=plan_id,
                 payment_id=pay_id,
-                order_id=order_id
+                order_id=order_id,
+                billing_cycle=billing_cycle
             )
             credit_deducted = round(applied_credit_paise / 100.0, 2)
             current_user.creditBalance = round(max(0.0, available_credit - credit_deducted), 2)
@@ -176,8 +179,10 @@ async def create_payment_order(
         
         order = create_order(amount=net_amount_paise, currency="INR", force_mock=force_mock)
 
-        # Save PaymentOrder record with status=created (pending verification)
-        payment_order = PO(
+        plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
+        plan_name = PLAN_DEFINITIONS.get(plan_key, {}).get("name", "Unknown")
+
+        credit_order = PO(
             userId=current_user.id,
             razorpayOrderId=order["id"],
             planId=plan_id,
@@ -186,7 +191,20 @@ async def create_payment_order(
             currency=order["currency"],
             status="created",
         )
-        db.add(payment_order)
+        db.add(credit_order)
+        db.flush()
+
+        create_pending_ledger_entry(
+            db=db,
+            user_id=current_user.id,
+            owner_id=current_user.id,
+            amount=float(net_amount_paise) / 100.0,
+            action_type="purchase",
+            description=f"Subscription purchase: {plan_name} (Order {order['id']})",
+            related_order_id=order["id"],
+            plan_name=plan_name,
+        )
+
         db.commit()
 
         return {
@@ -219,13 +237,14 @@ async def verify_payment(
 ):
     """
     Verify Razorpay payment signature and activate subscription.
-    Expected body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id, credit_applied }
+    Expected body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, plan_id, credit_applied, billing_cycle }
     """
     razorpay_order_id = request_data.get("razorpay_order_id")
     razorpay_payment_id = request_data.get("razorpay_payment_id")
     razorpay_signature = request_data.get("razorpay_signature")
     plan_id = request_data.get("plan_id")
     credit_applied = float(request_data.get("credit_applied", 0.0) or 0.0)
+    billing_cycle = request_data.get("billing_cycle", "monthly")
     
     if razorpay_order_id is None or razorpay_payment_id is None or razorpay_signature is None or plan_id is None:
         raise HTTPException(status_code=400, detail="Missing required payment fields")
@@ -261,7 +280,8 @@ async def verify_payment(
             user_id=current_user.id,
             plan_id=plan_id,
             payment_id=razorpay_payment_id,
-            order_id=razorpay_order_id
+            order_id=razorpay_order_id,
+            billing_cycle=billing_cycle
         )
 
         if credit_applied > 0:
@@ -408,7 +428,6 @@ async def get_invoices(
         "data": {
             "invoices": invoices,
             "credit_balance": float(getattr(current_user, "creditBalance", 0.0) or 0.0),
-            "pendingPlanChange": getattr(current_user, "pendingPlanChange", None),
             "user_name": current_user.name,
             "user_email": current_user.email,
         }
@@ -422,7 +441,7 @@ async def razorpay_webhook(
     db: Session = Depends(get_db)
 ):
     from app.services.payment_service import handle_webhook
-    from app.db.models import User, PaymentOrder as PO
+    from app.db.models import User, PaymentOrder as PO, CreditLedger
 
     if not signature:
         raise HTTPException(status_code=400, detail="Missing signature")
@@ -458,14 +477,28 @@ async def razorpay_webhook(
         db.add(payment_order)
         db.commit()
 
+        finalize_pending_ledger_entry(
+            db=db,
+            order_id=order_id,
+            amount_paid_inr=float(payment_order.amount) / 100.0,
+            plan_name=plan_name,
+        )
+
         try:
             subscription = activate_subscription(
                 db=db,
                 user_id=user.id,
                 plan_id=plan_id if plan_id is not None else payment_order.planId,
                 payment_id=payment_id,
-                order_id=order_id
+                order_id=order_id,
+                billing_cycle="monthly"
             )
+            user = db.scalar(select(User).where(User.id == user.id))
+            if user:
+                user.selectedPlan = PLAN_ID_TO_KEY.get(plan_id if plan_id is not None else payment_order.planId, "starter")
+                db.add(user)
+                db.commit()
+                db.refresh(user)
         except Exception as exc:
             logger.exception("Webhook subscription activation failed: %s", exc)
 
@@ -482,6 +515,18 @@ async def razorpay_webhook(
         payment_order.razorpayPaymentId = payment_id
         db.add(payment_order)
         db.commit()
+
+        ledger = db.scalar(
+            select(CreditLedger).where(
+                CreditLedger.relatedOrderId == order_id,
+                CreditLedger.status == "pending",
+            )
+        )
+        if ledger:
+            ledger.status = "failed"
+            db.add(ledger)
+            db.commit()
+            db.refresh(ledger)
 
         email_service.send_payment_failure_email(
             to_email=user.email,
