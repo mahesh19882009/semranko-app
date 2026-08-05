@@ -3,10 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
 import { PLANS, PLAN_COMPARISON, CREDIT_ITEMS, VALID_PLAN_KEYS } from "../config/pricing";
-import { initRazorpayCheckout } from "../lib/api";
+import { initRazorpayCheckout, apiRequest } from "../lib/api";
 import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
 import Alert from "../components/ui/Alert";
+// Assuming you have an action to fetch pricing if not already auto-fetched
+// If your app auto-fetches on mount via a wrapper, you might not need to dispatch here, 
+// but keeping it safe ensures data is requested.
+import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 
 const PLAN_ORDER = {
   free_trial: 0,
@@ -17,32 +21,40 @@ const PLAN_ORDER = {
 };
 
 const PLAN_ID_MAP = {
-  free_trial: 0,
-  starter: 1,
-  pro: 2,
-  agency: 3,
-  enterprise: 4,
+  starter: 0,
+  pro: 1,
+  agency: 2,
 };
 
 export default function PricingPage() {
   const navigate = useNavigate();
+  const dispatch = useDispatch();
   const [authenticated, setAuthenticated] = useState(false);
-  
+
   useEffect(() => {
     setAuthenticated(isAuthenticated());
-  }, []);
+    // Ensure we fetch fresh pricing data when component mounts (handles refresh scenario)
+    if (isAuthenticated()) {
+      dispatch(fetchCurrentPricing());
+    }
+  }, [dispatch]);
+
   const [loadingPlan, setLoadingPlan] = useState(null);
   const [paymentError, setPaymentError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [faqs, setFaqs] = useState([]);
   const [loadingFaqs, setLoadingFaqs] = useState(true);
   const [openFaq, setOpenFaq] = useState(null);
-  const [creditBalance, setCreditBalance] = useState(null);
-  const [loadingCredits, setLoadingCredits] = useState(false);
 
+  // Select data directly from Redux store
   const pricingCurrent = useSelector((state) => state.pricing.current);
+  const pricingLoading = useSelector((state) => state.pricing.loading);
+  const pricingPlans = useSelector((state) => state.pricing.plans);
+
   const currentPlan = pricingCurrent?.plan || null;
-  const currentCreditBalance = pricingCurrent?.creditBalance ?? null;
+  const currentCreditBalance = pricingCurrent?.creditBalance;
+
+  const plans = pricingPlans?.length > 0 ? pricingPlans : PLANS;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +66,7 @@ export default function PricingPage() {
           setFaqs(data);
         }
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         if (!cancelled) setLoadingFaqs(false);
       });
@@ -74,15 +86,13 @@ export default function PricingPage() {
     }
 
     if (!authenticated) {
-      // ALWAYS send to standard registration for Free Trial - no plan selection
       navigate("/register");
       return;
     }
 
-    const plan = PLANS.find((p) => p.key === planKey);
+    const plan = plans.find((p) => p.key === planKey);
     if (!plan) return;
 
-    // Don't allow payment for free_trial plan
     if (planKey === "free_trial") {
       navigate("/dashboard");
       return;
@@ -94,11 +104,11 @@ export default function PricingPage() {
       const amount = plan.monthlyPrice * 100;
       const order = await createPaymentOrderApi(planId, amount);
 
-        await initRazorpayCheckout({
-          order_id: order.order_id,
-          amount: order.amount,
-          currency: order.currency || "INR",
-          key_id: order.key_id,
+      await initRazorpayCheckout({
+        order_id: order.order_id,
+        amount: order.amount,
+        currency: order.currency || "INR",
+        key_id: order.key_id,
         prefill: {
           name: "",
           email: "",
@@ -114,6 +124,8 @@ export default function PricingPage() {
             );
             if (verifyResult?.success) {
               setSuccessMessage(`Successfully upgraded to ${plan.name}!`);
+              // Refresh pricing data after successful payment
+              dispatch(fetchCurrentPricing());
               setTimeout(() => navigate("/dashboard"), 1500);
             } else {
               setPaymentError("Payment verification failed. Please contact support.");
@@ -124,9 +136,20 @@ export default function PricingPage() {
             setLoadingPlan(null);
           }
         },
-        onPaymentError: (error) => {
+        onPaymentError: async (error) => {
           setPaymentError(error?.description || "Payment failed. Please try again.");
           setLoadingPlan(null);
+
+          try {
+            if (order?.order_id) {
+              await apiRequest("/payments/mark-failed", {
+                method: "POST",
+                body: JSON.stringify({ razorpay_order_id: order.order_id }),
+              });
+            }
+          } catch (err) {
+            console.error("Failed to mark payment as failed:", err);
+          }
         },
       });
     } catch (err) {
@@ -139,12 +162,13 @@ export default function PricingPage() {
     setOpenFaq(openFaq === index ? null : index);
   };
 
+  // Use Redux data directly, fallback to 0 if loading or null
   const displayedCreditBalance = useMemo(() => {
     if (currentCreditBalance !== null && currentCreditBalance !== undefined) {
       return currentCreditBalance;
     }
-    return creditBalance;
-  }, [currentCreditBalance, creditBalance]);
+    return pricingLoading ? null : 0;
+  }, [currentCreditBalance, pricingLoading]);
 
   return (
     <div className="bg-slate-50">
@@ -155,7 +179,9 @@ export default function PricingPage() {
             <div className="inline-flex items-center gap-3 rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
               <span>Current Plan: {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</span>
               <span className="text-emerald-400">|</span>
-              <span>Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '—'}</span>
+              <span>
+                Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '...'}
+              </span>
             </div>
           ) : (
             <Link
@@ -178,12 +204,16 @@ export default function PricingPage() {
         </div>
 
         {/* Pricing Grid */}
-        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {PLANS.map((plan) => {
+        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 justify-center">
+          {plans.map((plan) => {
             const isEnterprise = plan.key === "enterprise";
+            const discountPct = plan.individual_discount_pct || 0;
+            const basePrice = plan.monthlyPrice;
+            const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
+            const cleanDisplayPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
             const priceDisplay = isEnterprise
               ? "Custom"
-              : `₹${plan.monthlyPrice.toLocaleString('en-US')} / month`;
+              : `₹${cleanDisplayPrice.toLocaleString('en-US')} / month`;
             const isCurrentPlan = authenticated && currentPlan === plan.key;
             const currentPlanOrder = currentPlan ? PLAN_ORDER[currentPlan] : -1;
             const planOrder = PLAN_ORDER[plan.key];
@@ -193,13 +223,12 @@ export default function PricingPage() {
             return (
               <div
                 key={plan.key}
-                className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${
-                  isCurrentPlan
-                    ? "border-emerald-500 ring-1 ring-emerald-500"
-                    : plan.highlighted
-                      ? "border-indigo-600 ring-1 ring-indigo-600"
-                      : "border-slate-200"
-                }`}
+                className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${isCurrentPlan
+                  ? "border-emerald-500 ring-1 ring-emerald-500"
+                  : plan.highlighted
+                    ? "border-indigo-600 ring-1 ring-indigo-600"
+                    : "border-slate-200"
+                  }`}
               >
                 {isCurrentPlan && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
@@ -229,9 +258,23 @@ export default function PricingPage() {
                 </div>
 
                 <div className="mb-6">
-                  <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
-                  {!isEnterprise && (
-                    <span className="text-sm text-slate-500">/ month</span>
+                  {discountPct > 0 && !isEnterprise ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm text-slate-400 line-through">
+                        ₹{basePrice.toLocaleString('en-US')}
+                      </span>
+                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
+                      <span className="text-xs font-medium text-emerald-600">
+                        Save {discountPct}%
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
+                      {!isEnterprise && (
+                        <span className="text-sm text-slate-500">/ month</span>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -240,21 +283,37 @@ export default function PricingPage() {
                     {plan.monthlyCredits.toLocaleString('en-US')} Monthly Credits
                   </p>
                   <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Bulk max: {plan.bulkMaxKeywords.toLocaleString('en-US')} keywords/list
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Competitor spy: {plan.competitorSpyLimit.toLocaleString('en-US')} rows
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-indigo-600">✓</span>
-                      Weekly tracking:{" "}
-                      {plan.weeklyTrackingEnabled
-                        ? `${plan.maxWeeklyTrackedKeywords.toLocaleString('en-US')} keywords`
-                        : "Disabled"}
-                    </li>
+                    {plan.key === "free_trial" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>7-day free trial</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>{plan.monthlyCredits.toLocaleString('en-US')} platform credits to use across all features dynamically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Basic keyword tracking</li>
+                      </>
+                    ) : plan.key === "starter" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 100 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Keyword Research tool</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Competitor Spy module</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
+                      </>
+                    ) : plan.key === "pro" ? (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 500 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full access to advanced search utilities</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
+                      </>
+                    ) : (
+                      <>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 2,000 keywords automatically</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full Agency White-Label brand logo engine</li>
+                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Priority bulk processing background queues</li>
+                      </>
+                    )}
                   </ul>
                 </div>
 
@@ -276,17 +335,16 @@ export default function PricingPage() {
                   <button
                     onClick={() => handleSelectPlan(plan.key)}
                     disabled={loadingPlan === plan.key}
-                    className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                      plan.highlighted
-                        ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-                        : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-                    }`}
+                    className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlighted
+                      ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+                      : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                      }`}
                   >
-                    {loadingPlan === plan.key 
-                      ? "Processing..." 
-                      : !authenticated 
+                    {loadingPlan === plan.key
+                      ? "Processing..."
+                      : !authenticated
                         ? (plan.key === "free_trial" ? "Start Free Trial" : "Get Started")
-                        : isHigherTier 
+                        : isHigherTier
                           ? `Upgrade to ${plan.name}`
                           : plan.cta
                     }
@@ -297,37 +355,49 @@ export default function PricingPage() {
           })}
         </div>
 
-        {/* Credit Legend */}
+        {/* Credit Costing Calculator */}
         <div className="mt-20">
-          <h2 className="text-center text-2xl font-bold text-slate-900">How Credits Work</h2>
-          <p className="mt-2 text-center text-sm text-slate-500">
-            Credits are our internal currency. The more you use, the more you need.
-          </p>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            {CREDIT_ITEMS.map((item) => (
-              <div
-                key={item.label}
-                className={`group rounded-xl border bg-white p-4 text-center shadow-sm transition hover:shadow-md ${
-                  item.credits === 0
-                    ? "border-emerald-200 hover:border-emerald-300"
-                    : "border-slate-200 hover:border-indigo-200"
-                }`}
-              >
-                <div className="text-2xl">{item.icon}</div>
-                <p className="mt-2 text-sm font-medium text-slate-900">{item.label}</p>
-                <p className="mt-1 text-xs text-slate-500">{item.description}</p>
-                {item.credits === 0 ? (
-                  <div className="mt-3">
-                    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
-                      System Savings
-                    </span>
-                    <p className="mt-2 text-lg font-bold text-emerald-600">FREE</p>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-lg font-bold text-indigo-600">{item.credits} Credits</p>
-                )}
-              </div>
-            ))}
+          <div className="mx-auto max-w-3xl text-center">
+            <h2 className="text-2xl font-bold text-slate-900">How Credits are Calculated (Pure Consumption Model)</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              There are no hidden keyword limits. Every tool action burns tokens transparently based on the table below.
+            </p>
+          </div>
+          <div className="mx-auto mt-8 max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                  <th className="px-6 py-4 font-medium">Tool / Action</th>
+                  <th className="px-6 py-4 font-medium text-right">Credit Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[
+                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "15 Credits / Keyword", note: "Includes automated Monday weekly update" },
+                  { label: "Keyword Research Search Query", cost: "10 Credits / Search", note: "Live keyword ideas / metrics lookup" },
+                  { label: "Competitor Domain Spy Lookup", cost: "20 Credits / Domain Check", note: "Full competitor analysis per domain" },
+                  { label: "Add Extra Multi-Domain Project", cost: "10 Credits / New Property", note: "Create additional website property" },
+                  { label: "Premium CSV Report Download", cost: "10 Credits / Download Click", note: "Export downloadable spreadsheet report" },
+                ].map((row, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{row.label}</p>
+                        <p className="text-xs text-slate-500">{row.note}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right text-sm font-semibold text-slate-900">
+                      {row.cost}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
+              <p className="text-xs text-slate-600">
+                ➕ Need more? Top up <span className="font-semibold">1,000 credits</span> at any time on our Billing Page for flat <span className="font-semibold">₹500</span>.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -372,57 +442,6 @@ export default function PricingPage() {
             )}
           </div>
         </div>
-
-        {/* Credit Management Section */}
-        {authenticated && (
-          <div className="mt-20">
-            <h2 className="text-center text-2xl font-bold text-slate-900">Credit Management</h2>
-            <p className="mt-2 text-center text-sm text-slate-500">
-              Monitor your credit balance and purchase more credits.
-            </p>
-
-            <div className="mx-auto mt-8 max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              {creditBalance !== null ? (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-slate-500">Available Credits</p>
-                    <p className="text-3xl font-bold text-slate-900">{creditBalance.toFixed(2)}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setLoadingCredits(true);
-                      window.location.href = "/billing";
-                    }}
-                    className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700"
-                  >
-                    Manage Credits
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={async () => {
-                    setLoadingCredits(true);
-                    try {
-                      const res = await fetch("/api/billing/credits/balance");
-                      const data = await res.json();
-                      if (data.success) {
-                        setCreditBalance(data.data.balance);
-                      }
-                    } catch {
-                      setPaymentError("Failed to load credit balance");
-                    } finally {
-                      setLoadingCredits(false);
-                    }
-                  }}
-                  disabled={loadingCredits}
-                  className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  {loadingCredits ? "Loading..." : "View Credit Balance"}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Alerts */}
         {paymentError && (

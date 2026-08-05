@@ -184,27 +184,33 @@ def lock_tracked_keyword(db: Session, user_id: str, keyword: str, location: str 
     if existing:
         db.delete(existing)
 
-    deduct_credits(db, user_id, 20, "charge", f"Tracked keyword: {keyword}")
+    try:
+        deduct_credits(db, user_id, 20, "charge", f"Tracked keyword: {keyword}")
 
-    tracked = TrackedKeyword(
-        userId=user_id,
-        keyword=keyword,
-        location=location,
-        device=device,
-        lockedAt=datetime.utcnow(),
-        lockedUntil=datetime.utcnow() + timedelta(days=30),
-        isActive=True,
-    )
-    db.add(tracked)
-    db.flush()
+        tracked = TrackedKeyword(
+            userId=user_id,
+            keyword=keyword,
+            location=location,
+            device=device,
+            lockedAt=datetime.utcnow(),
+            lockedUntil=datetime.utcnow() + timedelta(days=30),
+            isActive=True,
+        )
+        db.add(tracked)
+        db.flush()
 
-    return {
-        "id": tracked.id,
-        "keyword": tracked.keyword,
-        "lockedAt": tracked.lockedAt.isoformat(),
-        "lockedUntil": tracked.lockedUntil.isoformat(),
-        "credits_charged": 20,
-    }
+        return {
+            "id": tracked.id,
+            "keyword": tracked.keyword,
+            "lockedAt": tracked.lockedAt.isoformat(),
+            "lockedUntil": tracked.lockedUntil.isoformat(),
+            "credits_charged": 20,
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Failed to lock tracked keyword {keyword}: {exc}")
+        refund_credits(db, user_id, 20, f"Refund: failed to lock tracked keyword {keyword}")
+        raise
 
 
 def unlock_tracked_keyword(db: Session, user_id: str, keyword: str) -> dict:

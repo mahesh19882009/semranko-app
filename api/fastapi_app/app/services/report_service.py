@@ -10,7 +10,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.db.models import Keyword, RankResult, Competitor, Project
+from app.db.models import Keyword, RankResult, Competitor, Project, KeywordCache
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,36 @@ def generate_csv_report(project_id: str, start_date: str, end_date: str) -> byte
     writer.writerow([])
 
     writer.writerow(["Keywords"])
-    writer.writerow(["Keyword", "Location", "Volume", "KD", "CPC", "Competition", "Created At"])
+    writer.writerow(["Keyword", "KD", "CPC", "Competition", "Backlinks", "Domains", "Intent", "Position", "AI"])
     writer.writerow([])
 
     return output.getvalue().encode("utf-8")
+
+
+def stream_project_keywords_csv(db: Session, project_id: str) -> io.StringIO:
+    keywords = db.scalars(
+        select(Keyword).where(Keyword.projectId == project_id)
+    ).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Keyword", "KD", "CPC", "Competition", "Backlinks", "Domains", "Intent", "Position", "AI"])
+
+    for kw in keywords:
+        writer.writerow([
+            kw.keyword,
+            kw.kd or "",
+            kw.cpc or "",
+            kw.competition or "",
+            kw.backlinks or "",
+            kw.referring_domains or "",
+            kw.intent or "",
+            kw.position or "",
+            kw.ai_badge or "",
+        ])
+
+    output.seek(0)
+    return output
 
 
 def generate_pdf_report(project_id: str, start_date: str, end_date: str) -> bytes:

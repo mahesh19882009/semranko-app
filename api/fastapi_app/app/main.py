@@ -64,6 +64,33 @@ def on_startup() -> None:
                     conn.execute(text('ALTER TABLE "User" ADD COLUMN pendingPlanChange VARCHAR'))
                     conn.commit()
                 logger.info("Added pendingPlanChange column to User")
+
+        if "project" in table_names:
+            columns = [c["name"] for c in inspector.get_columns("Project")]
+            if "client_logo_url" not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text('ALTER TABLE "Project" ADD COLUMN client_logo_url VARCHAR(500)'))
+                    conn.commit()
+                logger.info("Added client_logo_url column to Project")
+
+        if "keyword" in table_names:
+            columns = [c["name"] for c in inspector.get_columns("Keyword")]
+            keyword_alters = []
+            if "userId" not in columns:
+                keyword_alters.append('ADD COLUMN "userId" VARCHAR NOT NULL DEFAULT \'\'')
+            if "position" not in columns:
+                keyword_alters.append('ADD COLUMN "position" INTEGER')
+            if "ai_badge" not in columns:
+                keyword_alters.append('ADD COLUMN "ai_badge" VARCHAR')
+            if "isActive" not in columns:
+                keyword_alters.append('ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT TRUE')
+            if "updatedAt" not in columns:
+                keyword_alters.append('ADD COLUMN "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()')
+            if keyword_alters:
+                with engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE "Keyword" {", ".join(keyword_alters)}'))
+                    conn.commit()
+                logger.info("Added missing Keyword columns: %s", ", ".join(keyword_alters))
     except Exception as exc:
         logger.error(f"Startup migration failed: {exc}")
 

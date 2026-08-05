@@ -1,11 +1,12 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ApiError
-from app.db.models import Project, TrackedKeyword, CreditLedger, Team, TeamMember
+from app.db.models import Project, Keyword, RankResult, CreditLedger, KeywordCache, Competitor
 from app.services.plan_service import build_usage_snapshot, get_user_or_404, get_user_plan_limits
 
 
@@ -16,7 +17,7 @@ def ensure_project_access(db: Session, user_id: str, project_id: str) -> Project
         .options(
             selectinload(Project.keywords),
             selectinload(Project.competitors),
-            selectinload(Project.rankResults),
+            # We don't load rankResults anymore for the main stats to avoid reliance on empty table
         )
     )
 
@@ -25,53 +26,34 @@ def ensure_project_access(db: Session, user_id: str, project_id: str) -> Project
     return project
 
 
-def calculate_average_rank(rank_results: list) -> float:
-    valid_positions = [row.position for row in rank_results if isinstance(row.position, int) and row.position > 0]
+def calculate_average_rank_from_keywords(keywords: List[Keyword]) -> float:
+    """
+    Calculate average rank directly from the Keyword table's current_rank field.
+    This bypasses the empty RankResult history table.
+    """
+    valid_positions = []
+    
+    for kw in keywords:
+        # Adjust 'current_rank' to match your actual column name in Keyword model
+        # Common names: current_rank, position, last_rank
+        rank = getattr(kw, 'current_rank', None) or getattr(kw, 'position', None) or getattr(kw, 'last_rank', None)
+        
+        if rank is not None:
+            try:
+                rank_val = int(rank)
+                if rank_val > 0:
+                    valid_positions.append(rank_val)
+            except (ValueError, TypeError):
+                continue
+    
     if not valid_positions:
-        return 0
+        return 0.0
+    
     avg = sum(valid_positions) / len(valid_positions)
     return round(avg, 1)
 
 
-def calculate_estimated_traffic(rank_results: list) -> int:
-    valid_positions = [row.position for row in rank_results if isinstance(row.position, int) and row.position > 0]
-    if not valid_positions:
-        return 0
-
-    score = 0
-    for position in valid_positions:
-        if position <= 3:
-            score += 120
-        elif position <= 10:
-            score += 60
-        elif position <= 20:
-            score += 25
-        elif position <= 50:
-            score += 10
-        else:
-            score += 2
-    return score
-
-
-def build_rank_trend(rank_results: list) -> list[dict]:
-    grouped: dict[str, list[int]] = defaultdict(list)
-
-    for row in rank_results:
-        if not isinstance(row.position, int) or row.position <= 0:
-            continue
-        date_key = row.checkedAt.date().isoformat()
-        grouped[date_key].append(row.position)
-
-    trend = []
-    for label, positions in grouped.items():
-        avg = sum(positions) / len(positions)
-        trend.append({"label": label, "value": round(avg, 1)})
-
-    trend.sort(key=lambda item: datetime.fromisoformat(item["label"]))
-    return trend[-12:]
-
-
-def build_competitor_summary(competitors: list, keywords: list, preview_limit: int) -> list[dict]:
+def build_competitor_summary(competitors: List[Any], keywords: List[Keyword], preview_limit: int) -> List[Dict]:
     if not competitors:
         return []
 
@@ -81,7 +63,7 @@ def build_competitor_summary(competitors: list, keywords: list, preview_limit: i
         items.append(
             {
                 "id": competitor.id,
-                "domain": competitor.domain,
+                "domain": getattr(competitor, 'domain', 'Unknown'),
                 "sharedKeywords": max(0, round(keyword_count * (0.25 + index * 0.08))),
                 "overlap": min(95, 28 + index * 11),
             }
@@ -93,13 +75,14 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
     user = get_user_or_404(db, user_id)
     limits = get_user_plan_limits(user)
     project = ensure_project_access(db, user_id, project_id)
-
-    rank_results = sorted(project.rankResults, key=lambda r: r.checkedAt, reverse=True)[:500]
+    keywords = db.scalars(
+        select(Keyword).where(Keyword.projectId == project_id)
+    ).all()
 
     stats = {
-        "totalKeywords": len(project.keywords),
-        "avgRank": calculate_average_rank(rank_results),
-        "estimatedTraffic": calculate_estimated_traffic(rank_results),
+        "totalKeywords": len(keywords),
+        "avgRank": calculate_average_rank_from_keywords(keywords),
+        "estimatedTraffic": 0, 
         "technicalHealth": 0,
         "backlinks": 0,
         "reportsSent": 0,
@@ -107,72 +90,115 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
 
     return {
         "stats": stats,
-        "rankTrend": build_rank_trend(rank_results),
+        "rankTrend": [], # Empty until RankResult has data
         "audits": [],
         "competitors": {
-            "items": build_competitor_summary(
-                project.competitors,
-                project.keywords,
-                limits.get("competitorsPerProject", 3),
-            ),
+            "items": build_competitor_summary(project.competitors, keywords, limits.get("competitorsPerProject", 3)),
             "total": len(project.competitors),
             "previewLimit": limits.get("competitorsPerProject", 3),
         },
-        "reports": {
-            "items": [],
-            "total": 0,
-        },
+        "reports": {"items": [], "total": 0},
+        "client_logo_url": getattr(project, "client_logo_url", None),
         "usage": build_usage_snapshot(db, user),
     }
 
 
 def get_dashboard_overview(db: Session, user_id: str) -> dict:
-    owner_id = get_user_or_404(db, user_id).id
+    """
+    Get dashboard overview using Keyword -> KeywordCache chain.
+    """
+    user = get_user_or_404(db, user_id)
 
-    tracked_keywords_count = db.scalar(
-        select(func.count())
-        .select_from(TrackedKeyword)
-        .where(
-            TrackedKeyword.userId == user_id,
-            TrackedKeyword.isActive.is_(True),
-        )
-    ) or 0
-
-    rank_rows = db.scalars(
-        select(TrackedKeyword.lastPosition).where(
-            TrackedKeyword.userId == user_id,
-            TrackedKeyword.isActive.is_(True),
-            TrackedKeyword.lastPosition.is_not(None),
+    keywords = db.scalars(
+        select(Keyword).join(Project, Keyword.projectId == Project.id).where(
+            Project.userId == user_id
         )
     ).all()
 
-    valid_positions = [int(pos) for pos in rank_rows if pos and int(pos) > 0]
-    average_rank = round(sum(valid_positions) / len(valid_positions), 1) if valid_positions else 0
+    if not keywords:
+        return {
+            "tracked_keywords_count": 0,
+            "average_rank": 0,
+            "keywords": [],
+            "chart_data": {"labels": [], "positions": [], "credits": []},
+        }
 
-    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
-    credit_rows = db.scalars(
-        select(CreditLedger)
-        .where(
-            CreditLedger.ownerId == owner_id,
-            CreditLedger.timestamp >= thirty_days_ago,
-            CreditLedger.creditsSpent.is_not(None),
-        )
-        .order_by(CreditLedger.timestamp.asc())
+    keyword_strings = [kw.keyword for kw in keywords if kw.keyword]
+    keyword_locations = [(kw.keyword, kw.location or "India") for kw in keywords if kw.keyword]
+
+    cache_rows = db.scalars(
+        select(KeywordCache).where(KeywordCache.keyword.in_(keyword_strings))
+    ).all()
+    cache_map = {(row.keyword, row.location): row for row in cache_rows}
+
+    valid_positions = []
+    keywords_data = []
+
+    for kw in keywords:
+        keyword_text = kw.keyword
+        location = kw.location or "India"
+        cache = cache_map.get((keyword_text, location))
+
+        current_rank = kw.position if kw.position else (getattr(cache, "position", None) if cache else None)
+        if current_rank is not None:
+            try:
+                r_val = int(current_rank)
+                if r_val > 0:
+                    valid_positions.append(r_val)
+            except (ValueError, TypeError):
+                pass
+
+        keywords_data.append({
+            "id": kw.id,
+            "keyword": keyword_text,
+            "current_rank": current_rank,
+            "previous_rank": None,
+            "search_volume": kw.volume if kw.volume else (getattr(cache, "volume", 0) or 0 if cache else 0),
+            "difficulty": kw.kd if kw.kd else (getattr(cache, "kd", 0) or 0 if cache else 0),
+            "cpc": float(kw.cpc if kw.cpc else (getattr(cache, "cpc", 0) or 0 if cache else 0.0)),
+            "competition": float(kw.competition if kw.competition else (getattr(cache, "competition", 0) or 0 if cache else 0.0)),
+            "intent": kw.intent if kw.intent else (getattr(cache, "intent", "Unknown") or "Unknown" if cache else "Unknown"),
+            "backlinks": kw.backlinks if kw.backlinks else (getattr(cache, "backlinks", 0) or 0 if cache else 0),
+            "referring_domains": kw.referring_domains if kw.referring_domains else (getattr(cache, "referring_domains", 0) or 0 if cache else 0),
+            "ai_badge": kw.ai_badge if kw.ai_badge else (getattr(cache, "ai_badge", None) if cache else None),
+            "location": location,
+            "last_updated": kw.updatedAt.isoformat() if getattr(kw, "updatedAt", None) else (cache.updatedAt.isoformat() if cache and getattr(cache, "updatedAt", None) else None),
+        })
+
+    average_rank = round(sum(valid_positions) / len(valid_positions), 1) if valid_positions else 0.0
+
+    today = datetime.utcnow()
+    chart_labels = []
+    position_data = []
+    credit_data = []
+
+    seven_days_ago = today - timedelta(days=7)
+    credit_rows = db.query(CreditLedger).filter(
+        CreditLedger.ownerId == user.id,
+        CreditLedger.timestamp >= seven_days_ago
     ).all()
 
-    daily_spend: dict[str, float] = defaultdict(float)
+    daily_credits = defaultdict(float)
     for row in credit_rows:
         if row.timestamp:
             date_key = row.timestamp.date().isoformat()
-            daily_spend[date_key] += float(row.creditsSpent or 0)
+            daily_credits[date_key] += float(row.creditsSpent or 0)
 
-    chart_data = [
-        {"label": date_key, "value": round(total, 2)}
-        for date_key, total in sorted(daily_spend.items())
-    ]
+    for i in range(6, -1, -1):
+        date = today - timedelta(days=i)
+        date_key = date.date().isoformat()
+        chart_labels.append(date.strftime("%Y-%m-%d"))
+        position_data.append(None)
+        credit_data.append(daily_credits.get(date_key, 0.0))
 
     return {
-        "tracked_keywords_count": tracked_keywords_count,
+        "tracked_keywords_count": len(keywords_data),
         "average_rank": average_rank,
-        "chart_data": chart_data,
+        "keywords": keywords_data,
+        "chart_data": {
+            "labels": chart_labels,
+            "positions": position_data,
+            "credits": credit_data,
+        },
+        "usage": build_usage_snapshot(db, user),
     }

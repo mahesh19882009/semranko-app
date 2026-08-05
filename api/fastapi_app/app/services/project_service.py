@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project, RankResult
-from app.services.plan_service import ensure_project_limit
+from app.services.plan_service import ensure_project_limit, ensure_domain_limit
 from app.utils.serializers import model_to_dict
 
 
@@ -15,6 +15,7 @@ def create_project(db: Session, user_id: str, payload: dict) -> dict:
         raise ApiError(400, "Name and domain are required")
 
     ensure_project_limit(db, user_id)
+    ensure_domain_limit(db, user_id)
 
     project = Project(
         name=name.strip(),

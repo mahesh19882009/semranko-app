@@ -1,5 +1,5 @@
 'use client'
-import { apiRequest } from "../../lib/api";
+import { apiRequest, API_BASE_URL } from "../../lib/api";
 
 export const fetchPlansApi = async () => {
   const response = await apiRequest("/pricing/plans");
@@ -29,7 +29,6 @@ export const createPaymentOrderApi = async (planId, amount) => {
   const response = await apiRequest(`/payments/create-order?plan_id=${planId}&amount=${amount}`, {
     method: "POST",
   });
-  // Backend returns the order data directly (not wrapped in { success, message, data })
   return response || null;
 };
 
@@ -69,6 +68,13 @@ export const createCreditPurchaseOrderApi = async (credits) => {
   const response = await apiRequest("/billing/credit-purchase-order", {
     method: "POST",
     body: JSON.stringify({ credits }),
+  });
+  return response.data || null;
+};
+
+export const createCreditTopUpOrderApi = async (multiplier) => {
+  const response = await apiRequest(`/payments/create-top-up-order?multiplier=${multiplier}`, {
+    method: "POST",
   });
   return response.data || null;
 };
@@ -182,5 +188,13 @@ export const getUsageLogApi = async (page = 1, limit = 20, actionType = null) =>
   params.set('limit', String(limit));
   if (actionType) params.set('action_type', actionType);
   const response = await apiRequest(`/billing/usage-log?${params.toString()}`);
+  return response.data || null;
+};
+
+export const getLedgerHistoryApi = async (page = 1, limit = 20) => {
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  params.set('limit', String(limit));
+  const response = await apiRequest(`/billing/ledger-history?${params.toString()}`);
   return response.data || null;
 };

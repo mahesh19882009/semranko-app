@@ -53,7 +53,7 @@ def register_user(db: Session, payload: dict) -> dict:
         subscriptionStatus="trialing",
         trialStartsAt=trial_starts_at,
         trialEndsAt=trial_ends_at,
-        creditBalance=150.0,  # LOCKED: Always 150 credits
+        creditBalance=200.0,  # LOCKED: Always 200 credits
     )
 
     db.add(user)

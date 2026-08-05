@@ -44,8 +44,6 @@ def create_competitor(db: Session, user_id: str, payload: dict) -> dict:
     if existing:
         raise ApiError(409, "Competitor domain already exists for this project")
 
-    ensure_competitor_limit(db, user_id, project_id)
-
     competitor = Competitor(projectId=project_id, name=name.strip(), domain=clean_domain)
     db.add(competitor)
     db.commit()

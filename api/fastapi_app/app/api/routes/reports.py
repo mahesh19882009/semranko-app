@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from pydantic import BaseModel, field_validator
@@ -7,7 +8,7 @@ from typing import List, Optional
 
 from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
-from app.services.report_service import generate_csv_report, generate_pdf_report
+from app.services.report_service import generate_csv_report, generate_pdf_report, stream_project_keywords_csv
 from app.services import email_service
 from app.db.models import Project
 
@@ -90,3 +91,23 @@ async def export_project_report(
         "size_bytes": len(file_bytes),
         "email_queued": bool(request.email_recipients),
     })
+
+
+@router.get("/{project_id}/export-csv")
+async def stream_project_csv(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == current_user["id"])
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    csv_stream = stream_project_keywords_csv(db, project_id)
+    return StreamingResponse(
+        csv_stream,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=project-{project_id}-keywords.csv"},
+    )

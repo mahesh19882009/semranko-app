@@ -138,9 +138,7 @@ def enforce_limits(resource_type: str = None):
             if resource_type:
                 limits = get_user_plan_limits(user)
                 
-                if resource_type == 'project':
-                    ensure_project_limit(db, user.id)
-                elif resource_type == 'keyword':
+                if resource_type == 'keyword':
                     ensure_keyword_limit(db, user.id)
                 elif resource_type == 'competitor':
                     project_id = kwargs.get('project_id')

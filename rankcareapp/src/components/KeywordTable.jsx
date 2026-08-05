@@ -71,8 +71,6 @@ function KeywordTable() {
 
   const isBulkLoading = deletingBulkKeywords || deletingBulkRankings || clearingRankings;
 
-  const keywordLimitRemaining = (pricingCurrent?.limits?.keywords || 0) - (pricingCurrent?.usage?.keywords || 0);
-
   const filteredKeywords = useMemo(() => {
     return (keywords || []).filter((row) => {
       const kw = (row.keyword || '').toLowerCase();
@@ -249,23 +247,6 @@ function KeywordTable() {
 
     if (parsed.length === 0) return;
 
-    if (parsed.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      openConfirmModal({
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          closeConfirmModal();
-          window.location.href = '/billing';
-        },
-      });
-      return;
-    }
-
     const resultAction = await dispatch(
       parsed.length === 1
         ? addKeywordToProject({
@@ -305,23 +286,6 @@ function KeywordTable() {
   const handleCsvConfirm = async () => {
     setShowCsvConfirm(false);
     if (!selectedProjectId || csvPreview.length === 0) return;
-
-    if (csvPreview.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      openConfirmModal({
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          closeConfirmModal();
-          window.location.href = '/billing';
-        },
-      });
-      return;
-    }
 
     const resultAction = await dispatch(
       bulkAddKeywords({
@@ -738,14 +702,10 @@ function KeywordTable() {
           open={showCsvConfirm}
           title="Confirm CSV import"
           message={`Import ${csvPreview.length} keywords from CSV?`}
-          description={
-            keywordLimitRemaining < csvPreview.length
-              ? `Warning: You can only add ${keywordLimitRemaining} more keywords.`
-              : 'This will add the keywords to the current project.'
-          }
+          description="This will add the keywords to the current project."
           confirmText="Import"
           cancelText="Cancel"
-          tone={keywordLimitRemaining < csvPreview.length ? 'warning' : 'info'}
+          tone="info"
           icon={faUpload}
           loading={adding}
           onConfirm={handleCsvConfirm}

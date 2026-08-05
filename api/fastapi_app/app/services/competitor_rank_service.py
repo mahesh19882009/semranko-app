@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.models import Competitor, CompetitorRank, Keyword, Project, RankResult, User
 from app.services.dataforseo_client import DataForSEOClient
-from app.services.plan_service import ensure_aio_tracking_limit, get_user_plan_limits
 from app.services.cache_service import get_cached, set_cached
 from app.core.errors import ApiError
 

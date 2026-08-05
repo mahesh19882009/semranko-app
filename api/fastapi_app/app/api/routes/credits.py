@@ -50,7 +50,7 @@ async def create_credit_purchase_order(
     payment_order = PaymentOrder(
         userId=current_user['id'],
         razorpayOrderId=order["id"],
-        planId=0,
+        planId=requested_credits // 1000,
         amount=amount_paise,
         credit_applied_paise=amount_paise,
         currency="INR",
@@ -182,36 +182,32 @@ async def get_billing_history(
 ):
     from app.services.team_service import get_team_owner_id
     owner_id = get_team_owner_id(db, current_user['id'])
-    entries = (
-        db.query(CreditLedger)
-        .filter(CreditLedger.ownerId == owner_id)
-        .filter(CreditLedger.actionType.in_(["purchase", "charge"]))
-        .order_by(CreditLedger.createdAt.desc())
+    
+    payment_orders = (
+        db.query(PaymentOrder)
+        .filter(PaymentOrder.userId == owner_id)
+        .order_by(PaymentOrder.createdAt.desc())
         .all()
     )
 
     history = []
-    for entry in entries:
-        payment_order = db.scalar(
-            select(PaymentOrder).where(PaymentOrder.razorpayOrderId == entry.relatedOrderId)
+    for order in payment_orders:
+        ledger = db.scalar(
+            select(CreditLedger).where(CreditLedger.relatedOrderId == order.razorpayOrderId)
         )
-        amount_paid_inr = None
-        status = "completed"
-        order_id = entry.relatedOrderId
-        purchase_type = None
-        if payment_order:
-            amount_paid_inr = payment_order.amount / 100.0 if payment_order.amount else None
-            status = payment_order.status
-            order_id = payment_order.razorpayOrderId
-            purchase_type = payment_order.purchaseType
+        
+        amount_paid_inr = order.amount / 100.0 if order.amount else None
+        status = order.status or "pending"
+        order_id = order.razorpayOrderId
+        purchase_type = getattr(order, "purchaseType", None)
 
         history.append(BillingHistoryItem(
-            id=entry.id,
+            id=ledger.id if ledger else order.id,
             order_id=order_id,
             amount_paid_inr=amount_paid_inr,
             status=status,
-            timestamp=entry.createdAt.isoformat() if entry.createdAt else None,
-            invoice_number=entry.invoiceNumber or f"INV-{entry.id[:8].upper()}",
+            timestamp=order.createdAt.isoformat() if order.createdAt else None,
+            invoice_number=(ledger.invoiceNumber if ledger else None) or f"INV-{order.id[:8].upper()}",
             purchase_type=purchase_type,
         ))
 
@@ -254,51 +250,101 @@ async def download_invoice(
 
         amount = float(ledger.amount or 0)
         gst_rate = 0.18
-        cgst = round(amount * gst_rate / 2, 2)
-        sgst = round(amount * gst_rate / 2, 2)
-        total = round(amount + cgst + sgst, 2)
-
-        # Check if this is a credit top-up
+        
         payment_order = db.scalar(
             select(PaymentOrder).where(PaymentOrder.razorpayOrderId == ledger.relatedOrderId)
         )
+        
+        if payment_order and payment_order.amount:
+            total_inr = payment_order.amount / 100.0
+        else:
+            total_inr = amount
+        
+        base_inr = round(total_inr / (1 + gst_rate), 2)
+        cgst = round(base_inr * gst_rate / 2, 2)
+        sgst = round(base_inr * gst_rate / 2, 2)
+        total = round(base_inr + cgst + sgst, 2)
+        
         is_credit_top_up = payment_order and payment_order.purchaseType == "CREDIT_TOP_UP"
         
-        # Generate description based on purchase type
         if is_credit_top_up:
-            # Calculate credits based on base amount (₹0.20 per credit before GST)
-            credits_added = int(amount / 0.20) if amount > 0 else 0
+            credits_added = int(total_inr / 0.20) if total_inr > 0 else 0
             description = f"Premium Core Platform Add-on: {credits_added:,} Live Processing Credits (Bound to active monthly cycle)"
         else:
-            description = ledger.description or "Credit purchase"
+            description = ledger.description or "Subscription plan purchase"
+
+        story.append(Paragraph("INVOICE", styles["Heading1"]))
+        story.append(Spacer(1, 0.15 * inch))
+        
+        company_info = [
+            [Paragraph("<b>RankCare Technologies</b>", styles["Normal"])],
+            [Paragraph("SEO Rank Tracking & Competitor Analysis", styles["Normal"])],
+            [Paragraph("support@rankcare.com", styles["Normal"])],
+            [Paragraph("GSTIN: 27AABCR1234L1ZZ", styles["Normal"])],
+        ]
+        company_table = Table(company_info, colWidths=[4 * inch])
+        company_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+        ]))
+        story.append(company_table)
+        story.append(Spacer(1, 0.2 * inch))
+
+        invoice_meta = [
+            ["Invoice Number:", ledger.invoiceNumber or f"INV-{ledger.id[:8].upper()}"],
+            ["Date:", ledger.createdAt.strftime("%d-%m-%Y") if ledger.createdAt else "N/A"],
+            ["Order ID:", ledger.relatedOrderId or "N/A"],
+            ["Payment ID:", payment_order.razorpayPaymentId if payment_order else "N/A"],
+        ]
+        meta_table = Table(invoice_meta, colWidths=[2 * inch, 4 * inch])
+        meta_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (0, -1), 10),
+            ("FONTSIZE", (1, 0), (1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(meta_table)
+        story.append(Spacer(1, 0.2 * inch))
+
+        story.append(Paragraph("Description:", styles["Heading3"]))
+        story.append(Paragraph(description, styles["Normal"]))
+        story.append(Spacer(1, 0.2 * inch))
 
         data = [
-            ["Invoice Number", ledger.invoiceNumber or f"INV-{ledger.id[:8].upper()}"],
-            ["Date", ledger.createdAt.strftime("%d-%m-%Y") if ledger.createdAt else "N/A"],
-            ["Order ID", ledger.relatedOrderId or "N/A"],
-            ["Description", description],
-            ["Amount (INR)", f"₹{amount:.2f}"],
+            ["Description", "Amount (INR)"],
+            [description, f"₹{base_inr:.2f}"],
             ["CGST (9%)", f"₹{cgst:.2f}"],
             ["SGST (9%)", f"₹{sgst:.2f}"],
             ["Total (INR)", f"₹{total:.2f}"],
         ]
 
-        table = Table(data, colWidths=[2.5 * inch, 4 * inch])
+        table = Table(data, colWidths=[4 * inch, 2 * inch])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("ALIGN", (0, 0), (-1, -1), "LEFT"),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 12),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
-            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
-            ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTSIZE", (0, 0), (-1, 0), 11),
+            ("BACKGROUND", (0, 1), (-1, -2), colors.HexColor("#f8fafc")),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, -1), (-1, -1), 11),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e2e8f0")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 12),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
         ]))
         story.append(table)
         story.append(Spacer(1, 0.3 * inch))
-        story.append(Paragraph("RankCare - SEO Rank Tracking & Competitor Analysis", styles["Normal"]))
-        story.append(Paragraph("support@rankcare.com", styles["Normal"]))
+        
+        story.append(Paragraph("Thank you for your business!", styles["Normal"]))
+        story.append(Paragraph("For any queries, contact us at support@rankcare.com", styles["Normal"]))
 
         doc.build(story)
         buffer.seek(0)
@@ -467,3 +513,66 @@ async def get_usage_log(
         total_spent_this_month=int(spent_this_month or 0),
         total_saved_by_cache=int(cache_hits or 0) * 15,
     )
+
+
+@router.get("/ledger-history")
+async def get_ledger_history(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    from app.services.team_service import get_team_owner_id
+
+    owner_id = get_team_owner_id(db, current_user["id"])
+
+    query = db.query(CreditLedger).filter(
+        CreditLedger.ownerId == owner_id,
+        CreditLedger.status == "success",
+    )
+
+    total = query.count()
+
+    offset = (page - 1) * limit
+    entries = (
+        query.order_by(CreditLedger.timestamp.desc(), CreditLedger.createdAt.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    action_display_map = {
+        "ON_DEMAND_ADD": "Added New Keyword to Tracker",
+        "WEEKLY_REFRESH": "Automated Monday Weekly Update",
+        "KEYWORD_RESEARCH": "Keyword Research Lookup",
+        "COMPETITOR_SPY": "Competitor Domain Spy Check",
+        "ADD_NEW_DOMAIN": "Created Extra Multi-Domain Project",
+        "DOWNLOAD_REPORT": "Exported Premium CSV Data Report",
+        "CREDIT_TOP_UP": "Purchased 1,000 Token Top-Up Packet (+)",
+        "refund": "Credit Refund (Failed Operation)",
+    }
+
+    items = []
+    for entry in entries:
+        amount = float(entry.amount or 0)
+        display_amount = f"{amount:+.0f}"
+        color = "green" if amount > 0 else "red"
+
+        items.append({
+            "ledger_id": entry.id,
+            "timestamp": entry.timestamp.strftime("%Y-%m-%d %H:%M") if entry.timestamp else None,
+            "action_type": action_display_map.get(entry.actionType, entry.actionType),
+            "credits_deducted": display_amount,
+            "credits_color": color,
+            "keyword_or_domain_queried": entry.description or entry.queryTarget or entry.actionType,
+        })
+
+    total_pages = (total + limit - 1) // limit if total > 0 else 1
+
+    return ok("Ledger history retrieved", {
+        "items": items,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": total_pages,
+    })

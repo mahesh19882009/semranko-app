@@ -20,7 +20,7 @@ function ProjectsPage() {
 
   const { list: projects, loading, creating, updating, deleting, error, actionMessage } = useSelector((state) => state.projects);
   const pricingCurrent = useSelector((state) => state.pricing.current);
-  const projectLimitReached = (pricingCurrent?.usage?.projects || 0) >= (pricingCurrent?.limits?.projects || 0);
+  const projectCount = pricingCurrent?.usage?.projects || 0;
 
   const [showForm, setShowForm] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -126,18 +126,22 @@ function ProjectsPage() {
 
           <Button
             onClick={() => setShowForm((prev) => !prev)}
-            disabled={projectLimitReached}
           >
             {showForm ? 'Close form' : 'Add project'}
           </Button>
         </div>
 
-        {projectLimitReached ? (
+        {projectCount > 0 ? (
           <Alert
-            variant="warning"
-            message="You have reached your current project limit. Upgrade your plan to add more projects."
+            variant="info"
+            message={`Creating an additional project costs 10 credits. Your current balance: ${(pricingCurrent?.creditBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} credits.`}
           />
-        ) : null}
+        ) : (
+          <Alert
+            variant="success"
+            message="Your first project is free! Create it now."
+          />
+        )}
 
         {showForm && (
           <form
@@ -183,7 +187,7 @@ function ProjectsPage() {
             <div className="md:col-span-2 flex gap-3">
               <Button
                 type="submit"
-                disabled={creating || updating || (projectLimitReached && !projectToEdit)}
+                disabled={creating || updating}
                 loading={creating || updating}
               >
                 {creating ? 'Creating...' : updating ? 'Updating...' : projectToEdit ? 'Update project' : 'Create project'}

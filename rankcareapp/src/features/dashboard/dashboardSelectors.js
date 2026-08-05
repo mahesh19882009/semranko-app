@@ -37,15 +37,15 @@ export const selectStats = createSelector(
 
     const fallbackStats = project
       ? {
-          totalKeywords: Math.max(0, project?.keywords?.length || 0),
-          avgRank: projectName ? 18.4 : 0,
-          estimatedTraffic: projectName ? 1240 : 0,
-        }
+        totalKeywords: Math.max(0, project?.keywords?.length || 0),
+        avgRank: projectName ? 18.4 : 0,
+        estimatedTraffic: projectName ? 1240 : 0,
+      }
       : {
-          totalKeywords: globalStats.totalKeywords ?? 0,
-          avgRank: globalStats.avgRank ?? 0,
-          estimatedTraffic: globalStats.estimatedTraffic ?? 0,
-        };
+        totalKeywords: globalStats.totalKeywords ?? 0,
+        avgRank: globalStats.avgRank ?? 0,
+        estimatedTraffic: globalStats.estimatedTraffic ?? 0,
+      };
 
     const stats = hasProjectScopedData ? baseStats : fallbackStats;
 
@@ -101,16 +101,27 @@ export const selectCompetitors = createSelector(
   }
 );
 
+export const selectKeywords = createSelector(
+  [selectDashboard],
+  (dashboard) => dashboard.keywords || []
+);
+
+export const selectKeywordsTableRows = createSelector(
+  [selectDashboard],
+  (dashboard) => dashboard.keywords_table_rows || []
+);
+
 export const selectHasSelectedProjectData = createSelector(
-  [selectSelectedProject, selectCompetitors, selectRankTrend, selectStats],
-  (project, competitors, rankTrend, stats) => {
+  [selectSelectedProject, selectCompetitors, selectRankTrend, selectStats, selectKeywords],
+  (project, competitors, rankTrend, stats, keywords) => {
     if (!project) return false;
 
     return (
       stats.totalKeywords > 0 ||
       stats.estimatedTraffic > 0 ||
       competitors.length > 0 ||
-      rankTrend.length > 0
+      rankTrend.length > 0 ||
+      keywords.length > 0
     );
   }
 );

@@ -84,8 +84,6 @@ function KeywordsPage() {
   });
   const [bulkAioLoading, setBulkAioLoading] = useState(false);
 
-  const keywordLimitRemaining = (pricingCurrent?.limits?.keywords || 0) - (pricingCurrent?.usage?.keywords || 0);
-
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
     setTableLoading(true);
@@ -146,7 +144,7 @@ function KeywordsPage() {
     return rows;
   }, [tableData, globalFilter, aioFilter, rankFilter]);
 
-  const hasAioEnabled = useMemo(() => tableData.some((row) => row.trackAio), [tableData]);
+  const hasAioEnabled = useMemo(() => tableData.some((row) => row.trackAio || row.ai === "AIO"), [tableData]);
 
   const parseKeywords = (text) => {
     return text
@@ -161,25 +159,6 @@ function KeywordsPage() {
 
     const parsed = parseKeywords(keywordText);
     if (parsed.length === 0) return;
-
-    if (parsed.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      setConfirmState({
-        open: true,
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          setConfirmState((s) => ({ ...s, open: false }));
-          setIsAddModalOpen(false);
-          window.location.href = '/pricing';
-        },
-      });
-      return;
-    }
 
     let resultAction;
     if (parsed.length === 1) {
@@ -227,25 +206,6 @@ function KeywordsPage() {
   const handleCsvConfirm = async () => {
     setShowCsvConfirm(false);
     if (!selectedProjectId || csvPreview.length === 0) return;
-
-    if (csvPreview.length + (pricingCurrent?.usage?.keywords || 0) > (pricingCurrent?.limits?.keywords || 0)) {
-      dispatch(clearKeywordMessage());
-      setConfirmState({
-        open: true,
-        title: 'Keyword limit exceeded',
-        message: `You can only add ${keywordLimitRemaining} more keywords.`,
-        description: 'Upgrade your plan to add more keywords.',
-        confirmText: 'Upgrade plan',
-        tone: 'warning',
-        icon: faTriangleExclamation,
-        onConfirm: () => {
-          setConfirmState((s) => ({ ...s, open: false }));
-          setIsAddModalOpen(false);
-          window.location.href = '/pricing';
-        },
-      });
-      return;
-    }
 
     const resultAction = await dispatch(
       bulkAddKeywords({
@@ -322,17 +282,17 @@ function KeywordsPage() {
   const handleAioConfirm = async () => {
     const keywordId = aioConfirm.keywordId;
     const newTrackAio = !aioConfirm.currentTrackAio;
-    
+
     // Optimistic UI update
     setTableData((prev) =>
       prev.map((row) =>
         row.id === keywordId ? { ...row, trackAio: newTrackAio } : row
       )
     );
-    
+
     setAioLoading((prev) => ({ ...prev, [keywordId]: true }));
     setAioConfirm((s) => ({ ...s, open: false }));
-    
+
     try {
       await toggleTrackedKeywordAioApi(keywordId);
       // Success - the optimistic update is already applied
@@ -344,7 +304,7 @@ function KeywordsPage() {
           row.id === keywordId ? { ...row, trackAio: aioConfirm.currentTrackAio } : row
         )
       );
-      
+
       const message = err.message || 'Failed to update AI tracking.';
       let title = 'AI Tracking Update Failed';
       let description = 'Please try again later.';
@@ -382,17 +342,17 @@ function KeywordsPage() {
   const handleBulkAioConfirm = async () => {
     const targetAio = bulkAioConfirm.targetAio;
     const previouslySelectedIds = [...selectedIds];
-    
+
     // Optimistic UI update
     setTableData((prev) =>
       prev.map((row) =>
         selectedIds.includes(row.id) ? { ...row, trackAio: targetAio } : row
       )
     );
-    
+
     setBulkAioLoading(true);
     setBulkAioConfirm((s) => ({ ...s, open: false }));
-    
+
     try {
       await bulkToggleTrackedKeywordAioApi(selectedIds, targetAio);
       setSelectedIds([]);
@@ -402,12 +362,12 @@ function KeywordsPage() {
       // Revert optimistic update on error
       setTableData((prev) =>
         prev.map((row) =>
-          previouslySelectedIds.includes(row.id) 
-            ? { ...row, trackAio: !targetAio } 
+          previouslySelectedIds.includes(row.id)
+            ? { ...row, trackAio: !targetAio }
             : row
         )
       );
-      
+
       const message = err.message || 'Failed to update AI tracking for selected keywords.';
       let title = 'Bulk AI Tracking Update Failed';
       let description = 'Please try again later.';
@@ -438,11 +398,15 @@ function KeywordsPage() {
   };
 
   const aioBodyTemplate = (rowData) => {
-    return rowData.hasAIOverview ? (
-      <Tag value="AIO" severity="info" />
-    ) : (
-      <span className="text-slate-400 text-xs">—</span>
-    );
+    const ai = rowData.ai;
+    if (ai === "AIO") {
+      return (
+        <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-purple-600/20">
+          AIO
+        </span>
+      );
+    }
+    return <span className="text-slate-400 text-xs">—</span>;
   };
 
   const positionBodyTemplate = (rowData) => {
@@ -465,11 +429,10 @@ function KeywordsPage() {
         type="button"
         onClick={() => handleAioToggle(rowData)}
         disabled={isLoading}
-        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-          isActive
-            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-            : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
-        }`}
+        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${isActive
+          ? 'bg-purple-50 text-purple-700 border border-purple-200'
+          : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
+          }`}
         title={isActive ? 'Disable premium AI tracking' : 'Enable premium AI tracking'}
       >
         {isLoading ? (
@@ -543,9 +506,6 @@ function KeywordsPage() {
           <p className="mt-1 text-sm text-slate-500">
             Tracked keywords with rank, volume, difficulty, CPC, and AI overview status in one place.
           </p>
-          <p className="text-sm text-slate-500">
-            Usage: {pricingCurrent?.usage?.keywords || 0} / {pricingCurrent?.limits?.keywords || 0} keywords used.
-          </p>
         </div>
         <Button onClick={() => setIsAddModalOpen(true)}>
           <FontAwesomeIcon icon={faPlus} /> Add Keywords
@@ -581,11 +541,11 @@ function KeywordsPage() {
           <Column field="cpc" header="CPC" sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
           <Column field="competition" header="Competition" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
           <Column field="backlinks" header="Backlinks" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
-          <Column field="referring_domains" header="Domains" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.referring_domains != null ? Math.round(rowData.referring_domains).toLocaleString('en-US') : '—')} />
+          <Column field="domains" header="Domains" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
           <Column field="intent" header="Intent" style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
           <Column field="position" header="Position" sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
           {hasAioEnabled && <Column header="AIO" style={{ width: '6rem' }} body={aioBodyTemplate} />}
-          <Column header="✨ AI" style={{ width: '7rem' }} body={aioToggleBodyTemplate} />
+          <Column header="✨&nbsp;AI" style={{ width: '7rem' }} body={aioToggleBodyTemplate} />
           <Column header="Actions" body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
 
@@ -697,14 +657,10 @@ function KeywordsPage() {
           open={showCsvConfirm}
           title="Confirm CSV import"
           message={`Import ${csvPreview.length} keywords from CSV?`}
-          description={
-            keywordLimitRemaining < csvPreview.length
-              ? `Warning: You can only add ${keywordLimitRemaining} more keywords.`
-              : 'This will add the keywords to the current project.'
-          }
+          description="This will add the keywords to the current project."
           confirmText="Import"
           cancelText="Cancel"
-          tone={keywordLimitRemaining < csvPreview.length ? 'warning' : 'info'}
+          tone="info"
           icon={faUpload}
           loading={false}
           onConfirm={handleCsvConfirm}

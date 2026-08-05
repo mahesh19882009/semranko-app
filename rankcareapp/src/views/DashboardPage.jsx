@@ -4,10 +4,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   faArrowTrendUp,
   faChartSimple,
-  faUsers,
   faUsersViewfinder,
 } from '@fortawesome/free-solid-svg-icons';
-import RankTrendList from '../components/RankTrendList';
 import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -41,7 +39,6 @@ function DashboardPage() {
   const trend = useSelector(selectRankTrend);
   const competitors = useSelector(selectCompetitors);
   const project = useSelector(selectSelectedProject);
-  const hasSelectedProjectData = useSelector(selectHasSelectedProjectData);
   const loading = useSelector(selectDashboardLoading);
   const error = useSelector(selectDashboardError);
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
@@ -78,6 +75,7 @@ function DashboardPage() {
       })
       .catch((err) => {
         if (!cancelled) {
+          console.error('Dashboard overview error:', err);
           setOverviewError(err.message || 'Failed to load overview');
         }
       })
@@ -92,46 +90,51 @@ function DashboardPage() {
     };
   }, []);
 
-  // Prepare chart data for dual-axis chart (position fluctuations + credit usage)
+  // Prepare chart data
   const chartData = useMemo(() => {
-    const positionData = trend.map(item => item.value || 0);
-    const labels = trend.map(item => item.label);
+    if (!overview?.chart_data) return null;
 
-    let creditData = [];
-    if (overview?.chart_data && overview.chart_data.length > 0) {
-      creditData = overview.chart_data.map(item => item.value || 0);
-      if (labels.length === 0) {
-        labels.push(...overview.chart_data.map(item => item.label));
-      }
+    const { labels, positions, credits } = overview.chart_data;
+
+    // Check if we have ANY valid position data
+    const hasPositionData = positions && positions.some(p => p !== null && p !== undefined);
+
+    if (!labels || labels.length === 0) return null;
+
+    const datasets = [];
+
+    // Add Position Line ONLY if data exists
+    if (hasPositionData) {
+      datasets.push({
+        type: 'line',
+        label: 'Average Position',
+        data: positions,
+        borderColor: '#3B82F6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        yAxisID: 'y',
+        tension: 0.4,
+        fill: true,
+      });
     }
 
-    if (labels.length === 0 && positionData.length === 0 && creditData.length === 0) {
-      return null;
+    // Always add Credits if available
+    if (credits && credits.some(c => c > 0)) {
+      datasets.push({
+        type: 'bar',
+        label: 'Credit Usage',
+        data: credits,
+        backgroundColor: '#10B981',
+        yAxisID: 'y1',
+      });
     }
+
+    if (datasets.length === 0) return null;
 
     return {
       labels,
-      datasets: [
-        {
-          type: 'line',
-          label: 'Average Position',
-          data: positionData,
-          borderColor: '#3B82F6',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          yAxisID: 'y',
-          tension: 0.4,
-          fill: true,
-        },
-        {
-          type: 'bar',
-          label: 'Credit Usage',
-          data: creditData,
-          backgroundColor: '#10B981',
-          yAxisID: 'y1',
-        },
-      ],
+      datasets,
     };
-  }, [trend, overview]);
+  }, [overview]);
 
   const chartOptions = {
     responsive: true,
@@ -141,23 +144,15 @@ function DashboardPage() {
       intersect: false,
     },
     plugins: {
-      legend: {
-        position: 'top',
-      },
+      legend: { position: 'top' },
       tooltip: {
         callbacks: {
-          label: function(context) {
+          label: function (context) {
             let label = context.dataset.label || '';
-            if (label) {
-              label += ': ';
-            }
+            if (label) label += ': ';
             if (context.parsed.y !== null) {
               label += context.parsed.y;
-              if (context.dataset.yAxisID === 'y') {
-                label += ' (Position)';
-              } else {
-                label += ' (Credits)';
-              }
+              label += context.dataset.yAxisID === 'y' ? ' (Pos)' : ' (Credits)';
             }
             return label;
           }
@@ -165,35 +160,23 @@ function DashboardPage() {
       }
     },
     scales: {
-      x: {
-        grid: {
-          display: false,
-        },
-      },
+      x: { grid: { display: false } },
       y: {
         type: 'linear',
         display: true,
         position: 'left',
-        title: {
-          display: true,
-          text: 'Average Position',
-        },
-        reverse: true, // Lower position is better
-        grid: {
-          color: 'rgba(0, 0, 0, 0.05)',
-        },
+        title: { display: true, text: 'Average Position' },
+        reverse: true,
+        grid: { color: 'rgba(0, 0, 0, 0.05)' },
+        min: 1, // Prevent negative ranks
       },
       y1: {
         type: 'linear',
         display: true,
         position: 'right',
-        title: {
-          display: true,
-          text: 'Credit Usage',
-        },
-        grid: {
-          drawOnChartArea: false,
-        },
+        title: { display: true, text: 'Credit Usage' },
+        grid: { drawOnChartArea: false },
+        beginAtZero: true,
       },
     },
   };
@@ -210,35 +193,18 @@ function DashboardPage() {
               {project ? project.name : 'SEO dashboard'}
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              {project
-                ? `Monitor rankings, competitors, and AIO for ${project.name}.`
-                : 'Select a project to load dashboard data.'}
+              {project ? `Monitor rankings for ${project.name}.` : 'Select a project.'}
             </p>
           </div>
-
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Status
-              </p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">
-                {project ? 'Selected' : 'Not selected'}
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{project ? 'Selected' : 'None'}</p>
             </div>
             <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Data state
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">
-                {loading
-                  ? 'Loading'
-                  : error
-                  ? 'Error'
-                  : project
-                  ? hasSelectedProjectData
-                    ? 'Data available'
-                    : 'No dashboard data'
-                  : 'Idle'}
+                {overviewLoading ? 'Loading...' : error ? 'Error' : 'Live'}
               </p>
             </div>
           </div>
@@ -252,28 +218,18 @@ function DashboardPage() {
         </Card>
       )}
 
-      {project && !loading && !error && !hasSelectedProjectData && (
-        <Card padding="p-6 text-center" border="border-dashed border-amber-300" className="bg-amber-50/70">
-          <h3 className="text-lg font-semibold text-slate-900">
-            No dashboard data for {project.name}
-          </h3>
-          <p className="mt-2 text-sm text-slate-600">
-            This project is selected, but no dashboard records are available yet.
-          </p>
-        </Card>
-      )}
-
+      {/* Stats Cards */}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatCard
           title="Tracked keywords"
           value={(overview?.tracked_keywords_count ?? stats.totalKeywords).toLocaleString('en-US')}
-          hint={overviewLoading ? 'Loading...' : 'Active tracked keywords'}
+          hint={overviewLoading ? 'Loading...' : 'Active keywords'}
           icon={faChartSimple}
         />
         <StatCard
           title="Average rank"
           value={overview?.average_rank ? `#${overview.average_rank}` : '-'}
-          hint={overviewLoading ? 'Loading...' : 'Updated ranking data'}
+          hint={overview?.average_rank ? 'Current average' : 'No rank data yet'}
           icon={faArrowTrendUp}
           tone="green"
         />
@@ -286,48 +242,39 @@ function DashboardPage() {
         />
       </section>
 
+      {/* Chart Section */}
       <section className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
         <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Position & Credit Tracking</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {project
-                  ? `Ranking position and credit usage for ${project.name}.`
-                  : 'Ranking position and credit usage for the selected project.'}
-              </p>
+              <p className="mt-1 text-sm text-slate-500">Last 7 days activity.</p>
             </div>
           </div>
-
           <div className="mt-6" style={{ height: '300px' }}>
             {chartData ? (
               <Chart type="line" data={chartData} options={chartOptions} />
             ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No trend data is available for the current selection.
+              <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
+                <span className="mb-2 text-xl">📉</span>
+                <p>No historical ranking data yet.</p>
+                <p className="text-xs mt-1">Run a tracking job to see trends.</p>
               </div>
             )}
           </div>
         </article>
 
+        {/* Competitors */}
         <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Competitors</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Tracked competitors and shared keyword exposure.
-              </p>
+              <p className="mt-1 text-sm text-slate-500">Shared keywords.</p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => navigate('/competitors')}
-              className="text-brand-700 hover:bg-brand-50"
-            >
+            <Button type="button" variant="ghost" onClick={() => navigate('/competitors')} className="text-brand-700 hover:bg-brand-50">
               View all
             </Button>
           </div>
-
           <div className="mt-5 space-y-4">
             {competitors.length > 0 ? (
               competitors.map((item) => (
@@ -335,9 +282,7 @@ function DashboardPage() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="font-semibold text-slate-900">{item.domain}</p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {item.sharedKeywords} shared keywords
-                      </p>
+                      <p className="mt-1 text-sm text-slate-500">{item.sharedKeywords} shared</p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm text-slate-500">Overlap</p>
@@ -348,7 +293,7 @@ function DashboardPage() {
               ))
             ) : (
               <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No competitors tracked for the selected project.
+                No competitors tracked.
               </div>
             )}
           </div>
