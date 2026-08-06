@@ -28,7 +28,7 @@ GST_RATE = Decimal(str(GST_RATE))
 PLAN_KEY_PRICES = {
     "starter": {"monthly": 999, "yearly": 10789},
     "pro":     {"monthly": 3999, "yearly": 43189},
-    "agency":  {"monthly": 15999, "yearly": 172789},
+    "agency":  {"monthly": 9999, "yearly": 107989},
 }
 
 def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
@@ -193,21 +193,29 @@ async def create_payment_order(
 
 @router.post("/create-top-up-order")
 async def create_top_up_order(
-    multiplier: int = Query(..., ge=1, description="Multiplier of 1,000 credits to purchase"),
+    multiplier: int = Query(..., ge=1, description="Multiplier of 600 credits to purchase (1=600, 2=1200, etc.)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Create a Razorpay payment order for credit top-up.
-    1 multiplier = 1,000 credits at flat ₹500 per 1,000 credits.
+    1 multiplier = 600 credits at flat ₹100 per 600 credits.
+    No bulk discount.
     """
     try:
         from app.db.models import PaymentOrder as PO
+        from app.core.config import get_settings
 
-        base_top_up_inr = float(multiplier) * 500.0
+        settings = get_settings()
+        credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+        base_price_inr = settings.CREDIT_TOP_UP_CONFIG.get("base_price_inr", 100)
+
+        total_credits = multiplier * credits_per_unit
+        total_inr = multiplier * base_price_inr
+
         individual_discount_pct = float(getattr(current_user, "individual_discount_pct", 0.0) or 0.0)
-        discounted_top_up_inr = base_top_up_inr - (base_top_up_inr * (individual_discount_pct / 100.0))
-        amount_in_paise = int(round(discounted_top_up_inr * 100))
+        discounted_inr = total_inr - (total_inr * (individual_discount_pct / 100.0))
+        amount_in_paise = int(round(discounted_inr * 100))
 
         if amount_in_paise <= 0:
             raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
@@ -235,7 +243,7 @@ async def create_top_up_order(
             owner_id=current_user.id,
             amount=float(amount_in_paise) / 100.0,
             action_type="CREDIT_TOP_UP",
-            description=f"Credit top-up: {multiplier * 1000} credits",
+            description=f"Credit top-up: {total_credits} credits ({multiplier}x{credits_per_unit})",
             related_order_id=order["id"],
             plan_name="Credit Top-Up",
         )
@@ -248,7 +256,9 @@ async def create_top_up_order(
             "currency": order["currency"],
             "key_id": order["key"],
             "multiplier": multiplier,
-            "credits": multiplier * 1000,
+            "credits_per_unit": credits_per_unit,
+            "total_credits": total_credits,
+            "price_per_unit_inr": base_price_inr,
             "is_mock": order.get("mock", False),
         }
     except HTTPException:
@@ -314,7 +324,9 @@ async def verify_payment(
             db.commit()
 
             multiplier = getattr(payment_order, "planId", 0)
-            credits_to_add = int(multiplier) * 1000
+            settings = get_settings()
+            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+            credits_to_add = int(multiplier) * credits_per_unit
             current_user.creditBalance = round(float(getattr(current_user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
             db.add(current_user)
             db.commit()
@@ -324,7 +336,7 @@ async def verify_payment(
                 ownerId=current_user.id,
                 amount=float(credits_to_add),
                 actionType="CREDIT_TOP_UP",
-                description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment {razorpay_payment_id}",
+                description=f"Credit top-up: {credits_to_add} credits ({multiplier}x{credits_per_unit}) via Razorpay payment {razorpay_payment_id}",
                 relatedOrderId=razorpay_order_id,
                 status="success",
             )
@@ -332,6 +344,9 @@ async def verify_payment(
             db.commit()
 
             return ok("Credits added successfully", {
+                "credits_added": credits_to_add,
+                "new_balance": current_user.creditBalance,
+            })
                 "credits_added": credits_to_add,
                 "new_balance": current_user.creditBalance,
             })
@@ -547,7 +562,9 @@ async def razorpay_webhook(
 
         if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
             multiplier = getattr(payment_order, "planId", 0)
-            credits_to_add = int(multiplier) * 1000
+            settings = get_settings()
+            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+            credits_to_add = int(multiplier) * credits_per_unit
             user.creditBalance = round(float(getattr(user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
             db.add(user)
             db.commit()
@@ -557,7 +574,7 @@ async def razorpay_webhook(
                 ownerId=user.id,
                 amount=float(credits_to_add),
                 actionType="CREDIT_TOP_UP",
-                description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment {payment_id}",
+                description=f"Credit top-up: {credits_to_add} credits ({multiplier}x{credits_per_unit}) via Razorpay payment {payment_id}",
                 relatedOrderId=order_id,
                 status="success",
             )

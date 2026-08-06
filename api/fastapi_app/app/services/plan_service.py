@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -6,6 +7,19 @@ from sqlalchemy.orm import Session
 from app.core.config import GST_RATE, get_settings
 from app.core.errors import ApiError
 from app.db.models import Competitor, Keyword, KeywordList, Project, Subscription, User, AIOTracking, KeywordListItem
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+def _get_plan_defaults(plan_key: str) -> dict:
+    base = {
+        "free_trial": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 0, "monthlyCredits": 100, "keywordLimit": 5, "competitorSpyLimit": 5, "competitorsPerProject": 3, "reportsPerMonth": 2, "teamMembers": 1, "weeklyTrackingEnabled": False},
+        "starter": {"monthlyPrice": 999, "yearlyPrice": 10789, "domain_limit": 1, "monthlyCredits": 6000, "keywordLimit": 100, "competitorSpyLimit": 50, "competitorsPerProject": 3, "reportsPerMonth": 5, "teamMembers": 2, "weeklyTrackingEnabled": True},
+        "pro": {"monthlyPrice": 3999, "yearlyPrice": 43189, "domain_limit": 5, "monthlyCredits": 30000, "keywordLimit": 500, "competitorSpyLimit": 200, "competitorsPerProject": 10, "reportsPerMonth": 10, "teamMembers": 5, "weeklyTrackingEnabled": True},
+        "agency": {"monthlyPrice": 9999, "yearlyPrice": 107989, "domain_limit": 20, "monthlyCredits": 80000, "keywordLimit": 1500, "competitorSpyLimit": 500, "competitorsPerProject": 20, "reportsPerMonth": 50, "teamMembers": 10, "weeklyTrackingEnabled": True},
+        "enterprise": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 999, "monthlyCredits": 999999, "keywordLimit": 999999, "competitorSpyLimit": 5000, "competitorsPerProject": 999, "reportsPerMonth": 999, "teamMembers": 999, "weeklyTrackingEnabled": True},
+    }
+    return base.get(plan_key, base["free_trial"])
 
 PLAN_DEFINITIONS = {
     "free_trial": {
@@ -18,15 +32,7 @@ PLAN_DEFINITIONS = {
         "cta": "Start Free Trial",
         "refreshFrequency": "weekly",
         "individual_discount_pct": 0,
-        "domain_limit": 0,
-        "limits": {
-            "competitorsPerProject": 3,
-            "reportsPerMonth": 1,
-            "teamMembers": 1,
-            "monthlyCredits": 200,
-            "competitorSpyLimit": 20,
-            "weeklyTrackingEnabled": False,
-        },
+        **_get_plan_defaults("free_trial"),
     },
     "starter": {
         "key": "starter",
@@ -38,15 +44,7 @@ PLAN_DEFINITIONS = {
         "cta": "Start Starter",
         "refreshFrequency": "weekly",
         "individual_discount_pct": 0,
-        "domain_limit": 1,
-        "limits": {
-            "competitorsPerProject": 3,
-            "reportsPerMonth": 1,
-            "teamMembers": 1,
-            "monthlyCredits": 2000,
-            "competitorSpyLimit": 100,
-            "weeklyTrackingEnabled": True,
-        },
+        **_get_plan_defaults("starter"),
     },
     "pro": {
         "key": "pro",
@@ -58,35 +56,19 @@ PLAN_DEFINITIONS = {
         "cta": "Start Pro",
         "refreshFrequency": "weekly",
         "individual_discount_pct": 10,
-        "domain_limit": 5,
-        "limits": {
-            "competitorsPerProject": 10,
-            "reportsPerMonth": 10,
-            "teamMembers": 3,
-            "monthlyCredits": 8000,
-            "competitorSpyLimit": 300,
-            "weeklyTrackingEnabled": True,
-        },
+        **_get_plan_defaults("pro"),
     },
     "agency": {
         "key": "agency",
         "name": "Agency",
-        "monthlyPrice": 15999,
-        "yearlyPrice": 172789,
+        "monthlyPrice": 9999,
+        "yearlyPrice": 107989,
         "description": "Built for agencies handling multiple clients and organized client delivery.",
         "highlighted": False,
         "cta": "Start Agency",
         "refreshFrequency": "weekly",
         "individual_discount_pct": 15,
-        "domain_limit": 20,
-        "limits": {
-            "competitorsPerProject": 20,
-            "reportsPerMonth": 50,
-            "teamMembers": 10,
-            "monthlyCredits": 32000,
-            "competitorSpyLimit": 1000,
-            "weeklyTrackingEnabled": True,
-        },
+        **_get_plan_defaults("agency"),
     },
     "enterprise": {
         "key": "enterprise",
@@ -98,16 +80,7 @@ PLAN_DEFINITIONS = {
         "cta": "Contact Sales",
         "refreshFrequency": "weekly",
         "individual_discount_pct": 0,
-        "domain_limit": 999,
-        "limits": {
-            "projects": 999,
-            "competitorsPerProject": 999,
-            "reportsPerMonth": 999,
-            "teamMembers": 999,
-            "monthlyCredits": 999999,
-            "competitorSpyLimit": 5000,
-            "weeklyTrackingEnabled": True,
-        },
+        **_get_plan_defaults("enterprise"),
     },
 }
 
@@ -137,7 +110,7 @@ def list_available_plans() -> list[dict]:
             "individual_discount_pct": plan.get("individual_discount_pct", 0),
             "base_price_inr": plan["monthlyPrice"],
             "domain_limit": plan.get("domain_limit", 0),
-            "limits": plan["limits"],
+            "limits": get_user_plan_limits(plan),
         }
         for plan in PLAN_DEFINITIONS.values()
     ]
@@ -187,7 +160,20 @@ def get_effective_plan_key(user: User) -> str:
 def get_user_plan_limits(user: User) -> dict:
     effective_plan_key = get_effective_plan_key(user)
     plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
-    return plan["limits"]
+    return get_user_plan_limits_from_plan(plan)
+
+
+def get_user_plan_limits_from_plan(plan: dict) -> dict:
+    limit_keys = [
+        "competitorsPerProject",
+        "reportsPerMonth",
+        "teamMembers",
+        "monthlyCredits",
+        "competitorSpyLimit",
+        "weeklyTrackingEnabled",
+        "keywordLimit",
+    ]
+    return {k: plan.get(k) for k in limit_keys if k in plan}
 
 
 def ensure_subscription_active(user: User) -> None:
@@ -270,6 +256,48 @@ def get_user_max_competitors_per_project(db: Session, user_id: str) -> int:
     return max(count_project_competitors(db, project.id) for project in projects)
 
 
+def _get_warnings(db: Session, user: User, plan_def: dict) -> list[dict]:
+    warnings = []
+    now = datetime.utcnow()
+
+    # Warning 1: Plan ending in 5 days
+    end_date = None
+    if user.trialEndsAt:
+        end_date = user.trialEndsAt
+    subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user.id,
+            Subscription.isActive == True,
+        )
+    )
+    if subscription and subscription.endDate:
+        end_date = subscription.endDate
+
+    if end_date:
+        days_until_end = (end_date - now).days
+        if 0 <= days_until_end <= 5:
+            warnings.append({
+                "type": "plan_ending_soon",
+                "message": f"Your plan expires in {days_until_end} day(s). Please renew to avoid interruption.",
+                "days_remaining": days_until_end,
+            })
+
+    # Warning 2: Low credit balance
+    credit_balance = round(getattr(user, "creditBalance", 0.0) or 0.0, 2)
+    monthly_credits = float(plan_def.get("monthlyCredits", 0))
+    if monthly_credits > 0 and credit_balance < monthly_credits * 0.1:
+        warnings.append({
+            "type": "low_credit_balance",
+            "message": f"Your credit balance ({credit_balance}) is low. Consider topping up or upgrading your plan.",
+            "credit_balance": credit_balance,
+        })
+
+    # Warning 3: Insufficient credits for next operation (checked dynamically per operation)
+    # This is handled at the operation level in credit_service.py
+
+    return warnings
+
+
 def build_usage_snapshot(db: Session, user: User) -> dict:
     effective_plan_key = get_effective_plan_key(user)
     selected_plan_key = get_plan_key(user)
@@ -288,6 +316,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
         "base_price_inr": plan_def.get("monthlyPrice", 0),
         "individual_discount_pct": plan_def.get("individual_discount_pct", 0),
+        "warnings": _get_warnings(db, user, plan_def),
         "usage": {
             "projects": count_user_projects(db, user.id),
             "keywords": count_user_keywords(db, user.id),
@@ -315,7 +344,7 @@ def is_downgrade(current_plan: str, target_plan: str) -> bool:
 
 
 def build_downgrade_violations(db: Session, user: User, target_plan_key: str) -> list[dict]:
-    target_limits = PLAN_DEFINITIONS[target_plan_key]["limits"]
+    target_limits = get_user_plan_limits_from_plan(PLAN_DEFINITIONS[target_plan_key])
 
     used_max_competitors = get_user_max_competitors_per_project(db, user.id)
 
@@ -428,7 +457,15 @@ def ensure_project_limit(db: Session, user_id: str) -> None:
 
 
 def ensure_keyword_limit(db: Session, user_id: str) -> None:
-    return
+    user = get_user_or_404(db, user_id)
+    ensure_subscription_active(user)
+    limits = get_user_plan_limits(user)
+    keyword_limit = limits.get("keywordLimit", 0)
+    if keyword_limit <= 0:
+        return
+    used = count_user_keywords(db, user_id)
+    if used >= keyword_limit:
+        raise ApiError(403, f"Keyword limit reached. Your current plan allows {keyword_limit} keywords.")
 
 
 def ensure_competitor_limit(db: Session, user_id: str, project_id: str) -> None:

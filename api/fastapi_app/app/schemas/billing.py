@@ -10,6 +10,15 @@ class BillingHistoryItem(BaseModel):
     timestamp: Optional[str] = None
     invoice_number: Optional[str] = None
     purchase_type: Optional[str] = None  # SUBSCRIPTION_UPGRADE or CREDIT_TOP_UP
+    gst_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    base_amount: Optional[float] = None
+    credit_applied: Optional[float] = None
+    gross_amount: Optional[float] = None
+    plan_name: Optional[str] = None
+    plan_key: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
 
 
 class BillingHistoryResponse(BaseModel):

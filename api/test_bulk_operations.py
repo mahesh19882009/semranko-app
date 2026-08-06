@@ -18,7 +18,7 @@ def make_user(db: Session, user_id="user-1"):
         email="test@example.com",
         passwordHash="hash",
         selectedPlan="pro",
-        creditBalance=0.0,
+        creditBalance=1000.0,
         subscriptionStatus="active",
     )
     db.add(user)
@@ -56,7 +56,7 @@ class TestBulkKeywords:
     def test_bulk_add_skips_duplicates(self):
         user = make_user(self.db, user_id="user-b2")
         project = make_project(self.db, user_id=user.id, project_id="proj-b2")
-        kw = Keyword(projectId=project.id, keyword="kw1", device="desktop")
+        kw = Keyword(projectId=project.id, userId=user.id, keyword="kw1", device="desktop")
         self.db.add(kw)
         self.db.commit()
 
@@ -64,23 +64,23 @@ class TestBulkKeywords:
         assert result["added"] == 1
         assert result["skipped"] == 2
 
-    def test_bulk_add_limit_exceeded(self):
+    def test_bulk_add_with_many_existing(self):
         user = make_user(self.db, user_id="user-b3")
         project = make_project(self.db, user_id=user.id, project_id="proj-b3")
         for i in range(100):
-            kw = Keyword(projectId=project.id, keyword=f"existing{i}", device="desktop")
+            kw = Keyword(projectId=project.id, userId=user.id, keyword=f"existing{i}", device="desktop")
             self.db.add(kw)
         self.db.commit()
 
-        with pytest.raises(Exception) as exc_info:
-            add_keywords_bulk(self.db, user.id, project.id, ["new1", "new2"])
-        assert "limit exceeded" in str(exc_info.value).lower()
+        result = add_keywords_bulk(self.db, user.id, project.id, ["new1", "new2"])
+        assert result["added"] == 2
+        assert result["skipped"] == 0
 
     def test_bulk_delete_keywords(self):
         user = make_user(self.db, user_id="user-b4")
         project = make_project(self.db, user_id=user.id, project_id="proj-b4")
-        kw1 = Keyword(projectId=project.id, keyword="kw1", device="desktop")
-        kw2 = Keyword(projectId=project.id, keyword="kw2", device="desktop")
+        kw1 = Keyword(projectId=project.id, userId=user.id, keyword="kw1", device="desktop")
+        kw2 = Keyword(projectId=project.id, userId=user.id, keyword="kw2", device="desktop")
         self.db.add_all([kw1, kw2])
         self.db.commit()
         self.db.refresh(kw1)
@@ -105,7 +105,7 @@ class TestBulkRankings:
     def test_bulk_delete_rankings(self):
         user = make_user(self.db, user_id="user-r1")
         project = make_project(self.db, user_id=user.id, project_id="proj-r1")
-        keyword = Keyword(projectId=project.id, keyword="test", device="desktop")
+        keyword = Keyword(projectId=project.id, userId=user.id, keyword="test", device="desktop")
         self.db.add(keyword)
         self.db.commit()
         self.db.refresh(keyword)

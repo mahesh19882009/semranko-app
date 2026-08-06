@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.core.config import get_settings
+from app.services.dataforseo_client import LOCATION_MAP
 from app.services.payment_service import razorpay_client
 from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.db.session import SessionLocal
@@ -14,6 +15,8 @@ from app.services import email_service
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+LOCATION_CODE_MAP = {v: k for k, v in LOCATION_MAP.items()}
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -194,10 +197,8 @@ async def dataforseo_webhook(request: Request):
                 continue
 
             location = task_data.get("data", {}).get("location_code", 2840)
-            location_name = "India"
-            if isinstance(location, int):
-                location_name = "India"
-            elif isinstance(location, str):
+            location_name = LOCATION_CODE_MAP.get(location, "India")
+            if isinstance(location, str) and location:
                 location_name = location
 
             detected_position = None

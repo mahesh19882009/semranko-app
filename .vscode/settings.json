@@ -1,0 +1,13 @@
+{
+    "git.ignoreLimitWarning": true,
+    "python.defaultInterpreterPath": "/Users/maheshsharma/development/rankcare-api/api/.venv/bin/python3",
+    "python.analysis.extraPaths": [
+        "/Users/maheshsharma/development/rankcare-api/api",
+        "/Users/maheshsharma/development/rankcare-api/api/fastapi_app"
+    ],
+    "python.analysis.diagnosticMode": "workspace",
+    "python.autoComplete.extraPaths": [
+        "/Users/maheshsharma/development/rankcare-api/api",
+        "/Users/maheshsharma/development/rankcare-api/api/fastapi_app"
+    ]
+}

@@ -13,7 +13,7 @@ class FaqItem(BaseModel):
 MARKETING_FAQS = [
     {
         "q": "How does the credit system work?",
-        "a": "RankCare uses a pure consumption model. There are no hidden keyword limits. Every action deducts credits transparently: adding a keyword costs 15 credits, weekly refresh is 15 credits/keyword, keyword research is 4 credits, competitor spy is 6 credits, extra projects are 10 credits each (first project is free), and CSV exports are 10 credits. Unused credits do not roll over to the next month.",
+        "a": "RankCare uses a pure consumption model. There are no hidden keyword limits. Every action deducts credits transparently: adding a keyword costs 25 credits, weekly refresh is 15 credits/keyword, keyword research is 20 credits, competitor spy is 20 credits, extra projects are 10 credits each (first project is free), and CSV exports are 10 credits. Unused credits do not roll over to the next month.",
     },
     {
         "q": "Why was I charged for a failed operation?",

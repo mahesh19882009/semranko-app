@@ -16,10 +16,13 @@ settings = get_settings()
 
 
 def research_keyword(db: Session, user_id: str, keyword: str, location: str = "India") -> dict:
+    from app.services.dataforseo_client import DataForSEOClient
+
+    ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location, limit=50)
     return {
         "seed": keyword,
-        "ideas": [],
-        "credits_charged": 0,
+        "ideas": ideas or [],
+        "credits_charged": 1 if ideas else 0,
     }
 
 
@@ -28,11 +31,6 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
         return
 
     try:
-        owner_id = get_team_owner_id(db, user_id)
-        credits_needed = len(created) * 15
-        deduct_credits(db, owner_id, float(credits_needed), "ON_DEMAND_ADD", f"Day-one tracking: {credits_needed} keyword(s)")
-        db.commit()
-
         keywords_to_fetch = []
         for kw in created:
             cached = _get_cached_keyword_data(db, kw.keyword, location)
@@ -46,21 +44,43 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
             else:
                 keywords_to_fetch.append(kw.keyword)
 
+        fetched_ok_count = 0
         if keywords_to_fetch:
-            pingback_url = settings.PINGBACK_URL or f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
-            helper = DataForSeoDashboardHelper()
-            helper.fetch_cheapest_dashboard_data(
+            helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
+            rows = helper.fetch_cheapest_dashboard_data(
                 keywords_to_fetch,
                 domain,
                 location_code=2840,
-                pingback_url=pingback_url,
-                user_id=user_id,
-                project_id=None,
+                language_code="en",
             )
+            row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
+
+            for kw in created:
+                row = row_map.get(kw.keyword.lower().strip())
+                if row and _is_cache_data_valid(row):
+                    kw.volume = row.get("volume")
+                    kw.kd = row.get("kd")
+                    kw.cpc = row.get("cpc")
+                    kw.intent = row.get("intent")
+                    kw.position = row.get("position")
+                    kw.ai_badge = row.get("ai_badge")
+                    fetched_ok_count += 1
+
+        if fetched_ok_count:
+            owner_id = get_team_owner_id(db, user_id)
+            deduct_credits(
+                db,
+                owner_id,
+                float(fetched_ok_count * 25),
+                "ON_DEMAND_ADD",
+                f"Day-one tracking: {fetched_ok_count} keyword(s)",
+            )
+
+        db.commit()
     except Exception as exc:
         db.rollback()
         logger.error(f"Day-one tracking failed for batch: {exc}")
-        refund_credits(db, owner_id, float(credits_needed), f"Refund: day-one tracking failed for batch ({len(created)} keywords)")
+        raise
 
 
 def add_keywords_to_project(db: Session, user_id: str, project_id: str, keywords: list[str], location: str = "India") -> list[Keyword]:

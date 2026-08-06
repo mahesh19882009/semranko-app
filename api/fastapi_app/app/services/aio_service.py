@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
+    project = db.scalar(select(Project).where(Project.id == project_id))
     if not project:
         raise ApiError(404, "Project not found")
 
@@ -82,7 +82,7 @@ def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
 
 
 def get_aio_dashboard(db: Session, user_id: str, project_id: str) -> dict:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
+    project = db.scalar(select(Project).where(Project.id == project_id))
     if not project:
         raise ApiError(404, "Project not found")
 
@@ -108,7 +108,7 @@ def get_aio_dashboard(db: Session, user_id: str, project_id: str) -> dict:
 
 
 def get_citation_share_of_voice(db: Session, user_id: str, project_id: str) -> list[dict]:
-    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
+    project = db.scalar(select(Project).where(Project.id == project_id))
     if not project:
         raise ApiError(404, "Project not found")
 

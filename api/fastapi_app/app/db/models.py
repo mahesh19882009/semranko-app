@@ -35,6 +35,11 @@ class User(Base):
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
     pendingPlanChange: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    userGstin: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    userGstName: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    userGstAddress: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    userGstState: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    userGstStateCode: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -330,6 +335,7 @@ class TrackedKeyword(Base):
     lastPosition: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     lastCheckedAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     trackAio: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    dataStatus: Mapped[str] = mapped_column(String, nullable=False, default="fresh", server_default="fresh")
 
     user: Mapped[User] = relationship("User")
 

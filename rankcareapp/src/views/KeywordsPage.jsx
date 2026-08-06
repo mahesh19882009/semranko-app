@@ -429,7 +429,7 @@ function KeywordsPage() {
         type="button"
         onClick={() => handleAioToggle(rowData)}
         disabled={isLoading}
-        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${isActive
+        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition text-nowrap ${isActive
           ? 'bg-purple-50 text-purple-700 border border-purple-200'
           : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
           }`}

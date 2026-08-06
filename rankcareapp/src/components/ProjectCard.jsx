@@ -19,7 +19,6 @@ function ProjectCard({ project }) {
     <Card
       as="article"
       onClick={handleCardClick}
-      className="cursor-pointer transition"
       padding="p-5"
       {...(isSelected
         ? { border: 'border-brand-200', className: 'bg-brand-50' }
@@ -32,9 +31,9 @@ function ProjectCard({ project }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge tone="secondary" size="sm" rounded="rounded-full">
+          {isSelected && <Badge tone="secondary" size="sm" rounded="rounded-full">
             Active
-          </Badge>
+          </Badge>}
         </div>
       </div>
 

@@ -478,7 +478,7 @@ async def get_usage_log(
             "action_type": entry.actionType,
             "query_target": entry.queryTarget,
             "credits_spent": entry.creditsSpent,
-            "timestamp": entry.timestamp.isoformat() if entry.timestamp else None,
+            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if entry.timestamp else None,
             "description": entry.description,
             "triggered_by_user_id": entry.triggeredByUserId,
         })
@@ -528,7 +528,7 @@ async def get_ledger_history(
 
     query = db.query(CreditLedger).filter(
         CreditLedger.ownerId == owner_id,
-        CreditLedger.status == "success",
+        CreditLedger.status.in_(["success", "completed"]),
     )
 
     total = query.count()
@@ -560,7 +560,7 @@ async def get_ledger_history(
 
         items.append({
             "ledger_id": entry.id,
-            "timestamp": entry.timestamp.strftime("%Y-%m-%d %H:%M") if entry.timestamp else None,
+            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if entry.timestamp else None,
             "action_type": action_display_map.get(entry.actionType, entry.actionType),
             "credits_deducted": display_amount,
             "credits_color": color,

@@ -19,6 +19,7 @@ from app.api.routes.tracked_keywords import router as tracked_keywords_router
 from app.api.routes.teams import router as teams_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.webhooks import router as webhooks_router
+from app.api.routes.settings import router as settings_router
 
 api_router = APIRouter(prefix="/api")
 
@@ -41,3 +42,4 @@ api_router.include_router(tracked_keywords_router)
 api_router.include_router(teams_router)
 api_router.include_router(reports_router)
 api_router.include_router(webhooks_router)
+api_router.include_router(settings_router)

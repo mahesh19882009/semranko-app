@@ -52,11 +52,15 @@ def deduct_credits(db: Session, user_id: str, amount: float, action_type: str, d
 
     ledger = CreditLedger(
         userId=user_id,
-        ownerId=user_id,  # Set ownerId to userId for individual users
+        ownerId=user_id,
         amount=-amount,
         actionType=action_type,
         description=description,
         relatedOrderId=related_order_id,
+        creditsSpent=int(amount),
+        timestamp=datetime.utcnow(),
+        triggeredByUserId=user_id,
+        status="completed",
     )
     db.add(ledger)
     db.flush()
@@ -78,11 +82,15 @@ def refund_credits(db: Session, user_id: str, amount: float, description: str, r
 
     ledger = CreditLedger(
         userId=user_id,
-        ownerId=user_id,  # Set ownerId to userId for individual users
+        ownerId=user_id,
         amount=amount,
         actionType="refund",
         description=description,
         relatedOrderId=related_order_id,
+        creditsSpent=int(amount),
+        timestamp=datetime.utcnow(),
+        triggeredByUserId=user_id,
+        status="completed",
     )
     db.add(ledger)
     db.flush()

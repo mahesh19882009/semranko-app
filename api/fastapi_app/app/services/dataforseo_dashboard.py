@@ -1,154 +1,163 @@
-import requests
-import json
+import logging
 import time
 
+import requests
+
+logger = logging.getLogger(__name__)
+
+
 class DataForSeoDashboardHelper:
-    BASE_URL = "https://dataforseo.com"
-    
+    BASE_URL = "https://api.dataforseo.com/v3"
+
     def __init__(self, username, password):
         self.auth = (username, password)
 
-    def fetch_cheapest_dashboard_data(self, keywords, target_domain, location_code=2840):
+    def fetch_cheapest_dashboard_data(self, keywords, target_domain, location_code=2840, language_code="en", pingback_url=None):
         if isinstance(keywords, str):
             keywords = [keywords]
 
+        if not keywords:
+            return []
+
         # -------------------------------------------------------------
         # LAYER A: Fetch Macro Metrics (KD, CPC, Intent, etc.) in Bulk
+        # Labs keyword_overview/live — synchronous, does NOT accept pingback_url
         # -------------------------------------------------------------
         labs_url = f"{self.BASE_URL}/dataforseo_labs/google/keyword_overview/live"
         labs_payload = [{
             "keywords": keywords,
-            "location_code": location_code
+            "location_code": location_code,
+            "language_code": language_code,
         }]
-        
-        labs_res = requests.post(labs_url, json=labs_payload, auth=self.auth)
-        
-        if "application/json" not in labs_res.headers.get("Content-Type", ""):
-            print(f"\n❌ Error from Labs API: {labs_res.text}\n")
-            return []
 
-        labs_response = labs_res.json()
-        
+        try:
+            labs_res = requests.post(labs_url, json=labs_payload, auth=self.auth, timeout=60)
+            labs_res.raise_for_status()
+            labs_response = labs_res.json()
+        except Exception as exc:
+            logger.error("DataForSEO Labs keyword_overview request failed: %s", exc)
+            labs_response = {}
+
         metrics_map = {}
         if "tasks" in labs_response and labs_response["tasks"]:
             for task in labs_response["tasks"]:
-                items = task.get("result", {}).get("items", []) if task.get("result") else []
+                result = task.get("result")
+                if not result:
+                    continue
+
+                if isinstance(result, list) and result:
+                    result = result[0]
+
+                if not isinstance(result, dict):
+                    continue
+
+                items = result.get("items", [])
+                if items is None:
+                    items = []
+                if not isinstance(items, list):
+                    items = []
                 for item in items:
                     kw = item.get("keyword")
                     if kw:
                         metrics_map[kw] = {
-                            "kd": item.get("keyword_properties", {}).get("keyword_difficulty", "—"),
-                            "cpc": item.get("keyword_info", {}).get("cpc", "—"),
-                            "competition": item.get("keyword_info", {}).get("competition", "—"),
-                            "intent": item.get("keyword_properties", {}).get("search_intent", "—"),
-                            "backlinks": item.get("avg_backlinks_info", {}).get("backlinks", "—"),
-                            "domains": item.get("avg_backlinks_info", {}).get("referring_domains", "—"),
+                            "volume": item.get("keyword_info", {}).get("search_volume"),
+                            "kd": item.get("keyword_properties", {}).get("keyword_difficulty"),
+                            "cpc": item.get("keyword_info", {}).get("cpc"),
+                            "competition": item.get("keyword_info", {}).get("competition"),
+                            "intent": item.get("keyword_properties", {}).get("search_intent"),
+                            "backlinks": item.get("avg_backlinks_info", {}).get("backlinks"),
+                            "referring_domains": item.get("avg_backlinks_info", {}).get("referring_domains"),
                         }
 
         # -------------------------------------------------------------
-        # LAYER B: Fetch Positions & AI Rankings via the Cheap Queue
+        # LAYER B: Fetch Positions via SYNCHRONOUS live/advanced endpoint
+        # Returns results in ~2s, $0.002/keyword — correct for immediate use
         # -------------------------------------------------------------
-        serp_post_url = f"{self.BASE_URL}/serp/google/organic/task_post"
-        serp_payload = []
-        for kw in keywords:
-            serp_payload.append({
-                "keyword": kw,
-                "location_code": location_code,
-                "depth": 100
-            })
-            
-        post_res = requests.post(serp_post_url, json=serp_payload, auth=self.auth)
-        
-        if "application/json" not in post_res.headers.get("Content-Type", ""):
-            print(f"\n❌ Error posting to SERP Queue API: {post_res.text}\n")
-            return []
+        serp_url = f"{self.BASE_URL}/serp/google/organic/live/advanced"
+        serp_payload = {
+            "tasks": [
+                {
+                    "keyword": kw,
+                    "location_code": location_code,
+                    "language_code": language_code,
+                    "device": "desktop",
+                    "depth": 100,
+                }
+                for kw in keywords
+            ]
+        }
 
-        post_response = post_res.json()
-        
-        task_ids = []
-        if "tasks" in post_response and post_response["tasks"]:
-            for task in post_response["tasks"]:
-                if task.get("id"):
-                    task_ids.append(task["id"])
+        try:
+            serp_res = requests.post(serp_url, json=[serp_payload], auth=self.auth, timeout=120)
+            serp_res.raise_for_status()
+            serp_response = serp_res.json()
+        except Exception as exc:
+            logger.error("DataForSEO SERP live/advanced request failed: %s", exc)
+            serp_response = {}
 
-        if not task_ids:
-            print(f"⚠️ No tasks were successfully queued.")
-            return []
+        serp_map = {}
+        if "tasks" in serp_response and serp_response["tasks"]:
+            for task in serp_response["tasks"]:
+                keyword_text = (task.get("data") or {}).get("keyword")
+                if not keyword_text:
+                    continue
 
-        # -------------------------------------------------------------
-        # LAYER C: Retrieve Queue Results with Smart Retries & Merge
-        # -------------------------------------------------------------
-        final_table_rows = []
-        
-        for task_id in task_ids:
-            get_url = f"{self.BASE_URL}/serp/google/organic/task_get/advanced/{task_id}"
-            
-            # Smart Retry Loop: Try up to 6 times (checking every 5 seconds)
-            max_retries = 6
-            task_processed = False
-            get_response = {}
+                result_blocks = task.get("result", []) or []
+                if isinstance(result_blocks, list) and result_blocks:
+                    first_block = result_blocks[0]
+                    serp_items = first_block.get("items", []) or []
+                elif isinstance(result_blocks, dict):
+                    serp_items = result_blocks.get("items", []) or []
+                else:
+                    serp_items = []
 
-            for attempt in range(max_retries):
-                print(f"Checking task status (Attempt {attempt + 1}/{max_retries})...")
-                get_res = requests.get(get_url, auth=self.auth)
-                
-                if "application/json" in get_res.headers.get("Content-Type", ""):
-                    get_response = get_res.json()
-                    # Check if DataForSEO status changed from "Queued" to finished
-                    status = get_response.get("status_message", "")
-                    if "Ok" in status:
-                        task_processed = True
-                        break
-                
-                # If it's still processing, pause for 5 seconds before checking again
-                time.sleep(5)
+                detected_position = None
+                has_aio_badge = None
 
-            if not task_processed:
-                print(f"⚠️ Task {task_id} took too long to process. Skipping.")
-                continue
-            
-            if "tasks" in get_response and get_response["tasks"]:
-                for task_data in get_response["tasks"]:
-                    current_keyword = task_data.get("data", {}).get("keyword")
-                    if not current_keyword:
-                        continue
-                        
-                    detected_position = "—"
-                    has_aio_badge = "No"
-                    
-                    results_block = task_data.get("result", [])
-                    # Safely handle if result block is a list or dictionary
-                    if isinstance(results_block, list) and len(results_block) > 0:
-                        serp_items = results_block[0].get("items", [])
-                    elif isinstance(results_block, dict):
-                        serp_items = results_block.get("items", [])
-                    else:
-                        serp_items = []
-                    
-                    for item in serp_items:
-                        if item.get("type") == "organic" and item.get("url") and target_domain in item.get("url", ""):
-                            detected_position = item.get("rank_absolute", "—")
-                        
-                        if item.get("type") == "ai_overview":
-                            references = item.get("ai_overview_reference", [])
+                for item in serp_items:
+                    item_type = item.get("type", "")
+
+                    if item_type == "organic" and item.get("url"):
+                        if target_domain and target_domain.lower() in item.get("url", "").lower():
+                            detected_position = item.get("rank_absolute") or item.get("rank_group")
+
+                    if item_type == "ai_overview":
+                        references = item.get("ai_overview_reference", []) or []
+                        if isinstance(references, list):
                             for ref in references:
-                                if ref.get("url") and target_domain in ref.get("url", ""):
-                                    has_aio_badge = "AIO"
+                                if ref and ref.get("url") and target_domain:
+                                    if target_domain in ref.get("url", "").lower():
+                                        has_aio_badge = "AIO"
 
-                    kw_metrics = metrics_map.get(current_keyword, {
-                        "kd": "—", "cpc": "—", "competition": "—", "intent": "—", "backlinks": "—", "domains": "—"
-                    })
+                serp_map[keyword_text] = {
+                    "position": detected_position,
+                    "ai_badge": has_aio_badge,
+                }
 
-                    final_table_rows.append({
-                        "Keyword": current_keyword,
-                        "KD": kw_metrics["kd"],
-                        "CPC": kw_metrics["cpc"],
-                        "Competition": kw_metrics["competition"],
-                        "Backlinks": kw_metrics["backlinks"],
-                        "Domains": kw_metrics["domains"],
-                        "Intent": kw_metrics["intent"],
-                        "Position": detected_position,
-                        "AI": has_aio_badge
-                    })
+        final_table_rows = []
+        for kw in keywords:
+            kw_metrics = metrics_map.get(kw, {
+                "volume": None, "kd": None, "cpc": None,
+                "competition": None, "backlinks": None, "referring_domains": None,
+                "intent": None,
+            })
+            serp_data = serp_map.get(kw, {})
 
+            final_table_rows.append({
+                "keyword": kw,
+                "volume": kw_metrics.get("volume"),
+                "kd": kw_metrics.get("kd"),
+                "cpc": kw_metrics.get("cpc"),
+                "competition": kw_metrics.get("competition"),
+                "backlinks": kw_metrics.get("backlinks"),
+                "referring_domains": kw_metrics.get("referring_domains"),
+                "intent": kw_metrics.get("intent"),
+                "position": serp_data.get("position"),
+                "ai_badge": serp_data.get("ai_badge"),
+            })
+
+        logger.info(
+            "DataForSEO dashboard fetch complete: %d keywords, %d with metrics, %d with SERP",
+            len(keywords), len(metrics_map), len(serp_map),
+        )
         return final_table_rows

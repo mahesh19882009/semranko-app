@@ -63,7 +63,7 @@ def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") ->
         "price": price,
         "billing_cycle": billing_cycle,
         "description": plan["description"],
-        "limits": plan["limits"],
+        "limits": get_user_plan_limits_from_plan(plan),
         "duration_days": duration_days
     }
 

@@ -8,7 +8,7 @@ from app.core.errors import ApiError
 from app.db.models import Keyword, Project, KeywordCache
 from app.services.plan_service import get_user_or_404
 from app.services.dataforseo_client import DataForSEOClient
-from app.services.credit_service import deduct_credits, refund_credits
+from app.services.credit_service import deduct_credits
 from app.services.team_service import get_team_owner_id
 from app.utils.serializers import model_to_dict
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
@@ -35,20 +35,19 @@ def _get_cached_keyword_data(db: Session, keyword_text: str, location: str) -> d
     if not cache_entry:
         return None
 
-    if cache_entry.updatedAt and cache_entry.updatedAt >= datetime.utcnow() - timedelta(days=7):
-        data = {
-            "volume": cache_entry.volume,
-            "kd": cache_entry.kd,
-            "cpc": cache_entry.cpc,
-            "competition": cache_entry.competition,
-            "backlinks": cache_entry.backlinks,
-            "referring_domains": cache_entry.referring_domains,
-            "intent": cache_entry.intent,
-            "position": cache_entry.position,
-            "ai_badge": cache_entry.ai_badge,
-        }
-        if _is_cache_data_valid(data):
-            return data
+    data = {
+        "volume": cache_entry.volume,
+        "kd": cache_entry.kd,
+        "cpc": cache_entry.cpc,
+        "competition": cache_entry.competition,
+        "backlinks": cache_entry.backlinks,
+        "referring_domains": cache_entry.referring_domains,
+        "intent": cache_entry.intent,
+        "position": cache_entry.position,
+        "ai_badge": cache_entry.ai_badge,
+    }
+    if _is_cache_data_valid(data):
+        return data
     return None
 
 
@@ -65,12 +64,15 @@ def _update_keyword_from_data(keyword_row: Keyword, data: dict) -> None:
     keyword_row.updatedAt = datetime.utcnow()
 
 
-def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location: str, domain: str) -> None:
-    try:
-        owner_id = get_team_owner_id(db, user_id)
-        deduct_credits(db, owner_id, 15, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
-        db.commit()
+def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location: str, domain: str) -> bool:
+    """
+    Fetch DataForSEO data for a newly added keyword and update Keyword + KeywordCache.
 
+    Returns True if data was fetched from API (and credits charged), False if
+    served from cache or no data fetched.  Raises on failure so callers can
+    refund / show an error.
+    """
+    try:
         cached = _get_cached_keyword_data(db, keyword_text, location)
         if cached:
             keyword_row = db.scalar(
@@ -78,23 +80,82 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             )
             if keyword_row:
                 _update_keyword_from_data(keyword_row, cached)
+                _update_or_create_cache(db, keyword_text, location, cached)
                 db.commit()
-            return
+            return False
 
-        pingback_url = settings.PINGBACK_URL or f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
-        helper = DataForSeoDashboardHelper()
-        helper.fetch_cheapest_dashboard_data(
+        helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
+        rows = helper.fetch_cheapest_dashboard_data(
             [keyword_text],
             domain,
             location_code=2840,
-            pingback_url=pingback_url,
-            user_id=user_id,
-            project_id=None,
+            language_code="en",
         )
-    except Exception as exc:
+
+        if not rows:
+            logger.warning("Day-one tracking: no data returned from DataForSEO for %s", keyword_text)
+            return False
+
+        row = rows[0]
+        if not _is_cache_data_valid(row):
+            logger.warning("Day-one tracking: DataForSEO returned empty data for %s, skipping charge", keyword_text)
+            _update_or_create_cache(db, keyword_text, location, row)
+            db.commit()
+            return False
+
+        owner_id = get_team_owner_id(db, user_id)
+        deduct_credits(db, owner_id, 25, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+
+        keyword_row = db.scalar(
+            select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
+        )
+        if keyword_row:
+            _update_keyword_from_data(keyword_row, row)
+        _update_or_create_cache(db, keyword_text, location, row)
+        db.commit()
+        return True
+    except Exception:
         db.rollback()
-        logger.error(f"Day-one tracking failed for {keyword_text}: {exc}")
-        refund_credits(db, owner_id, 15, f"Refund: day-one tracking failed for {keyword_text}")
+        raise
+
+
+def _update_or_create_cache(db: Session, keyword_text: str, location: str, data: dict) -> None:
+    """Update or create a KeywordCache row from fetched API data."""
+    cache_entry = db.scalar(
+        select(KeywordCache).where(
+            KeywordCache.keyword == keyword_text,
+            KeywordCache.location == location,
+        )
+    )
+    if cache_entry:
+        cache_entry.volume = data.get("volume")
+        cache_entry.kd = data.get("kd")
+        cache_entry.cpc = data.get("cpc")
+        cache_entry.competition = data.get("competition")
+        cache_entry.backlinks = data.get("backlinks")
+        cache_entry.referring_domains = data.get("referring_domains")
+        cache_entry.intent = data.get("intent")
+        cache_entry.position = data.get("position")
+        cache_entry.ai_badge = data.get("ai_badge")
+        cache_entry.lastApiCallAt = datetime.utcnow()
+        cache_entry.updatedAt = datetime.utcnow()
+    else:
+        cache_entry = KeywordCache(
+            keyword=keyword_text,
+            location=location,
+            volume=data.get("volume"),
+            kd=data.get("kd"),
+            cpc=data.get("cpc"),
+            competition=data.get("competition"),
+            backlinks=data.get("backlinks"),
+            referring_domains=data.get("referring_domains"),
+            intent=data.get("intent"),
+            position=data.get("position"),
+            ai_badge=data.get("ai_badge"),
+            lastApiCallAt=datetime.utcnow(),
+            updatedAt=datetime.utcnow(),
+        )
+        db.add(cache_entry)
 
 
 def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> dict:
@@ -204,40 +265,55 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         added.append(kw)
         existing_set.add(kw)
 
-    if added:
-        owner_id_for_check = get_team_owner_id(db, user_id)
-        credits_needed = len(added) * 15
-        deduct_credits(db, owner_id_for_check, float(credits_needed), "ON_DEMAND_ADD", f"Day-one tracking: {len(added)} keyword(s)")
-
     db.commit()
 
     if added:
-        owner_id_for_check = get_team_owner_id(db, user_id)
-        credits_needed = len(added) * 15
-        deduct_credits(db, owner_id_for_check, float(credits_needed), "ON_DEMAND_ADD", f"Day-one tracking: {len(added)} keyword(s)")
-        db.commit()
-
         keywords_to_fetch = []
+        cached_keywords = {}
         for kw_text in added:
             cached = _get_cached_keyword_data(db, kw_text, location)
             if cached:
-                keyword = db.scalar(select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text))
+                cached_keywords[kw_text] = cached
+                keyword = db.scalar(
+                    select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+                )
                 if keyword:
                     _update_keyword_from_data(keyword, cached)
             else:
                 keywords_to_fetch.append(kw_text)
 
         if keywords_to_fetch:
-            pingback_url = settings.PINGBACK_URL or f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
-            helper = DataForSeoDashboardHelper()
-            helper.fetch_cheapest_dashboard_data(
+            helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
+            rows = helper.fetch_cheapest_dashboard_data(
                 keywords_to_fetch,
                 project.domain,
                 location_code=2840,
-                pingback_url=pingback_url,
-                user_id=user_id,
-                project_id=project_id,
+                language_code="en",
             )
+            row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
+
+            fetched_ok_count = 0
+            for kw_text in keywords_to_fetch:
+                keyword = db.scalar(
+                    select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+                )
+                row = row_map.get(kw_text.lower().strip())
+                if row and keyword:
+                    _update_keyword_from_data(keyword, row)
+                    _update_or_create_cache(db, kw_text, location, row)
+                    fetched_ok_count += 1
+
+            if fetched_ok_count:
+                owner_id = get_team_owner_id(db, user_id)
+                deduct_credits(
+                    db,
+                    owner_id,
+                    float(fetched_ok_count * 25),
+                    "ON_DEMAND_ADD",
+                    f"Day-one tracking: {fetched_ok_count} keyword(s)",
+                )
+
+            db.commit()
 
     return {
         "added": len(added),

@@ -37,9 +37,13 @@ async def research_keyword_endpoint(
         })
     
     try:
-        check_credits(db, current_user["userId"], 10)
+        check_credits(db, current_user["userId"], 20)
         result = research_keyword(db, current_user["userId"], keyword, location)
-        deduct_credits(db, current_user["userId"], 10, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
+        ideas = result.get("ideas", [])
+        if ideas:
+            deduct_credits(db, current_user["userId"], 20, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
+        else:
+            logger.info("Keyword research returned 0 ideas for '%s', no credits deducted", keyword)
         return ok("Keyword research completed", result)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -76,7 +80,9 @@ async def competitor_spy_endpoint(
         })
     
     try:
+        check_credits(db, current_user["userId"], 20)
         results = spy_competitor_keywords(db, current_user["userId"], domain, location, limit)
+        deduct_credits(db, current_user["userId"], 20, "COMPETITOR_SPY", f"Competitor spy: {domain}")
         return ok("Competitor keywords retrieved", {"keywords": results, "domain": domain})
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

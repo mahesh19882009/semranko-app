@@ -12,6 +12,8 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
+
+import requests
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -25,7 +27,6 @@ from app.db.models import (
     Competitor,
     CompetitorRank
 )
-from app.services.dataforseo_client import DataForSEOClient
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -118,28 +119,61 @@ def submit_bulk_to_dataforseo(
             logger.warning(f"Task {task.id} has no keywords to process")
             return False
         
-        # Extract keyword texts for API call
         keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
+        if not keyword_texts:
+            logger.warning(f"Task {task.id} has no valid keywords")
+            return False
         
-        # Use DataForSEO client to submit async task
-        # This would call the task_post endpoint instead of live
-        # For now, we'll use the existing client structure
-        serp_data = DataForSEOClient.get_serp_data_batch(
-            keywords=[{"keyword": kw} for kw in keyword_texts],
-            location="United States",
-            device="desktop",
-            result_type="async"
-        )
+        location_code = task.locationCode or 2840
+        pingback_url = f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
         
-        # Update task with DataForSEO task ID if available
-        # This would be populated when the actual API call is made
+        serp_post_url = f"https://api.dataforseo.com/v3/serp/google/organic/task_post"
+        serp_payload = []
+        for kw in keyword_texts:
+            serp_payload.append({
+                "keyword": kw,
+                "location_code": location_code,
+                "language_code": "en",
+                "device": "desktop",
+                "depth": 100,
+                "pingback_url": pingback_url,
+            })
+        
+        auth = (settings.effective_serp_login, settings.effective_serp_key)
+        post_res = requests.post(serp_post_url, json=serp_payload, auth=auth, timeout=60)
+        
+        if "application/json" not in post_res.headers.get("Content-Type", ""):
+            logger.error("DataForSEO task_post error: %s", post_res.text[:500])
+            task.status = "failed"
+            task.errorMessage = f"DataForSEO task_post error: {post_res.text[:200]}"
+            db.add(task)
+            db.commit()
+            return False
+
+        post_response = post_res.json()
+        
+        task_ids = []
+        if "tasks" in post_response and post_response["tasks"]:
+            for t in post_response["tasks"]:
+                if t.get("id"):
+                    task_ids.append(t["id"])
+
+        if not task_ids:
+            logger.warning(f"DataForSEO: no task IDs returned for task {task.id}")
+            task.status = "failed"
+            task.errorMessage = "No task IDs returned from DataForSEO"
+            db.add(task)
+            db.commit()
+            return False
+        
+        task.resultJson = json.dumps({"dataforseo_task_ids": task_ids})
         task.status = "processing"
         db.add(task)
         db.commit()
         
-        logger.info(f"Submitted task {task.id} to DataForSEO")
+        logger.info(f"Submitted task {task.id} to DataForSEO with {len(task_ids)} task(s)")
         return True
-        
+         
     except Exception as e:
         logger.error(f"Failed to submit task {task.id} to DataForSEO: {e}")
         task.status = "failed"

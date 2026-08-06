@@ -140,7 +140,7 @@ def process_labs_metrics_job(project_id: str, keywords: list[dict]) -> dict:
 
 
 def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: list[str], keywords: list[dict]) -> dict:
-    if not project_id or not domain or not competitor_id or not isinstance(keywords, list):
+    if not project_id or not domain or not competitor_ids or not isinstance(keywords, list):
         raise ValueError("Invalid competitor job payload")
 
     from app.services.dataforseo_client import DataForSEOClient

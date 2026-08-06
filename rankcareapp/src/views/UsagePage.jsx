@@ -123,16 +123,16 @@ export default function UsagePage() {
       <tbody className="divide-y divide-slate-100">
         {items.map((item) => (
           <tr key={item.ledger_id} className="hover:bg-slate-50 transition-colors">
-            <td className="px-6 py-4 text-sm text-slate-600 whitespace-nowrap">
-              {item.timestamp || "—"}
+            <td className="px-6 py-4 text-sm text-slate-900">
+              {item.keyword_or_domain_queried || "—"}
             </td>
             <td className="px-6 py-4">
               <Badge tone="secondary" size="sm">
                 {item.action_type || "Unknown"}
               </Badge>
             </td>
-            <td className="px-6 py-4 text-sm text-slate-900">
-              {item.keyword_or_domain_queried || "—"}
+            <td className="px-6 py-4 text-sm text-slate-600 whitespace-nowrap">
+              {item.timestamp ? new Date(item.timestamp).toLocaleString() : "—"}
             </td>
             <td className="px-6 py-4 text-right">
               {formatCredits(item.credits_deducted, item.credits_color)}

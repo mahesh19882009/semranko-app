@@ -17,8 +17,15 @@ import Card from "../components/ui/Card";
 import { useToast } from "../components/ui/Toast";
 import { ToastProvider } from "../components/ui/Toast";
 
-function formatCurrency(amount) {
+function formatCurrency(amount, currency = "INR") {
   if (amount === null || amount === undefined) return "—";
+  if (currency === "USD") {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+    }).format(amount);
+  }
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
@@ -71,6 +78,7 @@ export default function BillingPage() {
   const [successMessage, setSuccessMessage] = useState(null);
   const [multiplier, setMultiplier] = useState(1);
   const [topUpError, setTopUpError] = useState("");
+  const [currency, setCurrency] = useState("INR");
 
   useEffect(() => {
     if (!authenticated) {
@@ -99,12 +107,12 @@ export default function BillingPage() {
     setSuccessMessage(null);
 
     if (multiplier < 1) {
-      setTopUpError("Minimum multiplier is 1 (1,000 credits).");
+      setTopUpError("Minimum multiplier is 1 (600 credits).");
       return;
     }
 
-    const credits = multiplier * 1000;
-    const basePrice = multiplier * 500;
+    const credits = multiplier * 600;
+    const basePrice = multiplier * 100;
     const discountPct = pricingCurrent?.individual_discount_pct || 0;
     const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
     const cleanPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
@@ -195,20 +203,39 @@ export default function BillingPage() {
     <ToastProvider>
       <div className="space-y-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Billing & Invoices</h1>
             <p className="mt-2 text-sm text-slate-500">
-              Review transactions, download invoices, and purchase credits.
+              Review transactions, download invoices with GST details, and purchase credits.
             </p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-            <p className="text-xs font-medium text-slate-500">Available Credits</p>
-            <p className="text-xl font-bold text-slate-900">
-              {currentCreditBalance !== null && currentCreditBalance !== undefined
-                ? currentCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                : '—'}
-            </p>
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">Available Credits</p>
+              <p className="text-xl font-bold text-slate-900">
+                {currentCreditBalance !== null && currentCreditBalance !== undefined
+                  ? currentCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : '—'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <span className="text-xs font-medium text-slate-500">Currency:</span>
+              <button
+                onClick={() => setCurrency("INR")}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${currency === "INR" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              >
+                ₹ INR
+              </button>
+              <button
+                onClick={() => setCurrency("USD")}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${currency === "USD" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              >
+                $ USD
+              </button>
+            </div>
           </div>
+        </div>
         </div>
 
         {/* Transaction History */}
@@ -241,7 +268,8 @@ export default function BillingPage() {
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
                     <th className="px-6 py-4 font-medium">Invoice</th>
                     <th className="px-6 py-4 font-medium">Date</th>
-                    <th className="px-6 py-4 font-medium">Amount</th>
+                    <th className="px-6 py-4 font-medium">Amount ({currency === "INR" ? "₹" : "$"})</th>
+                    <th className="px-6 py-4 font-medium">GST</th>
                     <th className="px-6 py-4 font-medium">Status</th>
                     <th className="px-6 py-4 font-medium text-right">Actions</th>
                   </tr>
@@ -253,10 +281,16 @@ export default function BillingPage() {
                         <div className="flex flex-col">
                           <span className="font-mono text-xs text-slate-500">{item.invoice_number || `INV-${item.id.slice(0, 8).toUpperCase()}`}</span>
                           <span className="text-xs text-slate-400">{item.order_id ? `Order ${item.order_id.slice(0, 12)}...` : "—"}</span>
+                          {item.purchase_type && (
+                            <span className="text-xs text-slate-400">{item.purchase_type === "SUBSCRIPTION_UPGRADE" ? "Subscription" : "Credit Top-Up"}</span>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-slate-600">{formatDate(item.timestamp)}</td>
-                      <td className="px-6 py-4 font-semibold text-slate-900">{formatCurrency(item.amount_paid_inr)}</td>
+                      <td className="px-6 py-4 font-semibold text-slate-900">{formatCurrency(item.amount_paid_inr, currency)}</td>
+                      <td className="px-6 py-4 text-slate-600">
+                        {item.gst_amount ? `${item.gst_amount.toFixed(2)} (18%)` : "—"}
+                      </td>
                       <td className="px-6 py-4">
                         <StatusChip status={item.status} />
                       </td>
@@ -290,9 +324,8 @@ export default function BillingPage() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Purchase Credits</h2>
 
-          {/* Accurate Legal Disclaimer */}
           <div className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <p className="font-semibold">💡 Monthly subscription baseline credits reset at the end of each billing cycle. However, any manually purchased Credit Top-ups will remain securely added to your account and valid for use as long as your underlying paid plan subscription remains active.</p>
+            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. No bulk discount. All payments processed via Razorpay with 18% GST applied at payment time.</p>
           </div>
 
           {/* Credit Top-Up Form */}
@@ -302,7 +335,7 @@ export default function BillingPage() {
             <div className="space-y-4">
               <div>
                 <label htmlFor="multiplier-input" className="block text-sm font-medium text-slate-700 mb-2">
-                  Select Credit Pack (each pack = 1,000 credits)
+                  Select Credit Pack (each pack = 600 credits)
                 </label>
                 <div className="flex items-center gap-3">
                   <input
@@ -315,7 +348,7 @@ export default function BillingPage() {
                     disabled={loadingPack}
                     className="w-24 rounded-xl border border-slate-300 px-4 py-3 text-center text-sm outline-none focus:border-slate-900 disabled:bg-slate-50 disabled:cursor-not-allowed"
                   />
-                  <span className="text-sm text-slate-500">pack(s) = {(multiplier * 1000).toLocaleString()} credits</span>
+                  <span className="text-sm text-slate-500">pack(s) = {(multiplier * 600).toLocaleString()} credits</span>
                 </div>
                 {topUpError && (
                   <p className="mt-2 text-sm font-medium text-rose-600">{topUpError}</p>
@@ -341,7 +374,7 @@ export default function BillingPage() {
                               Your Price: ₹{cleanPrice.toLocaleString('en-US')} ({discountPct}% off)
                             </p>
                             <p className="text-xs text-slate-500">
-                              {(multiplier * 1000).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 1000)).toFixed(2)} per credit
+                              {(multiplier * 600).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 600)).toFixed(2)} per credit
                             </p>
                           </div>
                         ) : (
@@ -350,7 +383,7 @@ export default function BillingPage() {
                               Total: ₹{cleanPrice.toLocaleString('en-US')}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {(multiplier * 1000).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 1000)).toFixed(2)} per credit
+                              {(multiplier * 600).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 600)).toFixed(2)} per credit
                             </p>
                           </div>
                         )}

@@ -81,7 +81,73 @@ class Settings(BaseSettings):
     SERP_API_LOGIN: Optional[str] = None
     SERP_API_KEY: Optional[str] = None
     PINGBACK_URL: Optional[str] = None
+    DFO_MOCK_PINGBACK: bool = False
+
+    DATAFORSEO_CREDIT_COSTS: dict = {
+        "serp_live_advanced": 0.024,
+        "labs_keyword_overview": 0.013,
+        "labs_keyword_ideas": 0.018,
+        "labs_serp_competitors": 0.132,
+        "labs_domain_rank_overview": 0.013,
+        "labs_bulk_traffic_estimation": 0.132,
+        "labs_keyword_suggestions": 0.018,
+        "labs_keywords_for_keywords": 0.018,
+        "serp_async_task": 0.012,
+    }
+
+    USER_CREDIT_COSTS: dict = {
+        "add_keyword": 20,
+        "weekly_refresh_per_keyword": 10,
+        "keyword_research": 20,
+        "competitor_spy": 20,
+        "extra_project": 10,
+        "tracked_keyword": 20,
+        "download_report": 10,
+        "team_member": 10,
+    }
+
+    PLAN_KEYWORD_LIMITS: dict = {
+        "free_trial": 5,
+        "starter": 100,
+        "pro": 500,
+        "agency": 1500,
+    }
+
+    PLAN_MONTHLY_CREDITS: dict = {
+        "free_trial": 100,
+        "starter": 6000,
+        "pro": 30000,
+        "agency": 80000,
+    }
+
+    PLAN_COMPETITOR_SPY_LIMITS: dict = {
+        "free_trial": 5,
+        "starter": 50,
+        "pro": 200,
+        "agency": 500,
+    }
     
+    # Credit top-up: 600 credits per ₹100, multiples of 600 only
+    CREDIT_TOP_UP_CONFIG: dict = {
+        "credits_per_100_inr": 600,
+        "base_price_inr": 100,
+        "min_multiplier": 1,
+        "no_bulk_discount": True,
+    }
+
+    # USD/INR conversion
+    CONVERSION_RATE_USD_TO_INR: float = 95.23
+    CONVERSION_FEE_PCT: float = 3.0  # 3% conversion margin for USD display
+
+    # GST / Invoice details
+    GST_RATE: float = 0.18
+    GSTIN: str = "06FHDPK2516L1ZB"
+    COMPANY_NAME: str = "CodMonks Technologies"
+    COMPANY_ADDRESS: str = "HOUSE NO 769, Sector-64, Ballabhgarh, Faridabad-121004, Haryana"
+    COMPANY_EMAIL: str = "mahesh1988.2009@gmail.com"
+    COMPANY_STATE: str = "Haryana"
+    COMPANY_STATE_CODE: str = "06"
+
     # Trial
     TRIAL_DAYS: int = 10
 

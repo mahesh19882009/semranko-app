@@ -280,6 +280,18 @@ export async function getRoiMetricsApi() {
 }
 
 
+function handleUnauthenticated() {
+  try {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+  } catch {
+    // ignore storage errors
+  }
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login';
+  }
+}
+
 export const apiRequest = async (endpoint, options = {}) => {
   let token = null;
 
@@ -297,6 +309,11 @@ export const apiRequest = async (endpoint, options = {}) => {
       ...(options.headers || {}),
     },
   });
+
+  if (response.status === 401) {
+    handleUnauthenticated();
+    throw new Error('Session expired. Please log in again.');
+  }
 
   const contentType = response.headers.get('content-type') || '';
   const isJson = contentType.includes('application/json');
