@@ -76,7 +76,7 @@ export const createCreditTopUpOrderApi = async (multiplier) => {
   const response = await apiRequest(`/payments/create-top-up-order?multiplier=${multiplier}`, {
     method: "POST",
   });
-  return response.data || null;
+  return response || null;
 };
 
 export const fetchCreditBalanceApi = async () => {
@@ -93,7 +93,7 @@ export const verifyCreditPaymentApi = async (orderId, paymentId, signature) => {
       razorpay_signature: signature,
     }),
   });
-  return response.data || null;
+  return response || null;
 };
 
 export const getBillingHistoryApi = async () => {
@@ -101,9 +101,9 @@ export const getBillingHistoryApi = async () => {
   return response || { history: [] };
 };
 
-export const downloadInvoiceApi = async (ledgerId) => {
+export const downloadInvoiceApi = async (invoiceId) => {
   const token = localStorage.getItem('accessToken');
-  const url = `${API_BASE_URL}/billing/invoice/${encodeURIComponent(ledgerId)}/download`;
+  const url = `${API_BASE_URL}/billing/invoice/${encodeURIComponent(invoiceId)}/download`;
   const response = await fetch(url, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -153,7 +153,14 @@ export const updateTeamMemberRoleApi = async (teamId, userId, role) => {
 };
 
 export const removeTeamMemberApi = async (teamId, userId) => {
-  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
+  const response = await apiRequest(`/teams/${teamId}/members/${userId}`, {
+    method: 'DELETE',
+  });
+  return response.data || null;
+};
+
+export const deleteTeamApi = async (teamId) => {
+  const response = await apiRequest(`/teams/${teamId}`, {
     method: 'DELETE',
   });
   return response.data || null;

@@ -8,6 +8,7 @@ import Card from "../components/ui/Card";
 import Badge from "../components/ui/Badge";
 import Alert from "../components/ui/Alert";
 import { useToast } from "../components/ui/Toast";
+import { formatDateTime } from "../utils/date";
 
 const ACTION_DISPLAY = {
   "Added New Keyword to Tracker": "Added New Keyword to Tracker",
@@ -132,7 +133,7 @@ export default function UsagePage() {
               </Badge>
             </td>
             <td className="px-6 py-4 text-sm text-slate-600 whitespace-nowrap">
-              {item.timestamp ? new Date(item.timestamp).toLocaleString() : "—"}
+              {formatDateTime(item.timestamp)}
             </td>
             <td className="px-6 py-4 text-right">
               {formatCredits(item.credits_deducted, item.credits_color)}

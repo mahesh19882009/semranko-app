@@ -93,7 +93,7 @@ export default function AIODashboardPage() {
           </div>
         )}
 
-        {error && <Alert variant="error" message={error} />}
+        {error && <Alert variant="error" className="mb-5" message={error} />}
 
         {dashboard && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">

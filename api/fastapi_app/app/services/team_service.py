@@ -9,6 +9,16 @@ logger = logging.getLogger(__name__)
 
 
 def create_team(db: Session, owner_id: str, name: str) -> Team:
+    existing_teams = db.scalars(select(Team).where(Team.ownerId == owner_id)).all()
+    if len(existing_teams) >= 1:
+        deduct_credits_for_team_action(
+            db,
+            owner_id,
+            10,
+            "New team created",
+            f"Team creation: {name}",
+        )
+
     team = Team(ownerId=owner_id, name=name)
     db.add(team)
     db.flush()
@@ -43,6 +53,35 @@ def get_team_members(db: Session, team_id: str) -> list[TeamMember]:
 
 
 def add_team_member(db: Session, team_id: str, user_id: str, role: str = "Viewer") -> TeamMember:
+    existing = db.scalar(
+        select(TeamMember).where(
+            TeamMember.teamId == team_id,
+            TeamMember.userId == user_id,
+        )
+    )
+    if existing:
+        return existing
+
+    team = db.scalar(select(Team).where(Team.id == team_id))
+    if not team:
+        raise ValueError("Team not found")
+
+    current_members = db.scalars(
+        select(TeamMember).where(
+            TeamMember.teamId == team_id,
+            TeamMember.userId != team.ownerId,
+        )
+    ).all()
+
+    if len(current_members) >= 1:
+        deduct_credits_for_team_action(
+            db,
+            team.ownerId,
+            10,
+            "Team member added",
+            f"Team member added: {user_id}",
+        )
+
     member = TeamMember(teamId=team_id, userId=user_id, role=role)
     db.add(member)
     db.flush()
@@ -76,6 +115,16 @@ def remove_team_member(db: Session, team_id: str, user_id: str) -> bool:
     if not member:
         return False
     db.delete(member)
+    db.flush()
+    db.commit()
+    return True
+
+
+def delete_team(db: Session, team_id: str, owner_id: str) -> bool:
+    team = db.scalar(select(Team).where(Team.id == team_id, Team.ownerId == owner_id))
+    if not team:
+        return False
+    db.delete(team)
     db.flush()
     db.commit()
     return True

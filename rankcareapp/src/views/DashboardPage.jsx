@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   faArrowTrendUp,
   faChartSimple,
-  faUsersViewfinder,
+  faFolderOpen,
 } from '@fortawesome/free-solid-svg-icons';
 import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
@@ -15,11 +15,10 @@ import { apiRequest } from '../lib/api';
 import {
   selectStats,
   selectRankTrend,
-  selectCompetitors,
   selectSelectedProject,
-  selectHasSelectedProjectData,
   selectDashboardLoading,
   selectDashboardError,
+  selectProjectsList,
 } from '../features/dashboard/dashboardSelectors';
 import {
   fetchKeywordsByProject,
@@ -37,8 +36,8 @@ function DashboardPage() {
 
   const stats = useSelector(selectStats);
   const trend = useSelector(selectRankTrend);
-  const competitors = useSelector(selectCompetitors);
   const project = useSelector(selectSelectedProject);
+  const allProjects = useSelector(selectProjectsList)
   const loading = useSelector(selectDashboardLoading);
   const error = useSelector(selectDashboardError);
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
@@ -90,20 +89,17 @@ function DashboardPage() {
     };
   }, []);
 
-  // Prepare chart data
   const chartData = useMemo(() => {
     if (!overview?.chart_data) return null;
 
     const { labels, positions, credits } = overview.chart_data;
 
-    // Check if we have ANY valid position data
     const hasPositionData = positions && positions.some(p => p !== null && p !== undefined);
 
     if (!labels || labels.length === 0) return null;
 
     const datasets = [];
 
-    // Add Position Line ONLY if data exists
     if (hasPositionData) {
       datasets.push({
         type: 'line',
@@ -112,19 +108,21 @@ function DashboardPage() {
         borderColor: '#3B82F6',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         yAxisID: 'y',
-        tension: 0.4,
+        tension: 0,
         fill: true,
       });
     }
 
-    // Always add Credits if available
     if (credits && credits.some(c => c > 0)) {
       datasets.push({
-        type: 'bar',
+        type: 'line',
         label: 'Credit Usage',
         data: credits,
-        backgroundColor: '#10B981',
         yAxisID: 'y1',
+        fill: true,
+        borderColor: '#ffa726cc',
+        tension: 0,
+        backgroundColor: '#ffa72633'
       });
     }
 
@@ -168,7 +166,7 @@ function DashboardPage() {
         title: { display: true, text: 'Average Position' },
         reverse: true,
         grid: { color: 'rgba(0, 0, 0, 0.05)' },
-        min: 1, // Prevent negative ranks
+        min: 0,
       },
       y1: {
         type: 'linear',
@@ -197,15 +195,8 @@ function DashboardPage() {
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">{project ? 'Selected' : 'None'}</p>
-            </div>
-            <div className="rounded-2xl bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Data</p>
-              <p className="mt-1 text-sm font-semibold text-slate-900">
-                {overviewLoading ? 'Loading...' : error ? 'Error' : 'Live'}
-              </p>
+            <div className="">
+              <p className="text-xs font-semibold tracking-wide text-slate-800">Status:&nbsp;{overviewLoading ? 'Loading...' : error ? (<span className='block h-[8px] w-[8px] bg-red-800 rounded-full'></span>) : (<span className='block h-[8px] w-[8px] bg-green-800 rounded-full'></span>)}</p>
             </div>
           </div>
         </div>
@@ -218,8 +209,13 @@ function DashboardPage() {
         </Card>
       )}
 
-      {/* Stats Cards */}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          title="Total Projects"
+          value={allProjects ? allProjects.length : '-'}
+          hint={overviewLoading ? 'Loading...' : ''}
+          icon={faFolderOpen}
+        />
         <StatCard
           title="Tracked keywords"
           value={(overview?.tracked_keywords_count ?? stats.totalKeywords).toLocaleString('en-US')}
@@ -237,12 +233,11 @@ function DashboardPage() {
           title="Credit balance"
           value={creditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           hint="Available credits"
-          icon={faUsersViewfinder}
+          icon={faChartSimple}
           tone="purple"
         />
       </section>
 
-      {/* Chart Section */}
       <section className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
         <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-start justify-between gap-4">
@@ -251,7 +246,7 @@ function DashboardPage() {
               <p className="mt-1 text-sm text-slate-500">Last 7 days activity.</p>
             </div>
           </div>
-          <div className="mt-6" style={{ height: '300px' }}>
+          <div className="mt-6">
             {chartData ? (
               <Chart type="line" data={chartData} options={chartOptions} />
             ) : (
@@ -259,41 +254,6 @@ function DashboardPage() {
                 <span className="mb-2 text-xl">📉</span>
                 <p>No historical ranking data yet.</p>
                 <p className="text-xs mt-1">Run a tracking job to see trends.</p>
-              </div>
-            )}
-          </div>
-        </article>
-
-        {/* Competitors */}
-        <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Competitors</h3>
-              <p className="mt-1 text-sm text-slate-500">Shared keywords.</p>
-            </div>
-            <Button type="button" variant="ghost" onClick={() => navigate('/competitors')} className="text-brand-700 hover:bg-brand-50">
-              View all
-            </Button>
-          </div>
-          <div className="mt-5 space-y-4">
-            {competitors.length > 0 ? (
-              competitors.map((item) => (
-                <div key={item.id} className="rounded-2xl border border-slate-100 p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-semibold text-slate-900">{item.domain}</p>
-                      <p className="mt-1 text-sm text-slate-500">{item.sharedKeywords} shared</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-slate-500">Overlap</p>
-                      <p className="font-semibold text-slate-900">{item.overlap}%</p>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-500">
-                No competitors tracked.
               </div>
             )}
           </div>

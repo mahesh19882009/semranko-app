@@ -5,6 +5,7 @@ import {
   checkPlanChangeApi,
   fetchCurrentPricingApi,
   fetchPlansApi,
+  fetchCreditBalanceApi,
 } from "./pricingApi";
 
 export const fetchPricingPlans = createAsyncThunk(
@@ -44,6 +45,17 @@ export const checkPlanChange = createAsyncThunk(
   }
 );
 
+export const fetchCreditBalance = createAsyncThunk(
+  "pricing/fetchCreditBalance",
+  async (_, thunkAPI) => {
+    try {
+      return await fetchCreditBalanceApi();
+    } catch (error) {
+      return thunkAPI.rejectWithValue(error.message || "Failed to fetch credit balance");
+    }
+  }
+);
+
 export const changePlan = createAsyncThunk(
   "pricing/changePlan",
   async (plan, thunkAPI) => {
@@ -62,6 +74,7 @@ export const changePlan = createAsyncThunk(
 const initialState = {
   plans: [],
   current: null,
+  creditBalance: null,
   trialDays: 10,
   loadingPlans: false,
   loadingCurrent: false,
@@ -76,6 +89,9 @@ const pricingSlice = createSlice({
   reducers: {
     clearPricingError(state) {
       state.error = null;
+    },
+    updateCreditBalance(state, action) {
+      state.creditBalance = action.payload;
     },
   },
   extraReducers: (builder) => {
@@ -100,10 +116,20 @@ const pricingSlice = createSlice({
       .addCase(fetchCurrentPricing.fulfilled, (state, action) => {
         state.loadingCurrent = false;
         state.current = action.payload || null;
+        state.creditBalance = action.payload?.creditBalance || null;
       })
       .addCase(fetchCurrentPricing.rejected, (state, action) => {
         state.loadingCurrent = false;
         state.error = action.payload || "Failed to fetch current pricing";
+      })
+      .addCase(fetchCreditBalance.pending, (state) => {
+        state.error = null;
+      })
+      .addCase(fetchCreditBalance.fulfilled, (state, action) => {
+        state.creditBalance = action.payload?.balance || null;
+      })
+      .addCase(fetchCreditBalance.rejected, (state, action) => {
+        state.error = action.payload || "Failed to fetch credit balance";
       })
       .addCase(checkPlanChange.fulfilled, (state, action) => {
         state.changePlanValidation[action.payload.plan] = action.payload.result;
@@ -133,5 +159,5 @@ const pricingSlice = createSlice({
   },
 });
 
-export const { clearPricingError } = pricingSlice.actions;
+export const { clearPricingError, updateCreditBalance } = pricingSlice.actions;
 export default pricingSlice.reducer;

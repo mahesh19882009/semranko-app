@@ -170,7 +170,7 @@ function LoginPage() {
               cursor: loading ? "not-allowed" : "pointer"
             }}
           >
-            {loading ? "LOGGING IN..." : "CLICK TO LOGIN"}
+            {loading ? "Logging in..." : "Click to login"}
           </button>
 
           <p style={{

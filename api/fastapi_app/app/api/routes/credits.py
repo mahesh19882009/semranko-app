@@ -5,7 +5,7 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc, nullslast
 from typing import Dict, Any, Optional
 
 from app.api.deps import db_session, get_current_user
@@ -64,8 +64,8 @@ async def create_credit_purchase_order(
         db=db,
         user_id=current_user['id'],
         owner_id=current_user['id'],
-        amount=float(amount_paise) / 100.0,
-        action_type="purchase",
+        amount=float(requested_credits),
+        action_type="CREDIT_TOP_UP",
         description=f"Credit top-up order {order['id']} ({requested_credits} credits)",
         related_order_id=order["id"],
     )
@@ -143,24 +143,50 @@ async def verify_credit_payment(
         raise HTTPException(status_code=403, detail="Not your payment order")
 
     if payment_order.status == "paid":
-        return ok("Payment already verified", {
-            "credits_added": payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0,
-        })
+        # Check if credits were already added by looking for a successful ledger entry
+        existing_ledger = db.scalar(
+            select(CreditLedger).where(
+                CreditLedger.relatedOrderId == order_id,
+                CreditLedger.status == "success"
+            )
+        )
+        if existing_ledger:
+            return ok("Payment already verified and credits added", {
+                "credits_added": existing_ledger.amount,
+                "new_balance": get_credit_balance(db, current_user['id']),
+            })
+        # If payment is paid but no successful ledger, add credits now
+        logger.info(f"[verify-credit-payment] Payment paid but no successful ledger found, adding credits now")
 
     payment_order.status = "paid"
     payment_order.razorpayPaymentId = payment_id
     db.add(payment_order)
     db.commit()
 
-    credits_to_add = payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0
+    # Calculate credits based on multiplier (stored in planId) for credit top-ups
+    if payment_order.purchaseType == "CREDIT_TOP_UP":
+        from app.core.config import get_settings
+        settings = get_settings()
+        multiplier = getattr(payment_order, "planId", 0)
+        credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+        credits_to_add = int(multiplier) * credits_per_unit
+        logger.info(f"[verify-credit-payment] CREDIT_TOP_UP: multiplier={multiplier}, credits_per_unit={credits_per_unit}, credits_to_add={credits_to_add}")
+    else:
+        # Fallback to credit_applied_paise for other payment types
+        credits_to_add = payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0
+        logger.info(f"[verify-credit-payment] Other payment type: credits_to_add={credits_to_add}")
+    
     if credits_to_add > 0:
-        add_purchased_credits(
+        new_balance = add_purchased_credits(
             db=db,
             user_id=current_user['id'],
             amount=credits_to_add,
             description=f"Credit purchase via Razorpay order {order_id}",
             related_order_id=order_id,
         )
+        logger.info(f"[verify-credit-payment] Credits added. New balance: {new_balance}")
+    else:
+        logger.warning(f"[verify-credit-payment] No credits to add: credits_to_add={credits_to_add}")
 
     email_service.send_payment_success_email(
         to_email=current_user.get('email'),
@@ -172,6 +198,7 @@ async def verify_credit_payment(
 
     return ok("Credits added successfully", {
         "credits_added": credits_to_add,
+        "new_balance": get_credit_balance(db, current_user['id']),
     })
 
 
@@ -201,12 +228,23 @@ async def get_billing_history(
         order_id = order.razorpayOrderId
         purchase_type = getattr(order, "purchaseType", None)
 
+        # For subscription payments, check if credits were added via ledger
+        if not ledger and purchase_type != "CREDIT_TOP_UP":
+            # Try to find ledger by user and timestamp range
+            ledger = db.scalar(
+                select(CreditLedger).where(
+                    CreditLedger.userId == owner_id,
+                    CreditLedger.actionType == "purchase",
+                    CreditLedger.relatedOrderId == order.razorpayOrderId
+                )
+            )
+
         history.append(BillingHistoryItem(
-            id=ledger.id if ledger else order.id,
+            id=order.id,  # Always use PaymentOrder.id for download lookup
             order_id=order_id,
             amount_paid_inr=amount_paid_inr,
             status=status,
-            timestamp=order.createdAt.isoformat() if order.createdAt else None,
+            timestamp=(order.createdAt or order.updatedAt).isoformat() if (order.createdAt or order.updatedAt) else None,
             invoice_number=(ledger.invoiceNumber if ledger else None) or f"INV-{order.id[:8].upper()}",
             purchase_type=purchase_type,
         ))
@@ -214,23 +252,67 @@ async def get_billing_history(
     return BillingHistoryResponse(history=history)
 
 
-@router.get("/invoice/{ledger_id}/download")
+@router.get("/invoice/{invoice_id}/download")
 async def download_invoice(
-    ledger_id: str,
+    invoice_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
     from app.services.team_service import get_team_owner_id
-    ledger = db.scalar(select(CreditLedger).where(CreditLedger.id == ledger_id))
-    if not ledger:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-
     owner_id = get_team_owner_id(db, current_user['id'])
-    if ledger.userId != owner_id:
+    
+    logger.info(f"[invoice-download] Looking for invoice_id: {invoice_id} for user: {current_user['id']}")
+    
+    # Handle invoice_number format like "INV-ABC12345"
+    if invoice_id.startswith("INV-"):
+        invoice_id = invoice_id[4:]  # Remove "INV-" prefix
+        logger.info(f"[invoice-download] Stripped INV- prefix, searching for: {invoice_id}")
+    
+    # Try to find by CreditLedger first, then by PaymentOrder
+    ledger = db.scalar(select(CreditLedger).where(CreditLedger.id == invoice_id))
+    payment_order = None
+    
+    if not ledger:
+        # Try to find by PaymentOrder ID
+        payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.id == invoice_id))
+        if not payment_order:
+            # Try to find by razorpayOrderId
+            payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == invoice_id))
+        
+        if payment_order:
+            ledger = db.scalar(
+                select(CreditLedger).where(CreditLedger.relatedOrderId == payment_order.razorpayOrderId)
+            )
+    
+    logger.info(f"[invoice-download] Found ledger: {ledger is not None}, payment_order: {payment_order is not None}")
+    
+    if not ledger and not payment_order:
+        # List some available orders for debugging
+        available_orders = db.scalars(
+            select(PaymentOrder).where(PaymentOrder.userId == owner_id).limit(5)
+        ).all()
+        logger.info(f"[invoice-download] Available orders for user: {[o.id for o in available_orders]}")
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    # Check ownership
+    if ledger and ledger.userId != owner_id:
         raise HTTPException(status_code=403, detail="Not your invoice")
-
-    if ledger.status not in {"completed", "success"}:
+    if payment_order and payment_order.userId != owner_id:
+        raise HTTPException(status_code=403, detail="Not your invoice")
+    
+    # Check status - allow download if payment is paid regardless of ledger status
+    if payment_order and payment_order.status not in {"paid", "captured"}:
         raise HTTPException(status_code=400, detail="Invoice is not available for download")
+    
+    # If no payment_order but ledger exists, check ledger status
+    if not payment_order and ledger and ledger.status not in {"completed", "success"}:
+        raise HTTPException(status_code=400, detail="Invoice is not available for download")
+    
+    # Use payment_order if we have it, otherwise get it from ledger
+    if not payment_order and ledger:
+        payment_order = db.scalar(
+            select(PaymentOrder).where(PaymentOrder.razorpayOrderId == ledger.relatedOrderId)
+        )
 
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
@@ -245,15 +327,8 @@ async def download_invoice(
         styles = getSampleStyleSheet()
         story = []
 
-        story.append(Paragraph("RankCare Invoice", styles["Title"]))
-        story.append(Spacer(1, 0.2 * inch))
-
         amount = float(ledger.amount or 0)
         gst_rate = 0.18
-        
-        payment_order = db.scalar(
-            select(PaymentOrder).where(PaymentOrder.razorpayOrderId == ledger.relatedOrderId)
-        )
         
         if payment_order and payment_order.amount:
             total_inr = payment_order.amount / 100.0
@@ -268,83 +343,181 @@ async def download_invoice(
         is_credit_top_up = payment_order and payment_order.purchaseType == "CREDIT_TOP_UP"
         
         if is_credit_top_up:
-            credits_added = int(total_inr / 0.20) if total_inr > 0 else 0
-            description = f"Premium Core Platform Add-on: {credits_added:,} Live Processing Credits (Bound to active monthly cycle)"
+            credits_added = int(total_inr / 0.1667) if total_inr > 0 else 0
+            description = f"Credit Top-Up: {credits_added:,} Credits (600 credits per ₹100)"
+            hsn_code = "9983"
         else:
-            description = ledger.description or "Subscription plan purchase"
+            if payment_order:
+                plan_key = {0: "starter", 1: "pro", 2: "agency"}.get(payment_order.planId, "starter")
+                plan = PLAN_DEFINITIONS.get(plan_key, {})
+                plan_name = plan.get("name", "Subscription Plan")
+                description = f"Subscription: {plan_name} - Monthly Plan"
+            else:
+                description = ledger.description or "Subscription plan purchase"
+            hsn_code = "9983"
 
-        story.append(Paragraph("INVOICE", styles["Heading1"]))
-        story.append(Spacer(1, 0.15 * inch))
-        
-        company_info = [
-            [Paragraph("<b>RankCare Technologies</b>", styles["Normal"])],
-            [Paragraph("SEO Rank Tracking & Competitor Analysis", styles["Normal"])],
-            [Paragraph("support@rankcare.com", styles["Normal"])],
-            [Paragraph("GSTIN: 27AABCR1234L1ZZ", styles["Normal"])],
+        story.append(Paragraph("TAX INVOICE", styles["Heading1"]))
+        story.append(Spacer(1, 0.1 * inch))
+
+        from app.core.config import get_settings
+        settings = get_settings()
+
+        company_address = settings.COMPANY_ADDRESS or ""
+        company_state = settings.COMPANY_STATE or ""
+        company_state_code = settings.COMPANY_STATE_CODE or ""
+        company_gstin = settings.GSTIN or ""
+        company_name = settings.COMPANY_NAME or "RankCare Technologies"
+        company_email = settings.COMPANY_EMAIL or "support@rankcare.com"
+
+        user = db.scalar(select(User).where(User.id == owner_id))
+        bill_to_name = user.name if user else "Customer"
+        bill_to_email = user.email if user else ""
+        bill_to_gstin = user.userGstin if user else None
+        bill_to_gst_name = user.userGstName if user else None
+        bill_to_gst_address = user.userGstAddress if user else None
+        bill_to_gst_state = user.userGstState if user else None
+        bill_to_gst_state_code = user.userGstStateCode if user else None
+
+        company_lines = [
+            Paragraph(f"<b>{company_name}</b>", styles["Normal"]),
         ]
-        company_table = Table(company_info, colWidths=[4 * inch])
-        company_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 12),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        if company_address:
+            company_lines.append(Paragraph(company_address, styles["Normal"]))
+        company_lines.extend([
+            Paragraph(f"{company_state} - {company_state_code}", styles["Normal"]),
+            Paragraph(f"GSTIN: {company_gstin}", styles["Normal"]),
+            Paragraph(f"Email: {company_email}", styles["Normal"]),
+        ])
+
+        bill_lines = [
+            Paragraph(f"<b>Bill To</b>", styles["Normal"]),
+            Paragraph(f"<b>{bill_to_name}</b>", styles["Normal"]),
+        ]
+        if bill_to_email:
+            bill_lines.append(Paragraph(f"Email: {bill_to_email}", styles["Normal"]))
+        if bill_to_gstin:
+            bill_lines.append(Paragraph(f"GSTIN: {bill_to_gstin}", styles["Normal"]))
+        if bill_to_gst_name:
+            bill_lines.append(Paragraph(f"Name: {bill_to_gst_name}", styles["Normal"]))
+        if bill_to_gst_address:
+            bill_lines.append(Paragraph(f"Address: {bill_to_gst_address}", styles["Normal"]))
+        if bill_to_gst_state:
+            bill_lines.append(Paragraph(f"State: {bill_to_gst_state} ({bill_to_gst_state_code})", styles["Normal"]))
+
+        info_table_data = [
+            [company_lines, bill_lines],
+        ]
+        info_table = Table(info_table_data, colWidths=[3.4 * inch, 3.4 * inch])
+        info_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
             ("TOPPADDING", (0, 0), (-1, -1), 8),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+            ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#0f172a")),
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f8fafc")),
+            ("BACKGROUND", (1, 0), (1, -1), colors.HexColor("#ffffff")),
         ]))
-        story.append(company_table)
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(info_table)
+        story.append(Spacer(1, 0.15 * inch))
 
-        invoice_meta = [
-            ["Invoice Number:", ledger.invoiceNumber or f"INV-{ledger.id[:8].upper()}"],
-            ["Date:", ledger.createdAt.strftime("%d-%m-%Y") if ledger.createdAt else "N/A"],
-            ["Order ID:", ledger.relatedOrderId or "N/A"],
-            ["Payment ID:", payment_order.razorpayPaymentId if payment_order else "N/A"],
+        invoice_number = (ledger.invoiceNumber if ledger else None) or f"INV-{(payment_order.id if payment_order else invoice_id)[:8].upper()}"
+        invoice_date = (ledger.createdAt if ledger else payment_order.createdAt).strftime("%d/%m/%Y") if (ledger or payment_order) else "N/A"
+        order_id = payment_order.razorpayOrderId if payment_order else (ledger.relatedOrderId if ledger else "N/A")
+        payment_id = payment_order.razorpayPaymentId if payment_order else "N/A"
+
+        meta_data = [
+            ["Invoice Number", invoice_number, "Date", invoice_date],
+            ["Order ID", order_id, "Payment ID", payment_id],
         ]
-        meta_table = Table(invoice_meta, colWidths=[2 * inch, 4 * inch])
+        meta_table = Table(meta_data, colWidths=[1.5 * inch, 2.5 * inch, 1 * inch, 2 * inch])
         meta_table.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (0, -1), 10),
-            ("FONTSIZE", (1, 0), (1, -1), 10),
+            ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f1f5f9")),
+            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f1f5f9")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
         story.append(meta_table)
-        story.append(Spacer(1, 0.2 * inch))
-
-        story.append(Paragraph("Description:", styles["Heading3"]))
-        story.append(Paragraph(description, styles["Normal"]))
-        story.append(Spacer(1, 0.2 * inch))
+        story.append(Spacer(1, 0.15 * inch))
 
         data = [
-            ["Description", "Amount (INR)"],
-            [description, f"₹{base_inr:.2f}"],
-            ["CGST (9%)", f"₹{cgst:.2f}"],
-            ["SGST (9%)", f"₹{sgst:.2f}"],
-            ["Total (INR)", f"₹{total:.2f}"],
+            ["HSN/SAC", "Description", "Amount (INR)", "GST Rate", "CGST (INR)", "SGST (INR)", "Total (INR)"],
+            [hsn_code, description, f"{base_inr:.2f}", "18%", f"{cgst:.2f}", f"{sgst:.2f}", f"{total:.2f}"],
         ]
 
-        table = Table(data, colWidths=[4 * inch, 2 * inch])
+        table = Table(data, colWidths=[0.9 * inch, 2.2 * inch, 1.1 * inch, 0.9 * inch, 1 * inch, 1 * inch, 1.1 * inch])
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 11),
-            ("BACKGROUND", (0, 1), (-1, -2), colors.HexColor("#f8fafc")),
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
             ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, -1), (-1, -1), 11),
+            ("FONTSIZE", (0, -1), (-1, -1), 9),
             ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e2e8f0")),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(table)
+        story.append(Spacer(1, 0.15 * inch))
+
+        summary_data = [
+            ["Sub Total", f"₹{base_inr:.2f}"],
+            ["CGST (9%)", f"₹{cgst:.2f}"],
+            ["SGST (9%)", f"₹{sgst:.2f}"],
+            ["Total", f"₹{total:.2f}"],
+        ]
+        summary_table = Table(summary_data, colWidths=[4 * inch, 2 * inch])
+        summary_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f1f5f9")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ("LEFTPADDING", (0, 0), (-1, -1), 12),
             ("RIGHTPADDING", (0, 0), (-1, -1), 12),
         ]))
-        story.append(table)
-        story.append(Spacer(1, 0.3 * inch))
-        
-        story.append(Paragraph("Thank you for your business!", styles["Normal"]))
-        story.append(Paragraph("For any queries, contact us at support@rankcare.com", styles["Normal"]))
+        story.append(summary_table)
+        story.append(Spacer(1, 0.15 * inch))
+
+        terms_data = [
+            ["Terms & Conditions:"],
+            ["1. Payment is due immediately upon invoice receipt."],
+            ["2. Once purchased, credits are non-refundable."],
+            ["3. For any queries, contact us at support@rankcare.com."],
+        ]
+        terms_table = Table(terms_data, colWidths=[6 * inch])
+        terms_table.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (0, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(terms_table)
+        story.append(Spacer(1, 0.15 * inch))
+
+        story.append(Paragraph("Authorized Signatory", styles["Normal"]))
+        story.append(Spacer(1, 0.4 * inch))
+        story.append(Paragraph("_________________________", styles["Normal"]))
+        story.append(Paragraph(f"<b>{company_name}</b>", styles["Normal"]))
 
         doc.build(story)
         buffer.seek(0)
@@ -401,42 +574,68 @@ async def razorpay_credit_webhook(
         db.add(payment_order)
         db.commit()
 
-        ledger = finalize_pending_ledger_entry(
-            db=db,
-            order_id=order_id,
-            amount_paid_inr=float(payment_order.amount) / 100.0,
+        existing_ledger = db.scalar(
+            select(CreditLedger).where(
+                CreditLedger.relatedOrderId == order_id,
+                CreditLedger.status.in_(["success", "completed"]),
+            )
         )
+        if existing_ledger:
+            return {"received": True}
 
-        if ledger:
-            credits_to_add = ledger.amount
-            user = db.scalar(select(User).where(User.id == ledger.userId))
+        if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
+            from app.core.config import get_settings
+            settings = get_settings()
+            multiplier = getattr(payment_order, "planId", 0)
+            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+            credits_to_add = int(multiplier) * credits_per_unit
+            user = db.scalar(select(User).where(User.id == payment_order.userId))
             if user and credits_to_add > 0:
                 current = float(getattr(user, "creditBalance", 0.0) or 0.0)
                 user.creditBalance = round(current + credits_to_add, 2)
                 db.add(user)
+
+                ledger = CreditLedger(
+                    userId=user.id,
+                    ownerId=user.id,
+                    amount=float(credits_to_add),
+                    actionType="CREDIT_TOP_UP",
+                    description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment",
+                    relatedOrderId=order_id,
+                    status="success",
+                )
+                db.add(ledger)
                 db.commit()
                 db.refresh(user)
-                logger.info(f"Successfully added {credits_to_add} credits to user {user.id} (top-up, no plan extension)")
+                logger.info(f"[razorpay-credit-webhook] Credit top-up processed: user={user.id} credits_added={credits_to_add}")
         else:
-            credits_to_add = payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0
-            if credits_to_add > 0:
-                try:
-                    add_purchased_credits(
-                        db=db,
-                        user_id=user.id,
-                        amount=credits_to_add,
-                        description=f"Credit top-up via Razorpay order {order_id} (Bound to active monthly cycle)",
-                        related_order_id=order_id,
-                    )
-                    logger.info(f"Successfully added {credits_to_add} credits to user {user.id} (top-up, no plan extension)")
-                except Exception as exc:
-                    logger.exception(f"Failed to add credits to user {user.id}: {exc}")
+            plan_id = payment_order.planId
+            logger.info(f"[razorpay-credit-webhook] Processing subscription payment user={payment_order.userId} plan_id={plan_id} order_id={order_id}")
+            try:
+                from app.services.payment_service import activate_subscription
+                subscription = activate_subscription(
+                    db=db,
+                    user_id=payment_order.userId,
+                    plan_id=plan_id,
+                    payment_id=payment_id,
+                    order_id=order_id,
+                    billing_cycle="monthly"
+                )
+                logger.info(f"[razorpay-credit-webhook] activate_subscription succeeded subscription_id={subscription.id} plan_id={subscription.planId}")
+            except Exception as exc:
+                logger.error(f"[razorpay-credit-webhook] activate_subscription failed: {exc}")
+                import traceback
+                traceback.print_exc()
+                payment_order.status = "paid"
+                payment_order.razorpayPaymentId = payment_id
+                db.add(payment_order)
+                db.commit()
 
         email_service.send_payment_success_email(
             to_email=user.email,
             name=user.name,
-            plan_name="Credit Top-Up",
-            amount=payment_order.amount / 100.0,
+            plan_name="Credit Top-Up" if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP" else "Subscription Plan",
+            amount=float(payment_order.amount) / 100.0,
             order_id=order_id,
         )
 
@@ -465,7 +664,7 @@ async def get_usage_log(
 
     offset = (page - 1) * limit
     entries = (
-        query.order_by(CreditLedger.timestamp.desc(), CreditLedger.createdAt.desc())
+        query.order_by(nullslast(desc(CreditLedger.timestamp)), nullslast(desc(CreditLedger.createdAt)))
         .offset(offset)
         .limit(limit)
         .all()
@@ -478,7 +677,7 @@ async def get_usage_log(
             "action_type": entry.actionType,
             "query_target": entry.queryTarget,
             "credits_spent": entry.creditsSpent,
-            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if entry.timestamp else None,
+            "timestamp": (entry.timestamp or entry.createdAt).strftime("%Y-%m-%dT%H:%M:%SZ") if (entry.timestamp or entry.createdAt) else None,
             "description": entry.description,
             "triggered_by_user_id": entry.triggeredByUserId,
         })
@@ -528,14 +727,13 @@ async def get_ledger_history(
 
     query = db.query(CreditLedger).filter(
         CreditLedger.ownerId == owner_id,
-        CreditLedger.status.in_(["success", "completed"]),
     )
 
     total = query.count()
 
     offset = (page - 1) * limit
     entries = (
-        query.order_by(CreditLedger.timestamp.desc(), CreditLedger.createdAt.desc())
+        query.order_by(nullslast(desc(CreditLedger.timestamp)), nullslast(desc(CreditLedger.createdAt)))
         .offset(offset)
         .limit(limit)
         .all()
@@ -560,7 +758,7 @@ async def get_ledger_history(
 
         items.append({
             "ledger_id": entry.id,
-            "timestamp": entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") if entry.timestamp else None,
+            "timestamp": (entry.timestamp or entry.createdAt).strftime("%Y-%m-%dT%H:%M:%SZ") if (entry.timestamp or entry.createdAt) else None,
             "action_type": action_display_map.get(entry.actionType, entry.actionType),
             "credits_deducted": display_amount,
             "credits_color": color,

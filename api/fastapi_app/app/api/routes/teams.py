@@ -21,6 +21,7 @@ from app.services.team_service import (
     add_team_member,
     update_team_member_role,
     remove_team_member,
+    delete_team,
 )
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,8 @@ async def add_member(
         "user_id": member.userId,
         "role": member.role,
         "joined_at": member.joinedAt.isoformat() if member.joinedAt else None,
+        "user_name": target_user.name,
+        "user_email": target_user.email,
     })
 
 
@@ -188,3 +191,15 @@ async def remove_member(
     if not success:
         raise HTTPException(status_code=404, detail="Member not found")
     return ok("Member removed")
+
+
+@router.delete("/{team_id}")
+async def delete_team_endpoint(
+    team_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    success = delete_team(db, team_id, current_user["id"])
+    if not success:
+        raise HTTPException(status_code=404, detail="Team not found or you are not the owner")
+    return ok("Team deleted")

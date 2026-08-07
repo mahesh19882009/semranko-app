@@ -6,11 +6,11 @@ import {
   faFolderOpen,
   faMagnifyingGlassChart,
   faLightbulb,
-  faUsersViewfinder,
   faBrain,
   faFileInvoiceDollar,
   faUsers,
   faChartSimple,
+  faGear,
 } from '@fortawesome/free-solid-svg-icons';
 import Button from './ui/Button';
 
@@ -19,11 +19,11 @@ const navItems = [
   { to: '/projects', label: 'Projects', icon: faFolderOpen },
   { to: '/keywords', label: 'Keywords', icon: faMagnifyingGlassChart },
   { to: '/keyword-research', label: 'Keyword Research', icon: faLightbulb },
-  { to: '/competitors', label: 'Competitors', icon: faUsersViewfinder },
   { to: '/aio', label: 'AIO Overview', icon: faBrain },
   { to: '/dashboard/billing', label: 'Billing', icon: faFileInvoiceDollar },
   { to: '/dashboard/team', label: 'Team', icon: faUsers },
   { to: '/dashboard/usage', label: 'Usage', icon: faChartSimple },
+  { to: '/dashboard/settings', label: 'Settings', icon: faGear },
 ];
 
 function Sidebar({ open, onToggle }) {

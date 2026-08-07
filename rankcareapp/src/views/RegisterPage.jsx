@@ -36,9 +36,7 @@ function RegisterPage() {
       });
 
       setSuccess("Registration successful. Please verify your email before logging in.");
-      setTimeout(() => {
-        navigate("/login?emailVerificationPending=true");
-      }, 700);
+      navigate("/login?emailVerificationPending=true");
     } catch (err) {
       setError(err.message || "Something went wrong");
     } finally {

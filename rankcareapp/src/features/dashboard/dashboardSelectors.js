@@ -85,22 +85,6 @@ export const selectRankTrend = createSelector(
   }
 );
 
-export const selectCompetitors = createSelector(
-  [selectSelectedProject, selectDashboard],
-  (project, dashboard) => {
-    const globalCompetitors = dashboard.competitors?.items || dashboard.competitors || [];
-    const projectCompetitors = Array.isArray(project?.competitors)
-      ? project.competitors
-      : project?.competitors?.items || [];
-
-    if (projectCompetitors.length > 0) {
-      return projectCompetitors;
-    }
-
-    return globalCompetitors;
-  }
-);
-
 export const selectKeywords = createSelector(
   [selectDashboard],
   (dashboard) => dashboard.keywords || []
@@ -112,14 +96,13 @@ export const selectKeywordsTableRows = createSelector(
 );
 
 export const selectHasSelectedProjectData = createSelector(
-  [selectSelectedProject, selectCompetitors, selectRankTrend, selectStats, selectKeywords],
-  (project, competitors, rankTrend, stats, keywords) => {
+  [selectSelectedProject, selectRankTrend, selectStats, selectKeywords],
+  (project, rankTrend, stats, keywords) => {
     if (!project) return false;
 
     return (
       stats.totalKeywords > 0 ||
       stats.estimatedTraffic > 0 ||
-      competitors.length > 0 ||
       rankTrend.length > 0 ||
       keywords.length > 0
     );

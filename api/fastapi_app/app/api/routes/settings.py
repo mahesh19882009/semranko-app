@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.api.deps import db_session, get_current_user
-from app.db.models import User
+from app.db.models import User, Subscription
 from app.schemas.common import ok
+from app.services.auth_service import change_user_password
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -32,17 +33,42 @@ class UserSettingsResponse(BaseModel):
     companyStateCode: str
 
 
+class ProfileUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+
+
+class ProfileResponse(BaseModel):
+    name: str
+    email: str
+    selectedPlan: str
+    subscriptionStatus: str
+    trialEndsAt: Optional[str]
+    subscriptionEndDate: Optional[str]
+    creditBalance: float
+    createdAt: Optional[str]
+    authProvider: str
+
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str
+    newPassword: str = Field(min_length=8)
+
+
 @router.get("/gst")
 def get_user_gst_info(
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
 ) -> dict:
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     return ok("GST info fetched", {
-        "gstin": current_user.userGstin,
-        "gstName": current_user.userGstName,
-        "gstAddress": current_user.userGstAddress,
-        "gstState": current_user.userGstState,
-        "gstStateCode": current_user.userGstStateCode,
+        "gstin": user.userGstin,
+        "gstName": user.userGstName,
+        "gstAddress": user.userGstAddress,
+        "gstState": user.userGstState,
+        "gstStateCode": user.userGstStateCode,
         "companyGstin": "06FHDPK2516L1ZB",
         "companyName": "CodMonks Technologies",
         "companyAddress": "HOUSE NO 769, Sector-64, Ballabhgarh, Faridabad-121004, Haryana",
@@ -54,21 +80,90 @@ def get_user_gst_info(
 @router.post("/gst")
 def update_user_gst_info(
     payload: UserGstInfo,
-    current_user: User = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
 ) -> dict:
-    current_user.userGstin = payload.gstin
-    current_user.userGstName = payload.gstName
-    current_user.userGstAddress = payload.gstAddress
-    current_user.userGstState = payload.gstState
-    current_user.userGstStateCode = payload.gstStateCode
-    db.add(current_user)
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.userGstin = payload.gstin
+    user.userGstName = payload.gstName
+    user.userGstAddress = payload.gstAddress
+    user.userGstState = payload.gstState
+    user.userGstStateCode = payload.gstStateCode
+    db.add(user)
     db.commit()
-    db.refresh(current_user)
+    db.refresh(user)
     return ok("GST info updated", {
-        "gstin": current_user.userGstin,
-        "gstName": current_user.userGstName,
-        "gstAddress": current_user.userGstAddress,
-        "gstState": current_user.userGstState,
-        "gstStateCode": current_user.userGstStateCode,
+        "gstin": user.userGstin,
+        "gstName": user.userGstName,
+        "gstAddress": user.userGstAddress,
+        "gstState": user.userGstState,
+        "gstStateCode": user.userGstStateCode,
     })
+
+
+@router.get("/profile")
+def get_profile(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user.id,
+            Subscription.isActive == True
+        )
+    )
+
+    return ok("Profile fetched", {
+        "name": user.name,
+        "email": user.email,
+        "selectedPlan": user.selectedPlan,
+        "subscriptionStatus": user.subscriptionStatus,
+        "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
+        "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate else None,
+        "creditBalance": user.creditBalance,
+        "createdAt": user.createdAt.isoformat() if user.createdAt else None,
+        "authProvider": user.authProvider,
+    })
+
+
+@router.put("/profile")
+def update_profile(
+    payload: ProfileUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.name = payload.name.strip()
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return ok("Profile updated", {
+        "name": user.name,
+        "email": user.email,
+    })
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> dict:
+    result = change_user_password(
+        db,
+        current_user["id"],
+        payload.currentPassword,
+        payload.newPassword,
+    )
+    return ok("Password changed successfully", result)

@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.core.config import get_settings
-from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER
+from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary
 from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -227,6 +227,7 @@ def activate_subscription(
             credit_applied_paise=0,
             currency="INR",
             status="paid",
+            purchaseType="SUBSCRIPTION_UPGRADE",
         )
         db.add(fallback_order)
     
@@ -255,6 +256,10 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
+        
+        # Set plan anniversary for credit reset tracking (no rollover)
+        set_plan_anniversary(db, user)
+        
         credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
         old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
         new_balance = round(old_balance + credits_to_add, 2)
@@ -268,17 +273,26 @@ def activate_subscription(
         
         logger.info(f"[activate_subscription] UPGRADE path AFTER COMMIT creditBalance={user.creditBalance}")
         
-        ledger = CreditLedger(
-            userId=user_id,
-            ownerId=user_id,
-            amount=credits_to_add,
-            actionType="purchase",
-            description=f"Subscription purchase: {plan['name']} (Order {order_id})",
-            relatedOrderId=order_id,
-            status="success",
-        )
-        db.add(ledger)
-        db.commit()
+        # Create ledger entry for subscription purchase
+        try:
+            ledger = CreditLedger(
+                userId=user_id,
+                ownerId=user_id,
+                amount=credits_to_add,
+                actionType="purchase",
+                description=f"Subscription purchase: {plan['name']} (Order {order_id})",
+                relatedOrderId=order_id,
+                status="success",
+            )
+            db.add(ledger)
+            db.commit()
+            logger.info(f"[activate_subscription] UPGRADE path ledger created successfully: amount={credits_to_add}")
+        except Exception as ledger_exc:
+            logger.error(f"[activate_subscription] UPGRADE path ledger creation failed: {ledger_exc}")
+            import traceback
+            traceback.print_exc()
+            db.rollback()
+            # Continue anyway since subscription is activated
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0
@@ -309,6 +323,10 @@ def activate_subscription(
         
         user.subscriptionStatus = "active"
         user.selectedPlan = effective_plan_key
+        
+        # Set plan anniversary for credit reset tracking (no rollover)
+        set_plan_anniversary(db, user)
+        
         credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
         old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
         new_balance = round(old_balance + credits_to_add, 2)
@@ -320,17 +338,23 @@ def activate_subscription(
         
         logger.info(f"[activate_subscription] NEW path AFTER COMMIT creditBalance={user.creditBalance}")
         
-        ledger = CreditLedger(
-            userId=user_id,
-            ownerId=user_id,
-            amount=credits_to_add,
-            actionType="purchase",
-            description=f"Subscription purchase: {plan['name']} (Order {order_id})",
-            relatedOrderId=order_id,
-            status="success",
-        )
-        db.add(ledger)
-        db.commit()
+        try:
+            ledger = CreditLedger(
+                userId=user_id,
+                ownerId=user_id,
+                amount=credits_to_add,
+                actionType="purchase",
+                description=f"Subscription purchase: {plan['name']} (Order {order_id})",
+                relatedOrderId=order_id,
+                status="success",
+            )
+            db.add(ledger)
+            db.commit()
+            logger.info(f"[activate_subscription] NEW path ledger created: amount={credits_to_add}")
+        except Exception as ledger_exc:
+            logger.error(f"[activate_subscription] NEW path ledger creation failed: {ledger_exc}")
+            db.rollback()
+            # Continue anyway since subscription is activated
         
         payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
         amount = float(payment_order.amount) / 100 if payment_order else 0.0

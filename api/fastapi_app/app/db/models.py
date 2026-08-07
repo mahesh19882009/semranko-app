@@ -35,11 +35,13 @@ class User(Base):
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
     pendingPlanChange: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    userGstin: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    userGstName: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    userGstAddress: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    userGstState: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    userGstStateCode: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    planAnniversaryAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, server_default="NULL")  # When plan was activated for anniversary tracking
+    lastCreditResetAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, server_default="NULL")  # Last time credits were reset
+    userGstin: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
+    userGstName: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
+    userGstAddress: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
+    userGstState: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
+    userGstStateCode: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
 
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -63,6 +65,7 @@ class User(Base):
         back_populates="user",
         primaryjoin="and_(CreditLedger.userId == User.id, CreditLedger.userId != None)",
     )
+    dataforseoCosts: Mapped[list["DataForSEOCost"]] = relationship("DataForSEOCost", back_populates="user")
     ownedTeams: Mapped[list["Team"]] = relationship("Team", back_populates="owner")
     teamMemberships: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="user")
 
@@ -342,6 +345,28 @@ class TrackedKeyword(Base):
     __table_args__ = (
         Index("TrackedKeyword_userId_idx", "userId"),
         Index("TrackedKeyword_userId_keyword_key", "userId", "keyword", unique=True),
+    )
+
+
+class DataForSEOCost(Base):
+    __tablename__ = "DataForSEOCost"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)
+    taskType: Mapped[str] = mapped_column(String, nullable=False)  # 'rank_tracker', 'aio', etc.
+    endpoint: Mapped[str] = mapped_column(String, nullable=False)  # API endpoint called
+    costCredits: Mapped[float] = mapped_column(Float, nullable=False)  # Cost in credits
+    costUsd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Cost in USD for reporting
+    keywordCount: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # Number of keywords processed
+    meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Additional context
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    user: Mapped[Optional[User]] = relationship("User")
+
+    __table_args__ = (
+        Index("DataForSEOCost_userId_idx", "userId"),
+        Index("DataForSEOCost_createdAt_idx", "createdAt"),
+        Index("DataForSEOCost_taskType_idx", "taskType"),
     )
 
 

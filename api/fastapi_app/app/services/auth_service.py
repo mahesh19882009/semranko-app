@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import threading
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,13 @@ from app.core.security import (
 from app.db.models import User
 from app.services import email_service
 from app.utils.serializers import model_to_dict
+
+
+def _send_verification_email_background(email, name, verification_url):
+    try:
+        email_service.send_verification_email(email, name, verification_url)
+    except Exception:
+        pass
 
 
 def register_user(db: Session, payload: dict) -> dict:
@@ -40,7 +48,6 @@ def register_user(db: Session, payload: dict) -> dict:
     trial_starts_at = datetime.utcnow()
     trial_ends_at = trial_starts_at + timedelta(days=settings.TRIAL_DAYS)
 
-    # HARDCODED SANDBOX DEFAULTS - All new accounts start on Free Trial
     user = User(
         name=name.strip(),
         email=normalized_email,
@@ -49,11 +56,11 @@ def register_user(db: Session, payload: dict) -> dict:
         emailVerificationToken=token_hash,
         emailVerificationExpiresAt=expires_at,
         authProvider="local",
-        selectedPlan="free_trial",  # LOCKED: Always free_trial
+        selectedPlan="free_trial",
         subscriptionStatus="trialing",
         trialStartsAt=trial_starts_at,
         trialEndsAt=trial_ends_at,
-        creditBalance=200.0,  # LOCKED: Always 200 credits
+        creditBalance=200.0,
     )
 
     db.add(user)
@@ -63,13 +70,18 @@ def register_user(db: Session, payload: dict) -> dict:
     frontend_url = (settings.FRONTEND_URL or "").rstrip("/")
     verification_url = f"{frontend_url}/verify-email?token={raw_token}"
 
-    email_sent = email_service.send_verification_email(user.email, user.name, verification_url)
+    email_thread = threading.Thread(
+        target=_send_verification_email_background,
+        args=(user.email, user.name, verification_url),
+        daemon=True,
+    )
+    email_thread.start()
 
     result = model_to_dict(
         user,
         exclude={"passwordHash", "emailVerificationToken"}
     )
-    result["emailSent"] = email_sent
+    result["emailSent"] = True
     return result
 
 
@@ -225,3 +237,24 @@ def reset_password(db: Session, payload: dict) -> dict:
     db.commit()
 
     return {"reset": True}
+
+
+def change_user_password(db: Session, user_id: str, current_password: str, new_password: str) -> dict:
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise ApiError(404, "User not found")
+
+    if user.authProvider != "local":
+        raise ApiError(400, "Password change is only available for local accounts")
+
+    if not user.passwordHash or not verify_password(current_password, user.passwordHash):
+        raise ApiError(400, "Current password is incorrect")
+
+    if len(new_password) < 8:
+        raise ApiError(400, "New password must be at least 8 characters long")
+
+    user.passwordHash = hash_password(new_password)
+    db.add(user)
+    db.commit()
+
+    return {"changed": True}

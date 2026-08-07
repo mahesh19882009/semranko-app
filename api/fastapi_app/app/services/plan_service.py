@@ -224,6 +224,94 @@ def get_grace_period_end(user: User) -> Optional[datetime]:
     return trial_ends_at + timedelta(days=3)
 
 
+def should_reset_credits(user: User) -> bool:
+    """Check if user's credits should be reset based on plan anniversary."""
+    plan_anniversary = getattr(user, "planAnniversaryAt", None)
+    last_reset = getattr(user, "lastCreditResetAt", None)
+    
+    if not plan_anniversary:
+        return False
+    
+    now = datetime.utcnow()
+    
+    # If never reset, check if we're past the first anniversary
+    if not last_reset:
+        return now >= plan_anniversary + timedelta(days=30)
+    
+    # Check if we're past the next anniversary (30-day cycles)
+    next_anniversary = last_reset + timedelta(days=30)
+    return now >= next_anniversary
+
+
+def reset_monthly_credits(db: Session, user: User) -> dict:
+    """Reset user's credits to their plan's monthly allocation (no rollover)."""
+    if not should_reset_credits(user):
+        return {"reset": False, "reason": "Not yet due for reset"}
+    
+    effective_plan_key = get_effective_plan_key(user)
+    plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
+    monthly_credits = plan.get("monthlyCredits", 0)
+    
+    # Reset credits (no rollover - previous balance is forfeited)
+    user.creditBalance = float(monthly_credits)
+    user.lastCreditResetAt = datetime.utcnow()
+    
+    # If this is the first reset, set the anniversary
+    if not getattr(user, "planAnniversaryAt", None):
+        user.planAnniversaryAt = datetime.utcnow()
+    
+    db.add(user)
+    db.commit()
+    
+    logger.info(f"Reset credits for user {user.id} to {monthly_credits} (plan: {effective_plan_key})")
+    
+    return {
+        "reset": True,
+        "new_balance": monthly_credits,
+        "plan": effective_plan_key,
+        "reset_at": user.lastCreditResetAt.isoformat(),
+    }
+
+
+def set_plan_anniversary(db: Session, user: User) -> None:
+    """Set the plan anniversary date for a user (called on plan activation/upgrade)."""
+    if not getattr(user, "planAnniversaryAt", None):
+        user.planAnniversaryAt = datetime.utcnow()
+        user.lastCreditResetAt = datetime.utcnow()
+        db.add(user)
+        db.commit()
+        logger.info(f"Set plan anniversary for user {user.id} to {user.planAnniversaryAt}")
+
+
+def reset_due_credits_for_all_users(db: Session) -> dict:
+    """Reset credits for all users who are due for their monthly reset (no rollover)."""
+    from sqlalchemy import select
+    
+    users = db.scalars(select(User).where(User.subscriptionStatus == "active")).all()
+    
+    reset_count = 0
+    skipped_count = 0
+    total_credits_reset = 0
+    
+    for user in users:
+        if should_reset_credits(user):
+            result = reset_monthly_credits(db, user)
+            if result.get("reset"):
+                reset_count += 1
+                total_credits_reset += result.get("new_balance", 0)
+            else:
+                skipped_count += 1
+        else:
+            skipped_count += 1
+    
+    return {
+        "total_users": len(users),
+        "reset_count": reset_count,
+        "skipped_count": skipped_count,
+        "total_credits_reset": total_credits_reset,
+    }
+
+
 def count_user_projects(db: Session, user_id: str) -> int:
     return db.scalar(
         select(func.count()).select_from(Project).where(Project.userId == user_id)
@@ -304,6 +392,13 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
     limits = get_user_plan_limits(user)
     plan_def = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
 
+    subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user.id,
+            Subscription.isActive == True
+        )
+    )
+
     return {
         "plan": selected_plan_key,
         "effectivePlan": effective_plan_key,
@@ -316,6 +411,8 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
         "base_price_inr": plan_def.get("monthlyPrice", 0),
         "individual_discount_pct": plan_def.get("individual_discount_pct", 0),
+        "subscriptionStartDate": subscription.startDate.isoformat() if subscription and subscription.startDate else None,
+        "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate else None,
         "warnings": _get_warnings(db, user, plan_def),
         "usage": {
             "projects": count_user_projects(db, user.id),
@@ -398,9 +495,40 @@ def change_user_plan(db: Session, user_id: str, plan_key: str) -> User:
     if validation["isDowngrade"] and not validation["allowed"]:
         raise ApiError(409, "Downgrade not allowed until usage is reduced", validation)
 
+    now = datetime.utcnow()
+    duration_days = 30
+
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
     user.creditBalance = get_plan_monthly_credits(plan)
+
+    existing_subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user_id,
+            Subscription.isActive == True
+        )
+    )
+
+    plan_id_map = {"starter": 0, "pro": 1, "agency": 2}
+    effective_plan_id = plan_id_map.get(plan, 0)
+
+    if existing_subscription:
+        existing_subscription.planId = effective_plan_id
+        existing_subscription.status = 'active'
+        existing_subscription.isActive = True
+        existing_subscription.startDate = now
+        existing_subscription.endDate = now + timedelta(days=duration_days)
+        db.add(existing_subscription)
+    else:
+        subscription = Subscription(
+            userId=user_id,
+            planId=effective_plan_id,
+            status='active',
+            isActive=True,
+            startDate=now,
+            endDate=now + timedelta(days=duration_days),
+        )
+        db.add(subscription)
 
     db.add(user)
     db.commit()
@@ -419,9 +547,40 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
     if validation["isDowngrade"] and not validation["allowed"]:
         raise ApiError(409, "Downgrade not allowed until usage is reduced", validation)
 
+    now = datetime.utcnow()
+    duration_days = 30
+
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
     user.creditBalance = get_plan_monthly_credits(plan)
+
+    existing_subscription = db.scalar(
+        select(Subscription).where(
+            Subscription.userId == user_id,
+            Subscription.isActive == True
+        )
+    )
+
+    plan_id_map = {"starter": 0, "pro": 1, "agency": 2}
+    effective_plan_id = plan_id_map.get(plan, 0)
+
+    if existing_subscription:
+        existing_subscription.planId = effective_plan_id
+        existing_subscription.status = 'active'
+        existing_subscription.isActive = True
+        existing_subscription.startDate = now
+        existing_subscription.endDate = now + timedelta(days=duration_days)
+        db.add(existing_subscription)
+    else:
+        subscription = Subscription(
+            userId=user_id,
+            planId=effective_plan_id,
+            status='active',
+            isActive=True,
+            startDate=now,
+            endDate=now + timedelta(days=duration_days),
+        )
+        db.add(subscription)
 
     db.add(user)
     db.commit()

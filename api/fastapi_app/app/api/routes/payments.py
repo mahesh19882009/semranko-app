@@ -31,7 +31,16 @@ PLAN_KEY_PRICES = {
     "agency":  {"monthly": 9999, "yearly": 107989},
 }
 
-def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> dict:
+def _build_invoice(
+    order: "PaymentOrder",
+    user_name: str,
+    user_email: str,
+    user_gstin: Optional[str] = None,
+    user_gst_name: Optional[str] = None,
+    user_gst_address: Optional[str] = None,
+    user_gst_state: Optional[str] = None,
+    user_gst_state_code: Optional[str] = None,
+) -> dict:
     """Convert a PaymentOrder row into a structured invoice dict with GST breakdown.
     Failed transactions don't get invoice numbers."""
     plan_key = PLAN_ID_TO_KEY.get(order.planId, "starter")
@@ -74,6 +83,11 @@ def _build_invoice(order: "PaymentOrder", user_name: str, user_email: str) -> di
         "date":         order.createdAt.isoformat() if order.createdAt else None,
         "user_name":    user_name,
         "user_email":   user_email,
+        "user_gstin":   user_gstin,
+        "user_gst_name": user_gst_name,
+        "user_gst_address": user_gst_address,
+        "user_gst_state": user_gst_state,
+        "user_gst_state_code": user_gst_state_code,
     }
 
 
@@ -92,6 +106,8 @@ async def create_payment_order(
     try:
         from app.db.models import PaymentOrder as PO
 
+        logger.info(f"[create-order] user={current_user.id} plan_id={plan_id} billing_cycle={billing_cycle}")
+        
         plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
         plan_def = PLAN_DEFINITIONS.get(plan_key, {})
         base_price_inr = float(plan_def.get("monthlyPrice", 0))
@@ -103,6 +119,8 @@ async def create_payment_order(
         discounted_inr = base_price_inr - (base_price_inr * (individual_discount_pct / 100))
         amount_in_inr = discounted_inr + (discounted_inr * float(GST_RATE))
         amount_in_paise = int(round(amount_in_inr * 100))
+
+        logger.info(f"[create-order] plan_key={plan_key} base_price={base_price_inr} discount={individual_discount_pct}% final_amount={amount_in_paise}")
 
         if amount_in_paise <= 0:
             raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
@@ -164,10 +182,13 @@ async def create_payment_order(
             credit_applied_paise=0,
             currency=order["currency"],
             status="created",
+            purchaseType="SUBSCRIPTION_UPGRADE",
         )
         db.add(credit_order)
         db.flush()
         db.commit()
+
+        logger.info(f"[create-order] Created payment order: order_id={order['id']} plan_id={plan_id} amount={amount_in_paise}")
 
         return {
             "order_id": order["id"],
@@ -211,11 +232,15 @@ async def create_top_up_order(
         base_price_inr = settings.CREDIT_TOP_UP_CONFIG.get("base_price_inr", 100)
 
         total_credits = multiplier * credits_per_unit
-        total_inr = multiplier * base_price_inr
+        total_inr = multiplier * base_price_inr  # Base price excluding GST
 
         individual_discount_pct = float(getattr(current_user, "individual_discount_pct", 0.0) or 0.0)
         discounted_inr = total_inr - (total_inr * (individual_discount_pct / 100.0))
-        amount_in_paise = int(round(discounted_inr * 100))
+        
+        # Add GST (18%) to the final amount
+        gst_inr = discounted_inr * 0.18
+        total_with_gst = discounted_inr + gst_inr
+        amount_in_paise = int(round(total_with_gst * 100))
 
         if amount_in_paise <= 0:
             raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
@@ -229,7 +254,7 @@ async def create_top_up_order(
             razorpayOrderId=order["id"],
             planId=multiplier,
             amount=amount_in_paise,
-            credit_applied_paise=0,
+            credit_applied_paise=total_credits,  # Store credits in paise equivalent for tracking
             currency=order["currency"],
             status="created",
             purchaseType="CREDIT_TOP_UP",
@@ -241,7 +266,7 @@ async def create_top_up_order(
             db=db,
             user_id=current_user.id,
             owner_id=current_user.id,
-            amount=float(amount_in_paise) / 100.0,
+            amount=float(total_credits),
             action_type="CREDIT_TOP_UP",
             description=f"Credit top-up: {total_credits} credits ({multiplier}x{credits_per_unit})",
             related_order_id=order["id"],
@@ -249,6 +274,8 @@ async def create_top_up_order(
         )
 
         db.commit()
+
+        logger.info(f"[create-top-up-order] Created order: order_id={order['id']}, multiplier={multiplier}, total_credits={total_credits}, amount_in_paise={amount_in_paise}")
 
         return {
             "order_id": order["id"],
@@ -323,35 +350,17 @@ async def verify_payment(
             db.add(payment_order)
             db.commit()
 
-            multiplier = getattr(payment_order, "planId", 0)
-            settings = get_settings()
-            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
-            credits_to_add = int(multiplier) * credits_per_unit
-            current_user.creditBalance = round(float(getattr(current_user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
-            db.add(current_user)
-            db.commit()
-
-            top_up_ledger = CreditLedger(
-                userId=current_user.id,
-                ownerId=current_user.id,
-                amount=float(credits_to_add),
-                actionType="CREDIT_TOP_UP",
-                description=f"Credit top-up: {credits_to_add} credits ({multiplier}x{credits_per_unit}) via Razorpay payment {razorpay_payment_id}",
-                relatedOrderId=razorpay_order_id,
-                status="success",
-            )
-            db.add(top_up_ledger)
-            db.commit()
-
-            return ok("Credits added successfully", {
-                "credits_added": credits_to_add,
-                "new_balance": current_user.creditBalance,
-            })
-                "credits_added": credits_to_add,
-                "new_balance": current_user.creditBalance,
+            # Credit top-ups are handled by /billing/verify-credit-payment endpoint
+            # This webhook only marks the payment as paid
+            logger.info(f"[verify-payment] CREDIT_TOP_UP payment marked as paid, credits will be added by verify-credit-payment endpoint")
+            
+            return ok("Credit top-up payment verified", {
+                "credits_added": 0,  # Credits added by separate endpoint
+                "message": "Credits will be added by verification endpoint"
             })
 
         if plan_id is None:
+            logger.error(f"[verify-payment] Missing plan_id for subscription payment. razorpay_order_id={razorpay_order_id}")
             raise HTTPException(status_code=400, detail="Missing plan_id for subscription payment")
 
         logger.info(f"[verify-payment] Calling activate_subscription user={current_user.id} plan_id={plan_id} order_id={razorpay_order_id}")
@@ -485,17 +494,28 @@ async def get_invoices(
     Failed transactions are included but without invoice numbers.
     Also returns the current account credit balance.
     """
-    from app.db.models import PaymentOrder as PO
+    from app.db.models import PaymentOrder as PO, User
+
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
 
     orders = (
         db.query(PO)
-        .filter(PO.userId == current_user.id)
+        .filter(PO.userId == current_user["id"])
         .order_by(PO.createdAt.desc())
         .all()
     )
 
     invoices = [
-        _build_invoice(o, current_user.name, current_user.email)
+        _build_invoice(
+            o,
+            user.name if user else current_user.get("name", "Customer"),
+            user.email if user else current_user.get("email", ""),
+            user.userGstin if user else None,
+            user.userGstName if user else None,
+            user.userGstAddress if user else None,
+            user.userGstState if user else None,
+            user.userGstStateCode if user else None,
+        )
         for o in orders
     ]
 
@@ -504,8 +524,13 @@ async def get_invoices(
         "data": {
             "invoices": invoices,
             "credit_balance": float(getattr(current_user, "creditBalance", 0.0) or 0.0),
-            "user_name": current_user.name,
-            "user_email": current_user.email,
+            "user_name": user.name if user else current_user.get("name", "Customer"),
+            "user_email": user.email if user else current_user.get("email", ""),
+            "user_gstin": user.userGstin if user else None,
+            "user_gst_name": user.userGstName if user else None,
+            "user_gst_address": user.userGstAddress if user else None,
+            "user_gst_state": user.userGstState if user else None,
+            "user_gst_state_code": user.userGstStateCode if user else None,
         }
     }
 

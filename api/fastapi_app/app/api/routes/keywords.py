@@ -74,6 +74,9 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
                 _update_keyword_from_data(keyword_row, cached)
                 _update_or_create_cache_from_route(db, keyword_text, location, cached)
                 db.commit()
+            # Always charge 20 credits for adding a keyword, even if using cached data
+            owner_id = get_team_owner_id(db, user_id)
+            deduct_credits(db, owner_id, 20, "KEYWORD_ADD", f"Keyword add: {keyword_text} (cached data)")
             return False
 
         helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)

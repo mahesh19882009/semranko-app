@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 from fastapi import HTTPException
-from app.db.models import User, CreditLedger, TrackedKeyword
+from app.db.models import User, CreditLedger, TrackedKeyword, DataForSEOCost
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -264,3 +264,97 @@ def get_active_tracked_keywords(db: Session, user_id: str) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def track_dataforseo_cost(
+    db: Session,
+    user_id: str | None,
+    task_type: str,
+    endpoint: str,
+    cost_credits: float,
+    keyword_count: int = 1,
+    cost_usd: float | None = None,
+    meta: dict | None = None,
+) -> DataForSEOCost:
+    """Track DataForSEO API costs for profit/loss analysis."""
+    cost = DataForSEOCost(
+        userId=user_id,
+        taskType=task_type,
+        endpoint=endpoint,
+        costCredits=cost_credits,
+        costUsd=cost_usd,
+        keywordCount=keyword_count,
+        meta=meta or {},
+    )
+    db.add(cost)
+    db.flush()
+    return cost
+
+
+def get_dataforseo_costs(
+    db: Session,
+    user_id: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    task_type: str | None = None,
+) -> list[dict]:
+    """Get DataForSEO costs with optional filters."""
+    query = select(DataForSEOCost)
+    
+    if user_id:
+        query = query.where(DataForSEOCost.userId == user_id)
+    
+    if start_date:
+        query = query.where(DataForSEOCost.createdAt >= start_date)
+    
+    if end_date:
+        query = query.where(DataForSEOCost.createdAt <= end_date)
+    
+    if task_type:
+        query = query.where(DataForSEOCost.taskType == task_type)
+    
+    query = query.order_by(DataForSEOCost.createdAt.desc())
+    
+    rows = db.scalars(query).all()
+    
+    return [
+        {
+            "id": r.id,
+            "user_id": r.userId,
+            "task_type": r.taskType,
+            "endpoint": r.endpoint,
+            "cost_credits": r.costCredits,
+            "cost_usd": r.costUsd,
+            "keyword_count": r.keywordCount,
+            "meta": r.meta,
+            "created_at": r.createdAt.isoformat() if r.createdAt else None,
+        }
+        for r in rows
+    ]
+
+
+def get_total_dataforseo_cost(
+    db: Session,
+    user_id: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> dict:
+    """Get total DataForSEO costs summary."""
+    query = select(func.sum(DataForSEOCost.costCredits), func.sum(DataForSEOCost.costUsd), func.count(DataForSEOCost.id))
+    
+    if user_id:
+        query = query.where(DataForSEOCost.userId == user_id)
+    
+    if start_date:
+        query = query.where(DataForSEOCost.createdAt >= start_date)
+    
+    if end_date:
+        query = query.where(DataForSEOCost.createdAt <= end_date)
+    
+    result = db.execute(query).one()
+    
+    return {
+        "total_credits": float(result[0] or 0),
+        "total_usd": float(result[1] or 0) if result[1] else 0,
+        "total_tasks": result[2] or 0,
+    }

@@ -69,6 +69,8 @@ def get_subscription_status(
         "subscriptionStatus": snapshot["subscriptionStatus"],
         "trialStartsAt": snapshot["trialStartsAt"],
         "trialEndsAt": snapshot["trialEndsAt"],
+        "subscriptionStartDate": snapshot["subscriptionStartDate"],
+        "subscriptionEndDate": snapshot["subscriptionEndDate"],
         "gracePeriodEndsAt": snapshot["gracePeriodEndsAt"],
         "isInGracePeriod": snapshot["isInGracePeriod"],
         "trialDays": snapshot["trialDays"],

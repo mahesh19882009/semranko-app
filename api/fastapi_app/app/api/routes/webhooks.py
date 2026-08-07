@@ -78,7 +78,18 @@ async def razorpay_webhook(request: Request):
             return {"status": "ok"}
 
         if payment_order.status == "paid":
-            return {"status": "ok"}
+            # Check if subscription was activated - if not, try to activate it
+            from app.db.models import Subscription
+            existing_subscription = db.scalar(
+                select(Subscription).where(
+                    Subscription.userId == payment_order.userId,
+                    Subscription.isActive == True
+                )
+            )
+            if not existing_subscription or existing_subscription.razorpayOrderId != order_id:
+                logger.info(f"[webhook] Payment already paid but subscription may not be activated, reprocessing")
+            else:
+                return {"status": "ok"}
 
         payment_id = entity.get("id")
         if not payment_id:
@@ -96,8 +107,11 @@ async def razorpay_webhook(request: Request):
             return {"status": "ok"}
 
         if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
+            from app.core.config import get_settings
+            settings = get_settings()
             multiplier = getattr(payment_order, "planId", 0)
-            credits_to_add = int(multiplier) * 1000
+            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+            credits_to_add = int(multiplier) * credits_per_unit
             user.creditBalance = round(
                 float(getattr(user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2
             )
@@ -119,6 +133,8 @@ async def razorpay_webhook(request: Request):
             db.add(payment_order)
             db.commit()
 
+            logger.info(f"[webhook] Credit top-up processed: user={user.id} credits_added={credits_to_add}")
+
             email_service.send_payment_success_email(
                 to_email=user.email,
                 name=user.name,
@@ -128,10 +144,12 @@ async def razorpay_webhook(request: Request):
             )
         else:
             plan_id = payment_order.planId
-            logger.info(f"[webhook] Calling activate_subscription user={user.id} plan_id={plan_id} order_id={order_id}")
+            logger.info(f"[webhook] Processing subscription payment user={user.id} plan_id={plan_id} order_id={order_id}")
+            
+            # Call activate_subscription to handle plan upgrade and credit allocation
             try:
                 from app.services.payment_service import activate_subscription
-                activate_subscription(
+                subscription = activate_subscription(
                     db=db,
                     user_id=user.id,
                     plan_id=plan_id,
@@ -139,8 +157,17 @@ async def razorpay_webhook(request: Request):
                     order_id=order_id,
                     billing_cycle="monthly"
                 )
+                logger.info(f"[webhook] activate_subscription succeeded subscription_id={subscription.id} plan_id={subscription.planId} status={subscription.status}")
             except Exception as exc:
-                logger.error(f"Webhook activate_subscription failed: {exc}")
+                logger.error(f"[webhook] activate_subscription failed: {exc}")
+                import traceback
+                traceback.print_exc()
+                # Still mark payment as paid even if activation fails
+                payment_order.status = "paid"
+                payment_order.razorpayPaymentId = payment_id
+                db.add(payment_order)
+                db.commit()
+                raise
             
             payment_order.status = "paid"
             payment_order.razorpayPaymentId = payment_id
@@ -149,6 +176,8 @@ async def razorpay_webhook(request: Request):
 
             plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
             plan_name = PLAN_DEFINITIONS.get(plan_key, {}).get("name", "Unknown")
+            logger.info(f"[webhook] Subscription upgrade complete: user={user.id} plan={plan_name}")
+            
             email_service.send_payment_success_email(
                 to_email=user.email,
                 name=user.name,

@@ -25,10 +25,9 @@ const initialState = {
     estimatedTraffic: 0,
   },
   rankTrend: [],
-  competitors: [],
   keywords: [],
   keywords_table_rows: [],
-  overview: null, // Added for future use if moved from local state
+  overview: null,
   loading: false,
   error: null,
 };
@@ -40,7 +39,6 @@ const dashboardSlice = createSlice({
     resetDashboard(state) {
       state.stats = initialState.stats;
       state.rankTrend = [];
-      state.competitors = [];
       state.keywords = [];
       state.keywords_table_rows = [];
       state.overview = null;
@@ -63,7 +61,6 @@ const dashboardSlice = createSlice({
         const data = action.payload || {};
         state.stats = data.stats || initialState.stats;
         state.rankTrend = data.rankTrend || [];
-        state.competitors = data.competitors?.items || [];
         state.keywords = data.keywords || [];
         state.keywords_table_rows = data.keywords_table_rows || [];
       })

@@ -11,6 +11,7 @@ import {
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/Button';
 import Alert from './ui/Alert';
+import { formatDateTime } from '../utils/date';
 import {
   addKeywordToProject,
   bulkAddKeywords,
@@ -499,7 +500,7 @@ function KeywordTable() {
                         {row.location || '-'}
                       </td>
                       <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.createdAt ? new Date(row.createdAt).toLocaleString('en-US') : '-'}
+                        {row.createdAt ? formatDateTime(row.createdAt) : '-'}
                       </td>
                       <td className="px-5 py-4">
                         <Button
@@ -648,7 +649,7 @@ function KeywordTable() {
                         {row.location || '-'}
                       </td>
                       <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.checkedAt ? new Date(row.checkedAt).toLocaleString('en-US') : '-'}
+                        {row.checkedAt ? formatDateTime(row.checkedAt) : '-'}
                       </td>
                       <td className="px-5 py-4">
                         <Button

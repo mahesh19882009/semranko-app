@@ -111,16 +111,6 @@ export async function onboardProjectApi({ name, domain, location, keywords }) {
   });
 }
 
-export async function trackCompetitorRankingsApi(projectId) {
-  return apiRequest(`/competitor-rankings/${projectId}/track`, {
-    method: "POST",
-  });
-}
-
-export async function getCompetitorComparisonApi(projectId) {
-  return apiRequest(`/competitor-rankings/${projectId}/comparison`);
-}
-
 export async function getAioDashboardApi(projectId) {
   return apiRequest(`/aio/${projectId}/dashboard`);
 }

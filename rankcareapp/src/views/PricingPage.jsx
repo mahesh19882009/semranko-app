@@ -373,8 +373,8 @@ export default function PricingPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {[
-                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "15 Credits / Keyword", note: "Includes automated Monday weekly update" },
-                  { label: "Keyword Research Search Query", cost: "10 Credits / Search", note: "Live keyword ideas / metrics lookup" },
+                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "2015 Credits / Keyword", note: "Includes automated Monday weekly update on 10 credits" },
+                  { label: "Keyword Research Search Query", cost: "20 Credits / Search", note: "Live keyword ideas / metrics lookup" },
                   { label: "Competitor Domain Spy Lookup", cost: "20 Credits / Domain Check", note: "Full competitor analysis per domain" },
                   { label: "Add Extra Multi-Domain Project", cost: "10 Credits / New Property", note: "Create additional website property" },
                   { label: "Premium CSV Report Download", cost: "10 Credits / Download Click", note: "Export downloadable spreadsheet report" },
@@ -395,7 +395,7 @@ export default function PricingPage() {
             </table>
             <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
               <p className="text-xs text-slate-600">
-                ➕ Need more? Top up <span className="font-semibold">1,000 credits</span> at any time on our Billing Page for flat <span className="font-semibold">₹500</span>.
+                ➕ Need more? Top up <span className="font-semibold">600 credits</span> at any time on our Billing Page for flat <span className="font-semibold">₹100</span>.
               </p>
             </div>
           </div>

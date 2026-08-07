@@ -9,41 +9,24 @@ import {
   getBillingHistoryApi,
   downloadInvoiceApi,
   createCreditTopUpOrderApi,
+  fetchCreditBalanceApi,
 } from "../features/pricing/pricingApi";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
+import { fetchCurrentPricing, updateCreditBalance } from "../features/pricing/pricingSlice";
 import Alert from "../components/ui/Alert";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import { useToast } from "../components/ui/Toast";
 import { ToastProvider } from "../components/ui/Toast";
+import { formatDate } from "../utils/date";
 
-function formatCurrency(amount, currency = "INR") {
+function formatCurrency(amount) {
   if (amount === null || amount === undefined) return "—";
-  if (currency === "USD") {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-    }).format(amount);
-  }
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     minimumFractionDigits: 2,
   }).format(amount);
-}
-
-function formatDate(iso) {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function StatusChip({ status }) {
@@ -55,7 +38,7 @@ function StatusChip({ status }) {
         ? "error"
         : "warning";
   return (
-    <Alert variant={tone}>
+    <Alert variant={tone} className="!p-0 !py-1 !px-2">
       {status}
     </Alert>
   );
@@ -65,6 +48,7 @@ export default function BillingPage() {
   const navigate = useNavigate();
   const authenticated = isAuthenticated();
   const { addToast } = useToast();
+  const dispatch = useDispatch();
 
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const currentCreditBalance = pricingCurrent?.creditBalance ?? null;
@@ -78,7 +62,6 @@ export default function BillingPage() {
   const [successMessage, setSuccessMessage] = useState(null);
   const [multiplier, setMultiplier] = useState(1);
   const [topUpError, setTopUpError] = useState("");
-  const [currency, setCurrency] = useState("INR");
 
   useEffect(() => {
     if (!authenticated) {
@@ -86,7 +69,9 @@ export default function BillingPage() {
       return;
     }
     loadHistory();
-  }, [authenticated]);
+    loadCreditBalance();
+    dispatch(fetchCurrentPricing());
+  }, [authenticated, dispatch]);
 
   const loadHistory = async () => {
     setLoadingHistory(true);
@@ -101,6 +86,17 @@ export default function BillingPage() {
     }
   };
 
+  const loadCreditBalance = async () => {
+    try {
+      const data = await fetchCreditBalanceApi();
+      if (data?.balance !== undefined) {
+        dispatch(updateCreditBalance(data.balance));
+      }
+    } catch (err) {
+      console.error("Failed to load credit balance:", err);
+    }
+  };
+
   const handleCustomPurchase = async () => {
     setTopUpError("");
     setPaymentError(null);
@@ -111,7 +107,6 @@ export default function BillingPage() {
       return;
     }
 
-    const credits = multiplier * 600;
     const basePrice = multiplier * 100;
     const discountPct = pricingCurrent?.individual_discount_pct || 0;
     const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
@@ -133,16 +128,23 @@ export default function BillingPage() {
         },
         onPaymentSuccess: async (response) => {
           try {
-            const verifyResult = await verifyPaymentApi(
+            const verifyResult = await verifyCreditPaymentApi(
               response.razorpay_order_id,
               response.razorpay_payment_id,
               response.razorpay_signature
             );
             if (verifyResult?.success) {
-              const added = verifyResult.data?.credits_added || (multiplier * 1000);
+              const added = verifyResult.data?.credits_added || (multiplier * 600);
+              const newBalance = verifyResult.data?.new_balance;
               setSuccessMessage(`Successfully topped up ${added.toLocaleString()} credits!`);
               addToast(`Successfully topped up ${added.toLocaleString()} credits!`, "success");
               setMultiplier(1);
+
+              // Update credit balance in Redux immediately
+              if (newBalance !== undefined) {
+                dispatch(updateCreditBalance(newBalance));
+              }
+
               loadHistory();
             } else {
               setPaymentError("Payment verification failed. Please contact support.");
@@ -203,39 +205,24 @@ export default function BillingPage() {
     <ToastProvider>
       <div className="space-y-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">Billing & Invoices</h1>
-            <p className="mt-2 text-sm text-slate-500">
-              Review transactions, download invoices with GST details, and purchase credits.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-              <p className="text-xs font-medium text-slate-500">Available Credits</p>
-              <p className="text-xl font-bold text-slate-900">
-                {currentCreditBalance !== null && currentCreditBalance !== undefined
-                  ? currentCreditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  : '—'}
+          <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Billing & Invoices</h1>
+              <p className="mt-2 text-sm text-slate-500">
+                Review transactions, download invoices with GST details, and purchase credits.
               </p>
             </div>
-            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-              <span className="text-xs font-medium text-slate-500">Currency:</span>
-              <button
-                onClick={() => setCurrency("INR")}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${currency === "INR" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-              >
-                ₹ INR
-              </button>
-              <button
-                onClick={() => setCurrency("USD")}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${currency === "USD" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-              >
-                $ USD
-              </button>
+            <div className="flex items-center gap-3">
+              <div className={`rounded-xl border border-slate-200 px-8 py-5 text-center shadow-sm ${currentCreditBalance !== null && currentCreditBalance !== undefined && currentCreditBalance > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+                <p className="text-xs font-medium">Available Credits</p>
+                <p className="text-xl font-bold text-slate-900">
+                  {currentCreditBalance !== null && currentCreditBalance !== undefined
+                    ? currentCreditBalance.toLocaleString('en-US')
+                    : '—'}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
         </div>
 
         {/* Transaction History */}
@@ -266,10 +253,10 @@ export default function BillingPage() {
               <table className="min-w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <th className="px-6 py-4 font-medium">Title</th>
                     <th className="px-6 py-4 font-medium">Invoice</th>
                     <th className="px-6 py-4 font-medium">Date</th>
-                    <th className="px-6 py-4 font-medium">Amount ({currency === "INR" ? "₹" : "$"})</th>
-                    <th className="px-6 py-4 font-medium">GST</th>
+                    <th className="px-6 py-4 font-medium">Amount (₹)</th>
                     <th className="px-6 py-4 font-medium">Status</th>
                     <th className="px-6 py-4 font-medium text-right">Actions</th>
                   </tr>
@@ -278,23 +265,24 @@ export default function BillingPage() {
                   {history.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4">
+                        {item.purchase_type && (
+                          <div className="font-bold text-md text-slate-900">{item.purchase_type === "SUBSCRIPTION_UPGRADE" ? "Subscription" : "Credit Top-Up"}</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
                         <div className="flex flex-col">
-                          <span className="font-mono text-xs text-slate-500">{item.invoice_number || `INV-${item.id.slice(0, 8).toUpperCase()}`}</span>
-                          <span className="text-xs text-slate-400">{item.order_id ? `Order ${item.order_id.slice(0, 12)}...` : "—"}</span>
-                          {item.purchase_type && (
-                            <span className="text-xs text-slate-400">{item.purchase_type === "SUBSCRIPTION_UPGRADE" ? "Subscription" : "Credit Top-Up"}</span>
-                          )}
+                          {(item.status == 'completed' || item.status == 'paid') ? (<>
+                            <span className="font-mono text-xs text-slate-500">{item.invoice_number || `INV-${item.id.slice(0, 8).toUpperCase()}`}</span>
+                            <span className="text-xs text-slate-400">{item.order_id ? `Order ${item.order_id.slice(0, 12)}...` : "—"}</span>
+                          </>) : ('—')}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-slate-600">{formatDate(item.timestamp)}</td>
-                      <td className="px-6 py-4 font-semibold text-slate-900">{formatCurrency(item.amount_paid_inr, currency)}</td>
-                      <td className="px-6 py-4 text-slate-600">
-                        {item.gst_amount ? `${item.gst_amount.toFixed(2)} (18%)` : "—"}
-                      </td>
+                      <td className="px-6 py-4 font-semibold text-slate-900">{formatCurrency(item.amount_paid_inr, "INR")}</td>
                       <td className="px-6 py-4">
                         <StatusChip status={item.status} />
                       </td>
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-6 py-4 text-center">
                         {item.status === "completed" || item.status === "paid" ? (
                           <Button
                             variant="ghost"
@@ -313,19 +301,20 @@ export default function BillingPage() {
                         )}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                  }
+                </tbody >
+              </table >
+            </div >
           )}
-        </Card>
+        </Card >
 
         {/* Razorpay Tier Grid */}
-        <div>
+        < div >
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Purchase Credits</h2>
 
           <div className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. No bulk discount. All payments processed via Razorpay with 18% GST applied at payment time.</p>
+            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. No bulk discount. All payments processed with 18% GST applied at payment time.</p>
           </div>
 
           {/* Credit Top-Up Form */}
@@ -359,10 +348,12 @@ export default function BillingPage() {
               {multiplier >= 1 && (
                 <div className="rounded-lg bg-slate-50 px-4 py-3">
                   {(() => {
-                    const basePrice = multiplier * 500;
+                    const basePrice = multiplier * 100;
                     const discountPct = pricingCurrent?.individual_discount_pct || 0;
                     const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
                     const cleanPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
+                    const gstAmount = cleanPrice * 0.18;
+                    const totalWithGst = cleanPrice + gstAmount;
                     return (
                       <>
                         {discountPct > 0 ? (
@@ -374,16 +365,28 @@ export default function BillingPage() {
                               Your Price: ₹{cleanPrice.toLocaleString('en-US')} ({discountPct}% off)
                             </p>
                             <p className="text-xs text-slate-500">
-                              {(multiplier * 600).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 600)).toFixed(2)} per credit
+                              GST (18%): ₹{gstAmount.toFixed(2)}
+                            </p>
+                            <p className="text-sm font-bold text-slate-900">
+                              Total: ₹{totalWithGst.toFixed(2)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {(multiplier * 600).toLocaleString()} credits
                             </p>
                           </div>
                         ) : (
                           <div className="space-y-1">
-                            <p className="text-sm font-semibold text-slate-900">
-                              Total: ₹{cleanPrice.toLocaleString('en-US')}
+                            <p className="text-sm text-slate-600">
+                              Base Price: ₹{cleanPrice.toLocaleString('en-US')}
                             </p>
                             <p className="text-xs text-slate-500">
-                              {(multiplier * 600).toLocaleString()} credits at ₹{(cleanPrice / (multiplier * 600)).toFixed(2)} per credit
+                              GST (18%): ₹{gstAmount.toFixed(2)}
+                            </p>
+                            <p className="text-sm font-bold text-slate-900">
+                              Total: ₹{totalWithGst.toFixed(2)}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {(multiplier * 600).toLocaleString()} credits
                             </p>
                           </div>
                         )}
@@ -403,16 +406,20 @@ export default function BillingPage() {
               </Button>
             </div>
           </div>
-        </div>
+        </div >
 
         {/* Alerts */}
-        {paymentError && (
-          <Alert variant="error" message={paymentError} onDismiss={() => setPaymentError(null)} />
-        )}
-        {successMessage && (
-          <Alert variant="success" message={successMessage} onDismiss={() => setSuccessMessage(null)} />
-        )}
-      </div>
-    </ToastProvider>
+        {
+          paymentError && (
+            <Alert variant="error" message={paymentError} onDismiss={() => setPaymentError(null)} />
+          )
+        }
+        {
+          successMessage && (
+            <Alert variant="success" message={successMessage} onDismiss={() => setSuccessMessage(null)} />
+          )
+        }
+      </div >
+    </ToastProvider >
   );
 }

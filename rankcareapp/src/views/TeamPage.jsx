@@ -9,8 +9,11 @@ import {
   addTeamMemberApi,
   updateTeamMemberRoleApi,
   removeTeamMemberApi,
+  deleteTeamApi,
+  fetchCurrentPricingApi,
 } from "../features/pricing/pricingApi";
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
+import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 import Alert from "../components/ui/Alert";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
@@ -29,6 +32,7 @@ export default function TeamPage() {
   const navigate = useNavigate();
   const authenticated = isAuthenticated();
   const { addToast } = useToast();
+  const dispatch = useDispatch();
 
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const currentCreditBalance = pricingCurrent?.creditBalance ?? null;
@@ -102,6 +106,7 @@ export default function TeamPage() {
       setActiveTeamId(data.id);
       setTeamName("");
       addToast("Team created successfully", "success");
+      dispatch(fetchCurrentPricing());
     } catch (err) {
       setTeamsError(err.message || "Failed to create team");
       addToast(err.message || "Failed to create team", "error");
@@ -128,18 +133,24 @@ export default function TeamPage() {
     try {
       const data = await addTeamMemberApi(activeTeamId, memberEmail.trim(), memberRole);
       setTeams((prev) =>
-        prev.map((team) =>
-          team.id === activeTeamId
-            ? {
-                ...team,
-                members: [...(team.members || []), data],
-              }
-            : team
-        )
+        prev.map((team) => {
+          if (team.id !== activeTeamId) return team;
+          const existingIds = new Set((team.members || []).map((m) => m.id));
+          const isDuplicate = existingIds.has(data.id);
+          return {
+            ...team,
+            members: isDuplicate ? (team.members || []) : [...(team.members || []), data],
+          };
+        })
       );
+      if (!data) {
+        addToast("Failed to add member", "error");
+        return;
+      }
       setMemberEmail("");
       setMemberRole("Viewer");
       addToast("Team member added successfully", "success");
+      dispatch(fetchCurrentPricing());
     } catch (err) {
       setMemberError(err.message || "Failed to add member");
       addToast(err.message || "Failed to add member", "error");
@@ -185,6 +196,22 @@ export default function TeamPage() {
       addToast("Member removed successfully", "success");
     } catch (err) {
       addToast(err.message || "Failed to remove member", "error");
+    }
+  };
+
+  const handleDeleteTeam = async (teamId) => {
+    if (!window.confirm("Are you sure you want to delete this team? This action cannot be undone.")) {
+      return;
+    }
+    try {
+      await deleteTeamApi(teamId);
+      setTeams((prev) => prev.filter((team) => team.id !== teamId));
+      if (activeTeamId === teamId) {
+        setActiveTeamId(null);
+      }
+      addToast("Team deleted successfully", "success");
+    } catch (err) {
+      addToast(err.message || "Failed to delete team", "error");
     }
   };
 
@@ -308,7 +335,23 @@ export default function TeamPage() {
                               {team.owner_id && ` • Owner`}
                             </p>
                           </div>
-                          {selected && <Badge tone="primary">Active</Badge>}
+                          <div className="flex items-center gap-2">
+                            {selected && <Badge tone="primary">Active</Badge>}
+                            {isOwner && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteTeam(team.id);
+                                }}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-danger transition-colors"
+                                aria-label={`Delete ${team.name}`}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                  <path d="M2 4H12M5 4V3C5 2.44772 5.44772 2 6 2H8C8.55228 2 9 2.44772 9 3V4M11 4L10.364 10.364C10.2439 11.2971 9.44789 12 8.5 12H5.5C4.55211 12 3.75608 11.2971 3.636 10.364L3 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                         {selected && team.members?.length > 0 && (

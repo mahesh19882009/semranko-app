@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
@@ -19,6 +19,7 @@ import {
 import ConfirmModal from '../components/ConfirmModal';
 import Modal from '../components/ui/Modal';
 import Alert from '../components/ui/Alert';
+import { formatDateTime } from '../utils/date';
 import {
   addKeywordToProject,
   bulkAddKeywords,
@@ -44,6 +45,7 @@ const rankOptions = [
 function KeywordsPage() {
   const dispatch = useDispatch();
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
+  const projects = useSelector((state) => state.projects.list);
   const projectsLoading = useSelector((state) => state.projects.loading);
   const pricingCurrent = useSelector((state) => state.pricing.current);
 
@@ -56,6 +58,7 @@ function KeywordsPage() {
   const [tableData, setTableData] = useState([]);
   const [tableLoading, setTableLoading] = useState(false);
   const [tableError, setTableError] = useState('');
+  const tableRequestIdRef = useRef(0);
   const [globalFilter, setGlobalFilter] = useState('');
   const [aioFilter, setAioFilter] = useState('all');
   const [rankFilter, setRankFilter] = useState('all');
@@ -86,6 +89,12 @@ function KeywordsPage() {
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
+    if (!Array.isArray(projects) || !projects.some((p) => String(p.id) === String(selectedProjectId))) {
+      return;
+    }
+
+    const requestId = Date.now();
+    tableRequestIdRef.current = requestId;
     setTableLoading(true);
     setTableError('');
     try {
@@ -95,11 +104,15 @@ function KeywordsPage() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.message || 'Failed to load keywords');
+      if (tableRequestIdRef.current !== requestId) return;
       setTableData(json.data?.rows || []);
     } catch (err) {
+      if (tableRequestIdRef.current !== requestId) return;
       setTableError(err.message);
     } finally {
-      setTableLoading(false);
+      if (tableRequestIdRef.current === requestId) {
+        setTableLoading(false);
+      }
     }
   };
 
@@ -483,7 +496,7 @@ function KeywordsPage() {
         </div>
         {nextRefresh && (
           <div className="text-xs text-slate-400">
-            Next data refresh: {new Date(nextRefresh).toLocaleString('en-US')}
+            Next data refresh: {formatDateTime(nextRefresh)}
           </div>
         )}
       </div>
