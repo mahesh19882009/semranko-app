@@ -8,7 +8,6 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
-import Button from '../components/ui/Button';
 import { useNavigate } from '../lib/navigation';
 import { Chart } from 'primereact/chart';
 import { apiRequest } from '../lib/api';
@@ -32,7 +31,6 @@ import {
 
 function DashboardPage() {
   const dispatch = useDispatch();
-  const navigate = useNavigate();
 
   const stats = useSelector(selectStats);
   const trend = useSelector(selectRankTrend);
@@ -194,11 +192,6 @@ function DashboardPage() {
               {project ? `Monitor rankings for ${project.name}.` : 'Select a project.'}
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="">
-              <p className="text-xs font-semibold tracking-wide text-slate-800">Status:&nbsp;{overviewLoading ? 'Loading...' : error ? (<span className='block h-[8px] w-[8px] bg-red-800 rounded-full'></span>) : (<span className='block h-[8px] w-[8px] bg-green-800 rounded-full'></span>)}</p>
-            </div>
-          </div>
         </div>
       </Card>
 
@@ -239,7 +232,7 @@ function DashboardPage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
-        <article className="rounded-xs border border-slate-200 bg-white p-5 shadow-soft">
+        <article className="rounded-md border border-slate-200 bg-white p-5 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-slate-900">Position & Credit Tracking</h3>

@@ -345,9 +345,6 @@ function SettingsContent() {
               {passwordError && (
                 <Alert variant="error" message={passwordError} onDismiss={() => setPasswordError("")} />
               )}
-              {passwordSuccess && (
-                <Alert variant="success" message="Password changed successfully" onDismiss={() => setPasswordSuccess(false)} />
-              )}
               <Button type="submit" loading={changingPassword} disabled={profile?.authProvider && profile.authProvider !== "local"}>
                 Change Password
               </Button>

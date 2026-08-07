@@ -46,11 +46,21 @@ def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
 
             has_ai_overview = bool(serp_data.get("ai_overview"))
             ai_overview_text = None
+            ai_overview_title = None
+            ai_overview_markdown = None
+            references = None
+            images = None
+            ai_overview_type = None
             cited_domains = {}
 
             if serp_data.get("ai_overview"):
                 ai_item = serp_data["ai_overview"]
                 ai_overview_text = ai_item.get("description") or ai_item.get("text") or ai_item.get("content")
+                ai_overview_title = ai_item.get("title")
+                ai_overview_markdown = ai_item.get("markdown")
+                references = ai_item.get("references") or ai_item.get("ai_overview_reference") or None
+                images = ai_item.get("images") or None
+                ai_overview_type = ai_item.get("type") or "ai_overview"
                 cited_domains = serp_data.get("cited_domains", {})
 
             existing = db.scalar(
@@ -62,6 +72,11 @@ def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
             if existing:
                 existing.hasAIOverview = has_ai_overview
                 existing.aiOverviewText = ai_overview_text
+                existing.aiOverviewTitle = ai_overview_title
+                existing.aiOverviewMarkdown = ai_overview_markdown
+                existing.references = references
+                existing.images = images
+                existing.aiOverviewType = ai_overview_type
                 existing.citedDomains = cited_domains or None
                 existing.checkedAt = datetime.utcnow()
             else:
@@ -71,6 +86,11 @@ def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
                         keywordText=keyword.keyword,
                         hasAIOverview=has_ai_overview,
                         aiOverviewText=ai_overview_text,
+                        aiOverviewTitle=ai_overview_title,
+                        aiOverviewMarkdown=ai_overview_markdown,
+                        references=references,
+                        images=images,
+                        aiOverviewType=ai_overview_type,
                         citedDomains=cited_domains or None,
                     )
                 )
@@ -124,3 +144,27 @@ def get_citation_share_of_voice(db: Session, user_id: str, project_id: str) -> l
     for domain, count in sorted(domain_counts.items(), key=lambda x: x[1], reverse=True)[:20]:
         results.append({"domain": domain, "count": count, "percentage": round((count / total) * 100, 2)})
     return results
+
+
+def get_aio_detail(db: Session, user_id: str, project_id: str, keyword_text: str) -> dict | None:
+    track = db.scalar(
+        select(AIOTracking).where(
+            AIOTracking.projectId == project_id,
+            AIOTracking.keywordText == keyword_text,
+        )
+    )
+    if not track:
+        return None
+
+    return {
+        "keyword": track.keywordText,
+        "hasAIOverview": track.hasAIOverview,
+        "aiOverviewText": track.aiOverviewText,
+        "aiOverviewTitle": track.aiOverviewTitle,
+        "aiOverviewMarkdown": track.aiOverviewMarkdown,
+        "references": track.references,
+        "images": track.images,
+        "aiOverviewType": track.aiOverviewType,
+        "citedDomains": track.citedDomains,
+        "checkedAt": track.checkedAt.isoformat() if track.checkedAt else None,
+    }

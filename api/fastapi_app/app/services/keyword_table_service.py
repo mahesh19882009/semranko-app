@@ -86,6 +86,7 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "hasAIOverview": has_ai_overview,
             "aioCheckedAt": aio_info.get("checkedAt"),
             "trackAio": track_aio,
+            "visibility": kw.visibility,
             "createdAt": kw.createdAt.isoformat() if getattr(kw, "createdAt", None) else None,
         })
 

@@ -3,12 +3,22 @@ from datetime import datetime
 from typing import Optional
 import requests
 from sqlalchemy import delete, select
-from app.db.models import RankResult, CompetitorRank, AIOTracking, TrackedKeyword
+from app.db.models import RankResult, CompetitorRank, AIOTracking, TrackedKeyword, Keyword
 from app.db.session import SessionLocal
 from app.core.config import get_settings
 
 settings = get_settings()
 LOCATION_CODES = {"India": 2356, "United States": 2840, "United Kingdom": 2826, "Global": 2840}
+
+
+def dfs_visibility(position: Optional[int]) -> float:
+    if position is None or position > 100:
+        return 0.0
+    if 1 <= position <= 10:
+        return round(1.0 - (position - 1) * 0.1, 2)
+    if 11 <= position <= 20:
+        return 0.05
+    return 0.0
 
 
 def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -> dict:
@@ -41,46 +51,45 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -
     rank_map = DataForSEOClient.get_rank_batch(keywords, domain, aio_keyword_texts=aio_keyword_texts)
 
     rows = []
+    keyword_visibility_map = {}
     for keyword in keywords:
         keyword_text = keyword.get("keyword", "")
         rank_info = rank_map.get(keyword_text)
-        result = {
-            "keywordText": keyword_text,
-            "location": keyword.get("location") or "India",
-            "device": keyword.get("device") or "desktop",
-        }
-        if rank_info:
-            result["position"] = rank_info.get("position")
-            result["url"] = rank_info.get("url")
-        else:
-            result["position"] = None
-            result["url"] = None
+        position = rank_info.get("position") if rank_info else None
+        url = rank_info.get("url") if rank_info else None
+        etv = rank_info.get("etv") if rank_info else None
+        visibility = dfs_visibility(position)
 
         rows.append(
             {
                 "projectId": project_id,
                 "keywordId": keyword.get("id"),
-                "keywordText": result["keywordText"],
-                "position": result["position"],
-                "url": result["url"],
-                "location": result["location"],
-                "device": result["device"],
+                "keywordText": keyword_text,
+                "position": position,
+                "url": url,
+                "location": keyword.get("location") or "India",
+                "device": keyword.get("device") or "desktop",
+                "etv": etv,
                 "checkedAt": datetime.utcnow(),
             }
         )
 
+        if keyword.get("id"):
+            keyword_visibility_map[keyword.get("id")] = visibility
+
     db = SessionLocal()
     try:
-        for keyword in keywords:
-            db.execute(
-                delete(RankResult).where(
-                    RankResult.projectId == project_id,
-                    RankResult.keywordId == keyword.get("id"),
-                )
-            )
-
         if rows:
             db.bulk_insert_mappings(RankResult, rows)
+
+        if keyword_visibility_map:
+            keyword_ids = list(keyword_visibility_map.keys())
+            keyword_objs = db.scalars(
+                select(Keyword).where(Keyword.id.in_(keyword_ids), Keyword.projectId == project_id)
+            ).all()
+            for kw_obj in keyword_objs:
+                kw_obj.visibility = keyword_visibility_map.get(kw_obj.id)
+                kw_obj.updatedAt = datetime.utcnow()
 
         db.commit()
         return {"inserted": len(rows)}
@@ -242,11 +251,21 @@ def process_aio_tracking_job(project_id: str, keywords: list[dict]) -> dict:
 
             has_ai_overview = bool(serp_data.get("ai_overview"))
             ai_overview_text = None
+            ai_overview_title = None
+            ai_overview_markdown = None
+            references = None
+            images = None
+            ai_overview_type = None
             cited_domains = {}
 
             if serp_data.get("ai_overview"):
                 ai_item = serp_data["ai_overview"]
                 ai_overview_text = ai_item.get("description") or ai_item.get("text") or ai_item.get("content")
+                ai_overview_title = ai_item.get("title")
+                ai_overview_markdown = ai_item.get("markdown")
+                references = ai_item.get("references") or ai_item.get("ai_overview_reference") or None
+                images = ai_item.get("images") or None
+                ai_overview_type = ai_item.get("type") or "ai_overview"
                 cited_domains = serp_data.get("cited_domains", {})
 
             existing = db.scalar(
@@ -258,6 +277,11 @@ def process_aio_tracking_job(project_id: str, keywords: list[dict]) -> dict:
             if existing:
                 existing.hasAIOverview = has_ai_overview
                 existing.aiOverviewText = ai_overview_text
+                existing.aiOverviewTitle = ai_overview_title
+                existing.aiOverviewMarkdown = ai_overview_markdown
+                existing.references = references
+                existing.images = images
+                existing.aiOverviewType = ai_overview_type
                 existing.citedDomains = cited_domains or None
                 from datetime import datetime as dt
                 existing.checkedAt = dt.utcnow()
@@ -268,6 +292,11 @@ def process_aio_tracking_job(project_id: str, keywords: list[dict]) -> dict:
                         keywordText=keyword_text,
                         hasAIOverview=has_ai_overview,
                         aiOverviewText=ai_overview_text,
+                        aiOverviewTitle=ai_overview_title,
+                        aiOverviewMarkdown=ai_overview_markdown,
+                        references=references,
+                        images=images,
+                        aiOverviewType=ai_overview_type,
                         citedDomains=cited_domains or None,
                     )
                 )

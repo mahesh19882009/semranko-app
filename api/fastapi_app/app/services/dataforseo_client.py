@@ -52,6 +52,7 @@ class DataForSEOClient:
                 return {
                     "position": item.get("rank_absolute") or item.get("rank_group"),
                     "url": item_url or f"https://{item_domain}",
+                    "etv": item.get("etv"),
                 }
         return None
 
@@ -85,6 +86,7 @@ class DataForSEOClient:
                     "position": rank.get("position"),
                     "url": rank.get("url"),
                     "featured_snippet": rank.get("featured_snippet", False),
+                    "etv": rank.get("etv"),
                 }
         return results
 

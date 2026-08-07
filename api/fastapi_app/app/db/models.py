@@ -117,6 +117,11 @@ class AIOTracking(Base):
     keywordText: Mapped[str] = mapped_column(String, nullable=False)
     hasAIOverview: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     aiOverviewText: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    aiOverviewTitle: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    aiOverviewMarkdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    references: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    images: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    aiOverviewType: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     citedDomains: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
 
@@ -167,6 +172,7 @@ class Keyword(Base):
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    visibility: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
@@ -192,9 +198,14 @@ class RankResult(Base):
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     keywordId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Keyword.id", ondelete="CASCADE"), nullable=True)
+    etv: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     keyword: Mapped[Optional[Keyword]] = relationship(back_populates="rankResults")
     project: Mapped[Project] = relationship(back_populates="rankResults")
+
+    __table_args__ = (
+        Index("RankResult_projectId_keywordId_checkedAt_idx", "projectId", "keywordId", "checkedAt"),
+    )
 
 
 class Competitor(Base):

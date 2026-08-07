@@ -373,7 +373,7 @@ export default function PricingPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {[
-                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "2015 Credits / Keyword", note: "Includes automated Monday weekly update on 10 credits" },
+                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "20 Credits / Keyword", note: "Includes automated Monday weekly update on 10 credits" },
                   { label: "Keyword Research Search Query", cost: "20 Credits / Search", note: "Live keyword ideas / metrics lookup" },
                   { label: "Competitor Domain Spy Lookup", cost: "20 Credits / Domain Check", note: "Full competitor analysis per domain" },
                   { label: "Add Extra Multi-Domain Project", cost: "10 Credits / New Property", note: "Create additional website property" },

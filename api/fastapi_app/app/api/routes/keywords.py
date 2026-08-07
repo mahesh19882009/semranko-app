@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
 
 from app.api.deps import db_session, get_current_user
-from app.db.models import Keyword, KeywordCache, Project
+from app.db.models import Keyword, KeywordCache, Project, RankResult
 from app.services.keyword_table_service import get_enriched_keywords
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.team_service import get_team_owner_id
@@ -93,7 +94,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
 
         row = rows[0]
         owner_id = get_team_owner_id(db, user_id)
-        deduct_credits(db, owner_id, 25, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        deduct_credits(db, owner_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
 
         keyword_row = db.scalar(
             select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
@@ -379,3 +380,174 @@ def refresh_project_keywords(
         status = 402 if result.get("error") == "INSUFFICIENT_CREDITS" else 400
         return JSONResponse(status_code=status, content=result)
     return JSONResponse(status_code=200, content={"success": True, "data": result})
+
+
+def _get_week_bounds(dt: datetime):
+    monday = dt - timedelta(days=dt.weekday())
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return monday, sunday
+
+
+@router.get("/{project_id}/history/{keyword_id}")
+def get_keyword_history(
+    project_id: str,
+    keyword_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    keyword = db.scalar(
+        select(Keyword).where(Keyword.id == keyword_id, Keyword.projectId == project_id, Keyword.userId == user["userId"])
+    )
+    if not keyword:
+        raise HTTPException(status_code=404, detail="Keyword not found")
+
+    results = db.scalars(
+        select(RankResult)
+        .where(
+            RankResult.projectId == project_id,
+            RankResult.keywordId == keyword_id,
+        )
+        .order_by(RankResult.checkedAt.asc())
+    ).all()
+
+    weekly_data = {}
+    for row in results:
+        week_start, week_end = _get_week_bounds(row.checkedAt)
+        key = week_start.isoformat()
+        if key not in weekly_data:
+            weekly_data[key] = {
+                "week_start": key,
+                "week_end": week_end.isoformat(),
+                "positions": [],
+                "visibilities": [],
+                "etvs": [],
+            }
+        weekly_data[key]["positions"].append(row.position or 0)
+        weekly_data[key]["visibilities"].append(0.0)
+        weekly_data[key]["etvs"].append(row.etv or 0)
+
+    keyword_visibility = db.scalar(
+        select(Keyword.visibility).where(Keyword.id == keyword_id)
+    ) or 0.0
+
+    history = []
+    for key in sorted(weekly_data.keys()):
+        wd = weekly_data[key]
+        avg_pos = sum(wd["positions"]) / len(wd["positions"]) if wd["positions"] else 0
+        avg_vis = sum(wd["visibilities"]) / len(wd["visibilities"]) if wd["visibilities"] else keyword_visibility
+        traffic = sum(wd["etvs"]) if wd["etvs"] else 0
+        history.append({
+            "week_start": wd["week_start"],
+            "week_end": wd["week_end"],
+            "avg_position": round(avg_pos, 1),
+            "avg_visibility": round(avg_vis, 2),
+            "traffic": round(traffic, 2),
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "keyword": keyword.keyword,
+            "history": history[-8:],
+        },
+    }
+
+
+@router.get("/{project_id}/weekly-comparison")
+def get_weekly_comparison(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    now = datetime.utcnow()
+    this_week_start, this_week_end = _get_week_bounds(now)
+    last_week_start = this_week_start - timedelta(days=7)
+    last_week_end = this_week_start - timedelta(seconds=1)
+
+    keywords = db.scalars(
+        select(Keyword).where(Keyword.projectId == project_id, Keyword.userId == user["userId"])
+    ).all()
+
+    this_week_positions = []
+    this_week_visibilities = []
+    this_week_traffic = []
+    last_week_positions = []
+    last_week_visibilities = []
+    last_week_traffic = []
+
+    for kw in keywords:
+        this_results = db.scalars(
+            select(RankResult).where(
+                RankResult.projectId == project_id,
+                RankResult.keywordId == kw.id,
+                RankResult.checkedAt >= this_week_start,
+                RankResult.checkedAt <= this_week_end,
+            )
+        ).all()
+        for row in this_results:
+            if row.position:
+                this_week_positions.append(row.position)
+            this_week_traffic.append(row.etv or 0)
+
+        last_results = db.scalars(
+            select(RankResult).where(
+                RankResult.projectId == project_id,
+                RankResult.keywordId == kw.id,
+                RankResult.checkedAt >= last_week_start,
+                RankResult.checkedAt <= last_week_end,
+            )
+        ).all()
+        for row in last_results:
+            if row.position:
+                last_week_positions.append(row.position)
+            last_week_traffic.append(row.etv or 0)
+
+        if kw.visibility is not None:
+            this_week_visibilities.append(kw.visibility)
+            last_week_visibilities.append(kw.visibility)
+
+    def avg(lst):
+        return round(sum(lst) / len(lst), 2) if lst else 0
+
+    def total(lst):
+        return round(sum(lst), 2) if lst else 0
+
+    this_avg_pos = avg(this_week_positions) if this_week_positions else 0
+    last_avg_pos = avg(last_week_positions) if last_week_positions else 0
+    pos_change = round(last_avg_pos - this_avg_pos, 1) if (this_avg_pos or last_avg_pos) else 0
+    pos_direction = "up" if pos_change > 0 else ("down" if pos_change < 0 else "same")
+
+    this_avg_vis = avg(this_week_visibilities) if this_week_visibilities else 0
+    last_avg_vis = avg(last_week_visibilities) if last_week_visibilities else 0
+    vis_change = round(this_avg_vis - last_avg_vis, 2)
+    vis_direction = "up" if vis_change > 0 else ("down" if vis_change < 0 else "same")
+
+    this_total_traffic = total(this_week_traffic)
+    last_total_traffic = total(last_week_traffic)
+    traffic_change = round(this_total_traffic - last_total_traffic, 2)
+    traffic_direction = "up" if traffic_change > 0 else ("down" if traffic_change < 0 else "same")
+
+    return {
+        "success": True,
+        "data": {
+            "position": {
+                "this_week": this_avg_pos or None,
+                "last_week": last_avg_pos or None,
+                "change": pos_change or None,
+                "direction": pos_direction,
+            },
+            "visibility": {
+                "this_week": this_avg_vis or None,
+                "last_week": last_avg_vis or None,
+                "change": vis_change or None,
+                "direction": vis_direction,
+            },
+            "traffic": {
+                "this_week": this_total_traffic or None,
+                "last_week": last_total_traffic or None,
+                "change": traffic_change or None,
+                "direction": traffic_direction,
+            },
+        },
+    }

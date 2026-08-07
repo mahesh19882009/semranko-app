@@ -174,21 +174,6 @@ export const exportProjectReportApi = async (projectId, payload) => {
   return response.data || null;
 };
 
-export const toggleTrackedKeywordAioApi = async (keywordId) => {
-  const response = await apiRequest(`/tracked-keywords/toggle-aio/${encodeURIComponent(keywordId)}`, {
-    method: 'POST',
-  });
-  return response.data || null;
-};
-
-export const bulkToggleTrackedKeywordAioApi = async (keywordIds, targetAio) => {
-  const response = await apiRequest('/tracked-keywords/toggle-aio-bulk', {
-    method: 'POST',
-    body: JSON.stringify({ keyword_ids: keywordIds, target_aio: targetAio }),
-  });
-  return response.data || null;
-};
-
 export const getUsageLogApi = async (page = 1, limit = 20, actionType = null) => {
   const params = new URLSearchParams();
   params.set('page', String(page));

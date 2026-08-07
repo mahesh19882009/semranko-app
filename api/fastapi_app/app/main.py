@@ -82,6 +82,8 @@ def on_startup() -> None:
                 keyword_alters.append('ADD COLUMN "position" INTEGER')
             if "ai_badge" not in columns:
                 keyword_alters.append('ADD COLUMN "ai_badge" VARCHAR')
+            if "visibility" not in columns:
+                keyword_alters.append('ADD COLUMN "visibility" FLOAT')
             if "isActive" not in columns:
                 keyword_alters.append('ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT TRUE')
             if "updatedAt" not in columns:
@@ -91,6 +93,39 @@ def on_startup() -> None:
                     conn.execute(text(f'ALTER TABLE "Keyword" {", ".join(keyword_alters)}'))
                     conn.commit()
                 logger.info("Added missing Keyword columns: %s", ", ".join(keyword_alters))
+
+        if "rankeresult" in table_names:
+            columns = [c["name"] for c in inspector.get_columns("RankResult")]
+            if "etv" not in columns:
+                with engine.connect() as conn:
+                    conn.execute(text('ALTER TABLE "RankResult" ADD COLUMN "etv" FLOAT'))
+                    conn.commit()
+                logger.info("Added etv column to RankResult")
+            indexes = [c["name"] for c in inspector.get_indexes("RankResult")]
+            if "RankResult_projectId_keywordId_checkedAt_idx" not in indexes:
+                with engine.connect() as conn:
+                    conn.execute(text('CREATE INDEX "RankResult_projectId_keywordId_checkedAt_idx" ON "RankResult" ("projectId", "keywordId", "checkedAt")'))
+                    conn.commit()
+                logger.info("Created RankResult history index")
+
+        if "aiotracking" in table_names:
+            columns = [c["name"] for c in inspector.get_columns("AIOTracking")]
+            aio_alters = []
+            if "aiOverviewTitle" not in columns:
+                aio_alters.append('ADD COLUMN "aiOverviewTitle" VARCHAR')
+            if "aiOverviewMarkdown" not in columns:
+                aio_alters.append('ADD COLUMN "aiOverviewMarkdown" TEXT')
+            if "references" not in columns:
+                aio_alters.append('ADD COLUMN "references" JSON')
+            if "images" not in columns:
+                aio_alters.append('ADD COLUMN "images" JSON')
+            if "aiOverviewType" not in columns:
+                aio_alters.append('ADD COLUMN "aiOverviewType" VARCHAR')
+            if aio_alters:
+                with engine.connect() as conn:
+                    conn.execute(text(f'ALTER TABLE "AIOTracking" {", ".join(aio_alters)}'))
+                    conn.commit()
+                logger.info("Added missing AIOTracking columns: %s", ", ".join(aio_alters))
     except Exception as exc:
         logger.error(f"Startup migration failed: {exc}")
 

@@ -71,28 +71,6 @@ export default function AIODashboardPage() {
           </div>
         </div>
 
-        {isFreeTrial && (
-          <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-            <div className="flex items-start gap-4">
-              <div className="text-3xl">🔒</div>
-              <div>
-                <h3 className="text-lg font-semibold text-amber-900">AI Overview tracking is a premium asset</h3>
-                <p className="mt-1 text-sm text-amber-700">
-                  Enable AI tracking for individual keywords in the Keywords page to see AI Overview data.
-                </p>
-                <button
-                  onClick={() => {
-                    window.location.href = "/keywords";
-                  }}
-                  className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
-                >
-                  Go to Keywords
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {error && <Alert variant="error" className="mb-5" message={error} />}
 
         {dashboard && (
@@ -134,7 +112,7 @@ export default function AIODashboardPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-slate-500">No AIO data yet. Enable AI tracking for individual keywords in the Keywords page.</p>
+              <p className="text-slate-500">No AIO data yet.</p>
             )}
           </div>
 
@@ -160,7 +138,7 @@ export default function AIODashboardPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-slate-500">No citation data yet. Enable AI tracking for individual keywords to see citation data.</p>
+              <p className="text-slate-500">No citation data yet.</p>
             )}
           </div>
         </div>

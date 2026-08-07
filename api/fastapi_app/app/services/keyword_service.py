@@ -104,7 +104,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             return False
 
         owner_id = get_team_owner_id(db, user_id)
-        deduct_credits(db, owner_id, 25, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        deduct_credits(db, owner_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
 
         keyword_row = db.scalar(
             select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)

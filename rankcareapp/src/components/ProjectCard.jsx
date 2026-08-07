@@ -21,8 +21,8 @@ function ProjectCard({ project }) {
       onClick={handleCardClick}
       padding="p-5"
       {...(isSelected
-        ? { border: 'border-brand-200', className: 'bg-brand-50' }
-        : { className: 'hover:border-slate-300' })}
+        ? { className: 'border-2 !border-green-900' }
+        : { className: 'border-2 hover:border-slate-300' })}
     >
       <div className="flex items-start justify-between gap-3">
         <div>

@@ -15,6 +15,8 @@ import {
   faPlus,
   faTrash,
   faRefresh,
+  faStars,
+  faWandSparkles,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from '../components/ConfirmModal';
 import Modal from '../components/ui/Modal';
@@ -27,13 +29,7 @@ import {
   clearKeywordMessage,
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
-import { toggleTrackedKeywordAioApi, bulkToggleTrackedKeywordAioApi } from '../features/pricing/pricingApi';
-
-const aioOptions = [
-  { label: 'All AIO', value: 'all' },
-  { label: 'Has AIO', value: 'yes' },
-  { label: 'No AIO', value: 'no' },
-];
+import { getAioDetailApi } from '../lib/api';
 
 const rankOptions = [
   { label: 'All Ranks', value: 'all' },
@@ -60,7 +56,6 @@ function KeywordsPage() {
   const [tableError, setTableError] = useState('');
   const tableRequestIdRef = useRef(0);
   const [globalFilter, setGlobalFilter] = useState('');
-  const [aioFilter, setAioFilter] = useState('all');
   const [rankFilter, setRankFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState([]);
   const [nextRefresh, setNextRefresh] = useState(null);
@@ -74,18 +69,11 @@ function KeywordsPage() {
     icon: null,
     onConfirm: null,
   });
-  const [aioConfirm, setAioConfirm] = useState({
-    open: false,
-    keywordId: null,
-    keywordText: null,
-    currentTrackAio: false,
-  });
-  const [aioLoading, setAioLoading] = useState({});
-  const [bulkAioConfirm, setBulkAioConfirm] = useState({
-    open: false,
-    targetAio: false,
-  });
-  const [bulkAioLoading, setBulkAioLoading] = useState(false);
+  const [aioModalOpen, setAioModalOpen] = useState(false);
+  const [aioModalKeyword, setAioModalKeyword] = useState(null);
+  const [aioModalData, setAioModalData] = useState(null);
+  const [aioModalLoading, setAioModalLoading] = useState(false);
+  const [aioModalError, setAioModalError] = useState('');
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -149,15 +137,11 @@ function KeywordsPage() {
       const q = globalFilter.toLowerCase();
       rows = rows.filter((r) => r.keyword.toLowerCase().includes(q));
     }
-    if (aioFilter === 'yes') rows = rows.filter((r) => r.hasAIOverview);
-    if (aioFilter === 'no') rows = rows.filter((r) => !r.hasAIOverview);
     if (rankFilter === 'top3') rows = rows.filter((r) => r.position !== null && r.position <= 3);
     if (rankFilter === 'top10') rows = rows.filter((r) => r.position !== null && r.position <= 10);
     if (rankFilter === 'not-ranking') rows = rows.filter((r) => r.position === null || r.position === undefined);
     return rows;
-  }, [tableData, globalFilter, aioFilter, rankFilter]);
-
-  const hasAioEnabled = useMemo(() => tableData.some((row) => row.trackAio || row.ai === "AIO"), [tableData]);
+  }, [tableData, globalFilter, rankFilter]);
 
   const parseKeywords = (text) => {
     return text
@@ -283,145 +267,6 @@ function KeywordsPage() {
     });
   };
 
-  const handleAioToggle = (row) => {
-    setAioConfirm({
-      open: true,
-      keywordId: row.id,
-      keywordText: row.keyword,
-      currentTrackAio: row.trackAio || false,
-    });
-  };
-
-  const handleAioConfirm = async () => {
-    const keywordId = aioConfirm.keywordId;
-    const newTrackAio = !aioConfirm.currentTrackAio;
-
-    // Optimistic UI update
-    setTableData((prev) =>
-      prev.map((row) =>
-        row.id === keywordId ? { ...row, trackAio: newTrackAio } : row
-      )
-    );
-
-    setAioLoading((prev) => ({ ...prev, [keywordId]: true }));
-    setAioConfirm((s) => ({ ...s, open: false }));
-
-    try {
-      await toggleTrackedKeywordAioApi(keywordId);
-      // Success - the optimistic update is already applied
-    } catch (err) {
-      console.error('AIO toggle failed:', err);
-      // Revert optimistic update on error
-      setTableData((prev) =>
-        prev.map((row) =>
-          row.id === keywordId ? { ...row, trackAio: aioConfirm.currentTrackAio } : row
-        )
-      );
-
-      const message = err.message || 'Failed to update AI tracking.';
-      let title = 'AI Tracking Update Failed';
-      let description = 'Please try again later.';
-
-      if (message.includes('Insufficient credits')) {
-        title = 'Insufficient Credits';
-        description = message;
-      } else if (message.includes('paid plan') || message.includes('trial')) {
-        title = 'Paid Plan Required';
-        description = 'AI tracking is available on paid plans only. Please upgrade to continue.';
-      } else if (message === 'Failed to fetch' || message.includes('NetworkError') || message.includes('fetch')) {
-        title = 'Connection Error';
-        description = 'Could not reach the server. Please check your internet connection and try again.';
-      }
-
-      setConfirmState({
-        open: true,
-        title,
-        message: description,
-        confirmText: 'Close',
-        tone: 'danger',
-        icon: faTriangleExclamation,
-        onConfirm: () => setConfirmState((s) => ({ ...s, open: false })),
-      });
-    } finally {
-      setAioLoading((prev) => ({ ...prev, [keywordId]: false }));
-    }
-  };
-
-  const handleBulkAioToggle = (targetAio) => {
-    if (selectedIds.length === 0) return;
-    setBulkAioConfirm({ open: true, targetAio });
-  };
-
-  const handleBulkAioConfirm = async () => {
-    const targetAio = bulkAioConfirm.targetAio;
-    const previouslySelectedIds = [...selectedIds];
-
-    // Optimistic UI update
-    setTableData((prev) =>
-      prev.map((row) =>
-        selectedIds.includes(row.id) ? { ...row, trackAio: targetAio } : row
-      )
-    );
-
-    setBulkAioLoading(true);
-    setBulkAioConfirm((s) => ({ ...s, open: false }));
-
-    try {
-      await bulkToggleTrackedKeywordAioApi(selectedIds, targetAio);
-      setSelectedIds([]);
-      // Success - the optimistic update is already applied
-    } catch (err) {
-      console.error('Bulk AIO toggle failed:', err);
-      // Revert optimistic update on error
-      setTableData((prev) =>
-        prev.map((row) =>
-          previouslySelectedIds.includes(row.id)
-            ? { ...row, trackAio: !targetAio }
-            : row
-        )
-      );
-
-      const message = err.message || 'Failed to update AI tracking for selected keywords.';
-      let title = 'Bulk AI Tracking Update Failed';
-      let description = 'Please try again later.';
-
-      if (message.includes('Insufficient credits')) {
-        title = 'Insufficient Credits';
-        description = message;
-      } else if (message.includes('paid plan') || message.includes('trial')) {
-        title = 'Paid Plan Required';
-        description = 'AI tracking is available on paid plans only. Please upgrade to continue.';
-      } else if (message === 'Failed to fetch' || message.includes('NetworkError') || message.includes('fetch')) {
-        title = 'Connection Error';
-        description = 'Could not reach the server. Please check your internet connection and try again.';
-      }
-
-      setConfirmState({
-        open: true,
-        title,
-        message: description,
-        confirmText: 'Close',
-        tone: 'danger',
-        icon: faTriangleExclamation,
-        onConfirm: () => setConfirmState((s) => ({ ...s, open: false })),
-      });
-    } finally {
-      setBulkAioLoading(false);
-    }
-  };
-
-  const aioBodyTemplate = (rowData) => {
-    const ai = rowData.ai;
-    if (ai === "AIO") {
-      return (
-        <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 ring-1 ring-purple-600/20">
-          AIO
-        </span>
-      );
-    }
-    return <span className="text-slate-400 text-xs">—</span>;
-  };
-
   const positionBodyTemplate = (rowData) => {
     return rowData.position ? `#${rowData.position}` : '—';
   };
@@ -434,28 +279,43 @@ function KeywordsPage() {
     );
   };
 
-  const aioToggleBodyTemplate = (rowData) => {
-    const isActive = rowData.trackAio;
-    const isLoading = aioLoading[rowData.id];
+  const handleAioBadgeClick = async (rowData) => {
+    if (!rowData.hasAIOverview) return;
+    setAioModalKeyword(rowData);
+    setAioModalOpen(true);
+    setAioModalLoading(true);
+    setAioModalError('');
+    setAioModalData(null);
+    try {
+      const result = await getAioDetailApi(selectedProjectId, rowData.keyword);
+      setAioModalData(result.data);
+    } catch (err) {
+      setAioModalError(err?.message || 'Failed to load AIO details');
+    } finally {
+      setAioModalLoading(false);
+    }
+  };
+
+  const aiBodyTemplate = (rowData) => {
+    const hasAI = rowData.hasAIOverview;
     return (
       <button
-        type="button"
-        onClick={() => handleAioToggle(rowData)}
-        disabled={isLoading}
-        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition text-nowrap ${isActive
-          ? 'bg-purple-50 text-purple-700 border border-purple-200'
-          : 'bg-slate-100 text-slate-500 border border-transparent hover:bg-slate-200'
+        onClick={() => handleAioBadgeClick(rowData)}
+        disabled={!hasAI}
+        className={`inline-flex items-center gap-1 rounded-full px-3 py-3 text-xs font-medium transition-colors ${hasAI
+          ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-pointer'
+          : 'bg-slate-100 text-slate-500 cursor-default'
           }`}
-        title={isActive ? 'Disable premium AI tracking' : 'Enable premium AI tracking'}
       >
-        {isLoading ? (
-          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current" />
-        ) : (
-          <span aria-hidden="true">✨</span>
-        )}
-        {isActive ? 'AI Active' : 'AIO'}
+        <FontAwesomeIcon icon={faWandSparkles} /> AI
       </button>
     );
+  };
+
+  const visibilityBodyTemplate = (rowData) => {
+    const vis = rowData.visibility;
+    if (vis === null || vis === undefined) return '—';
+    return `${(vis * 100).toFixed(0)}%`;
   };
 
   const headerTemplate = () => {
@@ -468,17 +328,6 @@ function KeywordsPage() {
             placeholder="Search keywords..."
             className="w-full sm:w-auto"
           />
-          {hasAioEnabled && (
-            <Dropdown
-              value={aioFilter}
-              onChange={(e) => setAioFilter(e.value)}
-              options={aioOptions}
-              optionLabel="label"
-              optionValue="value"
-              placeholder="All AIO"
-              className="w-full sm:w-auto"
-            />
-          )}
           <Dropdown
             value={rankFilter}
             onChange={(e) => setRankFilter(e.value)}
@@ -545,7 +394,6 @@ function KeywordsPage() {
           scrollable
           scrollHeight="flex"
           frozenWidth="18rem"
-          rowClassName={(rowData) => (rowData.trackAio ? 'bg-purple-50/40' : '')}
         >
           <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
           <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
@@ -557,8 +405,8 @@ function KeywordsPage() {
           <Column field="domains" header="Domains" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
           <Column field="intent" header="Intent" style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
           <Column field="position" header="Position" sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
-          {hasAioEnabled && <Column header="AIO" style={{ width: '6rem' }} body={aioBodyTemplate} />}
-          <Column header="✨&nbsp;AI" style={{ width: '7rem' }} body={aioToggleBodyTemplate} />
+          <Column field="visibility" header="Visibility" sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
+          <Column header="AIO" style={{ width: '8rem' }} body={aiBodyTemplate} />
           <Column header="Actions" body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
 
@@ -566,22 +414,8 @@ function KeywordsPage() {
           <div className="border-t border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
             <span className="text-sm font-medium text-rose-700">{selectedIds.length} selected</span>
             <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => handleBulkAioToggle(true)}
-                disabled={tableLoading || bulkAioLoading}
-              >
-                ✨ Enable AIO
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => handleBulkAioToggle(false)}
-                disabled={tableLoading || bulkAioLoading}
-              >
-                Disable AIO
-              </Button>
               <Button variant="danger" onClick={handleDeleteSelected}
-                disabled={tableLoading || bulkAioLoading}> <FontAwesomeIcon icon={faTrash} />Delete selected</Button>
+                disabled={tableLoading}> <FontAwesomeIcon icon={faTrash} />Delete selected</Button>
             </div>
           </div>
         )}
@@ -684,39 +518,67 @@ function KeywordsPage() {
         />
       )}
 
-      <ConfirmModal
-        open={aioConfirm.open}
-        title={aioConfirm.currentTrackAio ? 'Disable Premium AI Tracking?' : '✨ Enable Premium AI Tracking?'}
-        message={aioConfirm.currentTrackAio
-          ? `Stop monitoring Google AI Overviews for "${aioConfirm.keywordText}"? No refund will be issued.`
-          : `Monitoring real-time Google AI Overviews for "${aioConfirm.keywordText}" will deduct 20 additional credits from your balance. Proceed?`
-        }
-        description="This setting applies to your tracked keywords and will be used in the next tracking cycle."
-        confirmText={aioConfirm.currentTrackAio ? 'Disable' : 'Enable AI Tracking'}
-        cancelText="Cancel"
-        tone={aioConfirm.currentTrackAio ? 'danger' : 'info'}
-        icon={faTriangleExclamation}
-        loading={aioLoading[aioConfirm.keywordId]}
-        onConfirm={handleAioConfirm}
-        onClose={() => setAioConfirm((s) => ({ ...s, open: false }))}
-      />
-
-      <ConfirmModal
-        open={bulkAioConfirm.open}
-        title={bulkAioConfirm.targetAio ? '✨ Enable Premium AI Tracking for Selected?' : 'Disable Premium AI Tracking for Selected?'}
-        message={bulkAioConfirm.targetAio
-          ? `Enable AI tracking for ${selectedIds.length} selected keywords? This will deduct 20 credits per keyword from your balance.`
-          : `Disable AI tracking for ${selectedIds.length} selected keywords? No refund will be issued.`
-        }
-        description="This change will apply to all selected keywords in the next tracking cycle."
-        confirmText={bulkAioConfirm.targetAio ? 'Enable AI Tracking' : 'Disable AI Tracking'}
-        cancelText="Cancel"
-        tone={bulkAioConfirm.targetAio ? 'info' : 'danger'}
-        icon={faTriangleExclamation}
-        loading={bulkAioLoading}
-        onConfirm={handleBulkAioConfirm}
-        onClose={() => setBulkAioConfirm((s) => ({ ...s, open: false }))}
-      />
+      <Modal
+        open={aioModalOpen}
+        onClose={() => setAioModalOpen(false)}
+        title={aioModalKeyword ? `AIO Overview: ${aioModalKeyword.keyword}` : 'AIO Overview'}
+        size="lg"
+      >
+        {aioModalLoading && (
+          <div className="flex items-center justify-center py-10">
+            <p className="text-sm text-slate-500">Loading AIO details...</p>
+          </div>
+        )}
+        {aioModalError && <Alert variant="error" className="mb-4" message={aioModalError} />}
+        {!aioModalLoading && !aioModalError && aioModalData && (
+          <div className="space-y-4">
+            {aioModalData.aiOverviewTitle && (
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">{aioModalData.aiOverviewTitle}</h3>
+              </div>
+            )}
+            {aioModalData.aiOverviewType && (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                {aioModalData.aiOverviewType}
+              </span>
+            )}
+            {aioModalData.aiOverviewMarkdown ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <pre className="whitespace-pre-wrap text-sm text-slate-700">{aioModalData.aiOverviewMarkdown}</pre>
+              </div>
+            ) : aioModalData.aiOverviewText ? (
+              <p className="text-sm text-slate-700">{aioModalData.aiOverviewText}</p>
+            ) : (
+              <p className="text-sm text-slate-500">No AI Overview content available for this keyword.</p>
+            )}
+            {aioModalData.references && Array.isArray(aioModalData.references) && aioModalData.references.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-2">References</h4>
+                <ul className="space-y-1">
+                  {aioModalData.references.map((ref, idx) => (
+                    <li key={idx} className="text-sm text-blue-600">
+                      {ref.url || ref.domain || JSON.stringify(ref)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {aioModalData.images && Array.isArray(aioModalData.images) && aioModalData.images.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 mb-2">Images</h4>
+                <div className="flex flex-wrap gap-2">
+                  {aioModalData.images.map((img, idx) => (
+                    <img key={idx} src={img.url || img} alt={img.title || `Image ${idx + 1}`} className="h-24 w-24 rounded-lg object-cover border border-slate-200" />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {!aioModalLoading && !aioModalError && !aioModalData && (
+          <p className="text-sm text-slate-500">No AI Overview data available for this keyword.</p>
+        )}
+      </Modal>
     </div>
   );
 }
