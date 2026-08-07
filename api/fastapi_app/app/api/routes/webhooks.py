@@ -122,7 +122,7 @@ async def razorpay_webhook(request: Request):
                 ownerId=user.id,
                 amount=float(credits_to_add),
                 actionType="CREDIT_TOP_UP",
-                description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment",
+                description="Credit top-up via Razorpay payment",
                 relatedOrderId=order_id,
                 status="success",
             )

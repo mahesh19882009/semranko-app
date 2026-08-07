@@ -79,6 +79,7 @@ export default function BillingPage() {
     try {
       const data = await getBillingHistoryApi();
       setHistory(data?.history || []);
+      console.log(data?.history);
     } catch (err) {
       setHistoryError(err.message || "Failed to load billing history");
     } finally {
@@ -314,7 +315,7 @@ export default function BillingPage() {
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Purchase Credits</h2>
 
           <div className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. No bulk discount. All payments processed with 18% GST applied at payment time.</p>
+            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. All payments processed with 18% GST applied at payment time.</p>
           </div>
 
           {/* Credit Top-Up Form */}

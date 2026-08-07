@@ -17,7 +17,7 @@ const ACTION_DISPLAY = {
   "Competitor Domain Spy Check": "Competitor Domain Spy Check",
   "Created Extra Multi-Domain Project": "Created Extra Multi-Domain Project",
   "Exported Premium CSV Data Report": "Exported Premium CSV Data Report",
-  "Purchased 1,000 Token Top-Up Packet (+)": "Purchased 1,000 Token Top-Up Packet (+)",
+  "Purchased Credit Top-Up": "Purchased Credit Top-Up",
 };
 
 function formatCredits(displayAmount, color) {

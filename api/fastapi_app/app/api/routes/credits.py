@@ -143,11 +143,10 @@ async def verify_credit_payment(
         raise HTTPException(status_code=403, detail="Not your payment order")
 
     if payment_order.status == "paid":
-        # Check if credits were already added by looking for a successful ledger entry
         existing_ledger = db.scalar(
             select(CreditLedger).where(
                 CreditLedger.relatedOrderId == order_id,
-                CreditLedger.status == "success"
+                CreditLedger.status.in_(["success", "completed"])
             )
         )
         if existing_ledger:
@@ -155,7 +154,6 @@ async def verify_credit_payment(
                 "credits_added": existing_ledger.amount,
                 "new_balance": get_credit_balance(db, current_user['id']),
             })
-        # If payment is paid but no successful ledger, add credits now
         logger.info(f"[verify-credit-payment] Payment paid but no successful ledger found, adding credits now")
 
     payment_order.status = "paid"
@@ -172,11 +170,32 @@ async def verify_credit_payment(
         credits_to_add = int(multiplier) * credits_per_unit
         logger.info(f"[verify-credit-payment] CREDIT_TOP_UP: multiplier={multiplier}, credits_per_unit={credits_per_unit}, credits_to_add={credits_to_add}")
     else:
-        # Fallback to credit_applied_paise for other payment types
         credits_to_add = payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0
         logger.info(f"[verify-credit-payment] Other payment type: credits_to_add={credits_to_add}")
-    
-    if credits_to_add > 0:
+
+    # Finalize existing pending ledger entry instead of creating a duplicate
+    pending_ledger = db.scalar(
+        select(CreditLedger).where(
+            CreditLedger.relatedOrderId == order_id,
+            CreditLedger.status == "pending",
+        )
+    )
+
+    if pending_ledger and credits_to_add > 0:
+        pending_ledger.status = "success"
+        pending_ledger.amountPaidInr = float(payment_order.amount) / 100.0
+        db.add(pending_ledger)
+        db.flush()
+
+        user = db.scalar(select(User).where(User.id == pending_ledger.userId))
+        if user:
+            current = float(getattr(user, "creditBalance", 0.0) or 0.0)
+            user.creditBalance = round(current + credits_to_add, 2)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            logger.info(f"[verify-credit-payment] Finalized pending ledger and added {credits_to_add} credits. New balance: {user.creditBalance}")
+    elif credits_to_add > 0:
         new_balance = add_purchased_credits(
             db=db,
             user_id=current_user['id'],
@@ -207,12 +226,9 @@ async def get_billing_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
-    from app.services.team_service import get_team_owner_id
-    owner_id = get_team_owner_id(db, current_user['id'])
-    
     payment_orders = (
         db.query(PaymentOrder)
-        .filter(PaymentOrder.userId == owner_id)
+        .filter(PaymentOrder.userId == current_user['id'])
         .order_by(PaymentOrder.createdAt.desc())
         .all()
     )
@@ -230,17 +246,16 @@ async def get_billing_history(
 
         # For subscription payments, check if credits were added via ledger
         if not ledger and purchase_type != "CREDIT_TOP_UP":
-            # Try to find ledger by user and timestamp range
             ledger = db.scalar(
                 select(CreditLedger).where(
-                    CreditLedger.userId == owner_id,
+                    CreditLedger.userId == current_user['id'],
                     CreditLedger.actionType == "purchase",
                     CreditLedger.relatedOrderId == order.razorpayOrderId
                 )
             )
 
         history.append(BillingHistoryItem(
-            id=order.id,  # Always use PaymentOrder.id for download lookup
+            id=order.id,
             order_id=order_id,
             amount_paid_inr=amount_paid_inr,
             status=status,
@@ -591,20 +606,31 @@ async def razorpay_credit_webhook(
             credits_to_add = int(multiplier) * credits_per_unit
             user = db.scalar(select(User).where(User.id == payment_order.userId))
             if user and credits_to_add > 0:
+                pending_ledger = db.scalar(
+                    select(CreditLedger).where(
+                        CreditLedger.relatedOrderId == order_id,
+                        CreditLedger.status == "pending",
+                    )
+                )
+                if pending_ledger:
+                    pending_ledger.status = "success"
+                    pending_ledger.amountPaidInr = float(payment_order.amount) / 100.0
+                    db.add(pending_ledger)
+                    db.flush()
+                else:
+                    ledger = CreditLedger(
+                        userId=user.id,
+                        ownerId=user.id,
+                        amount=float(credits_to_add),
+                        actionType="CREDIT_TOP_UP",
+                        description="Credit top-up via Razorpay payment",
+                        relatedOrderId=order_id,
+                        status="success",
+                    )
+                    db.add(ledger)
                 current = float(getattr(user, "creditBalance", 0.0) or 0.0)
                 user.creditBalance = round(current + credits_to_add, 2)
                 db.add(user)
-
-                ledger = CreditLedger(
-                    userId=user.id,
-                    ownerId=user.id,
-                    amount=float(credits_to_add),
-                    actionType="CREDIT_TOP_UP",
-                    description=f"Credit top-up: {credits_to_add} credits added via Razorpay payment",
-                    relatedOrderId=order_id,
-                    status="success",
-                )
-                db.add(ledger)
                 db.commit()
                 db.refresh(user)
                 logger.info(f"[razorpay-credit-webhook] Credit top-up processed: user={user.id} credits_added={credits_to_add}")
@@ -650,12 +676,13 @@ async def get_usage_log(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
-    from app.services.team_service import get_team_owner_id
     from datetime import datetime, timezone
 
-    owner_id = get_team_owner_id(db, current_user["id"])
+    user_id = current_user["id"]
 
-    query = db.query(CreditLedger).filter(CreditLedger.ownerId == owner_id)
+    query = db.query(CreditLedger).filter(
+        (CreditLedger.userId == user_id) | (CreditLedger.ownerId == user_id)
+    )
 
     if action_type:
         query = query.filter(CreditLedger.actionType == action_type)
@@ -664,7 +691,7 @@ async def get_usage_log(
 
     offset = (page - 1) * limit
     entries = (
-        query.order_by(nullslast(desc(CreditLedger.timestamp)), nullslast(desc(CreditLedger.createdAt)))
+        query.order_by(CreditLedger.createdAt.desc(), CreditLedger.id.desc())
         .offset(offset)
         .limit(limit)
         .all()
@@ -687,7 +714,7 @@ async def get_usage_log(
 
     spent_this_month = (
         db.query(func.coalesce(func.sum(CreditLedger.creditsSpent), 0))
-        .filter(CreditLedger.ownerId == owner_id)
+        .filter((CreditLedger.userId == user_id) | (CreditLedger.ownerId == user_id))
         .filter(CreditLedger.timestamp >= cycle_start)
         .filter(CreditLedger.actionType != "TOP_UP")
         .scalar()
@@ -695,7 +722,7 @@ async def get_usage_log(
 
     cache_hits = (
         db.query(func.count(CreditLedger.id))
-        .filter(CreditLedger.ownerId == owner_id)
+        .filter((CreditLedger.userId == user_id) | (CreditLedger.ownerId == user_id))
         .filter(CreditLedger.timestamp >= cycle_start)
         .filter(CreditLedger.actionType == "CACHE_HIT")
         .scalar()
@@ -721,19 +748,17 @@ async def get_ledger_history(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
-    from app.services.team_service import get_team_owner_id
-
-    owner_id = get_team_owner_id(db, current_user["id"])
+    user_id = current_user["id"]
 
     query = db.query(CreditLedger).filter(
-        CreditLedger.ownerId == owner_id,
+        (CreditLedger.userId == user_id) | (CreditLedger.ownerId == user_id)
     )
 
     total = query.count()
 
     offset = (page - 1) * limit
     entries = (
-        query.order_by(nullslast(desc(CreditLedger.timestamp)), nullslast(desc(CreditLedger.createdAt)))
+        query.order_by(CreditLedger.createdAt.desc(), CreditLedger.id.desc())
         .offset(offset)
         .limit(limit)
         .all()
@@ -746,7 +771,7 @@ async def get_ledger_history(
         "COMPETITOR_SPY": "Competitor Domain Spy Check",
         "ADD_NEW_DOMAIN": "Created Extra Multi-Domain Project",
         "DOWNLOAD_REPORT": "Exported Premium CSV Data Report",
-        "CREDIT_TOP_UP": "Purchased 1,000 Token Top-Up Packet (+)",
+        "CREDIT_TOP_UP": "Purchased Credit Top-Up",
         "refund": "Credit Refund (Failed Operation)",
     }
 
