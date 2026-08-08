@@ -124,10 +124,11 @@ def refresh_keyword_data(
     keyword_map = {kw.keyword: kw for kw in batch}
 
     helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
+    project_location_code = getattr(project, "locationCode", None) or 2840
     rows = helper.fetch_cheapest_dashboard_data(
         keyword_texts,
         project.domain,
-        location_code=2840,
+        location_code=project_location_code,
         language_code="en",
     )
 

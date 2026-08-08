@@ -138,6 +138,9 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     domain: Mapped[str] = mapped_column(String, nullable=False)
     userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    locationCode: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     client_logo_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
@@ -172,6 +175,7 @@ class Keyword(Base):
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    check_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     visibility: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
@@ -395,6 +399,7 @@ class KeywordCache(Base):
     referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    check_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     lastApiCallAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)  # Track when API was last called for this keyword
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -403,6 +408,16 @@ class KeywordCache(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class KeywordResearchCache(Base):
+    __tablename__ = "KeywordResearchCache"
+
+    userId: Mapped[str] = mapped_column(String, primary_key=True)
+    seedKeyword: Mapped[str] = mapped_column(String, primary_key=True)
+    locationCode: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ideasJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, default=func.now(), server_default=func.now(), onupdate=func.now())
 
 
 class CompetitorCache(Base):

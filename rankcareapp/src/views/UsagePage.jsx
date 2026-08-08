@@ -9,6 +9,8 @@ import Badge from "../components/ui/Badge";
 import Alert from "../components/ui/Alert";
 import { useToast } from "../components/ui/Toast";
 import { formatDateTime } from "../utils/date";
+import { DataTable } from 'primereact/datatable';
+import { Column } from 'primereact/column';
 
 const ACTION_DISPLAY = {
   "Added New Keyword to Tracker": "Added New Keyword to Tracker",
@@ -227,19 +229,29 @@ export default function UsagePage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                <th className="px-6 py-4 font-medium">Date & Time</th>
-                <th className="px-6 py-4 font-medium">Action Performed</th>
-                <th className="px-6 py-4 font-medium">Resource Queried</th>
-                <th className="px-6 py-4 font-medium text-right">Credits Used</th>
-              </tr>
-            </thead>
-            {renderTableBody()}
-          </table>
-        </div>
+        <DataTable
+          value={items}
+          paginator
+          rows={10}
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          dataKey="ledger_id"
+          emptyMessage="No transactions recorded yet."
+          loading={loading}
+          tableStyle={{ minWidth: '60rem', width: '100%' }}
+          scrollable
+          size="medium"
+          scrollHeight="flex"
+          frozenWidth="18rem"
+        >
+          <Column field="timestamp" header="Date & Time" style={{ width: '14rem' }} body={(rowData) => <span className="text-slate-600 whitespace-nowrap">{formatDateTime(rowData.timestamp)}</span>} />
+          <Column field="action_type" header="Action Performed" style={{ width: '18rem' }} body={(rowData) => (
+            <Badge tone="secondary" size="sm">
+              {rowData.action_type || "Unknown"}
+            </Badge>
+          )} />
+          <Column field="keyword_or_domain_queried" header="Resource Queried" style={{ width: '16rem' }} body={(rowData) => <span className="text-sm text-slate-900">{rowData.keyword_or_domain_queried || "—"}</span>} />
+          <Column header="Credits Used" style={{ width: '10rem', textAlign: 'right' }} body={(rowData) => <div className="text-right">{formatCredits(rowData.credits_deducted, rowData.credits_color)}</div>} />
+        </DataTable>
 
         {totalPages > 1 && (
           <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">

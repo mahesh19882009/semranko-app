@@ -6,7 +6,6 @@ import { Column } from 'primereact/column';
 import { InputText } from 'primereact/inputtext';
 import { Dropdown } from 'primereact/dropdown';
 import Button from '../components/ui/Button';
-import { Tag } from 'primereact/tag';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faTrashCan,
@@ -21,6 +20,7 @@ import {
 import ConfirmModal from '../components/ConfirmModal';
 import Modal from '../components/ui/Modal';
 import Alert from '../components/ui/Alert';
+import { getCountryCode } from '../data/locations';
 import { formatDateTime } from '../utils/date';
 import {
   addKeywordToProject,
@@ -45,9 +45,28 @@ function KeywordsPage() {
   const projectsLoading = useSelector((state) => state.projects.loading);
   const pricingCurrent = useSelector((state) => state.pricing.current);
 
+  const selectedProject = projects.find((p) => String(p.id) === String(selectedProjectId));
+  let projectCountry = 'India';
+  let projectCountryCode = 2356;
+  if (selectedProject?.location) {
+    try {
+      const parsed = JSON.parse(selectedProject.location);
+      if (parsed && typeof parsed === 'object') {
+        projectCountry = parsed.country || 'India';
+        projectCountryCode = parsed.locationCode || parsed.countryCode || selectedProject.locationCode || getCountryCode(projectCountry) || 2356;
+      }
+    } catch {
+      projectCountry = selectedProject.location || 'India';
+      projectCountryCode = selectedProject.locationCode || getCountryCode(projectCountry);
+    }
+  } else if (selectedProject?.locationCode) {
+    projectCountryCode = selectedProject.locationCode;
+  }
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCsvSubmitting, setIsCsvSubmitting] = useState(false);
   const [keywordText, setKeywordText] = useState('');
-  const [location, setLocation] = useState('India');
   const [device, setDevice] = useState('desktop');
   const [csvPreview, setCsvPreview] = useState([]);
   const [showCsvConfirm, setShowCsvConfirm] = useState(false);
@@ -152,37 +171,44 @@ function KeywordsPage() {
 
   const handleAddKeywords = async (e) => {
     e.preventDefault();
-    if (!selectedProjectId || !keywordText.trim()) return;
+    if (!selectedProjectId || !keywordText.trim() || isSubmitting) return;
 
     const parsed = parseKeywords(keywordText);
     if (parsed.length === 0) return;
 
-    let resultAction;
-    if (parsed.length === 1) {
-      resultAction = await dispatch(
-        addKeywordToProject({
-          projectId: selectedProjectId,
-          payload: { keyword: parsed[0], location },
-        })
-      );
-    } else {
-      resultAction = await dispatch(
-        bulkAddKeywords({
-          projectId: selectedProjectId,
-          keywords: parsed,
-          location: location,
-        })
-      );
-    }
+    setIsSubmitting(true);
+    try {
+      let resultAction;
+      if (parsed.length === 1) {
+        resultAction = await dispatch(
+          addKeywordToProject({
+            projectId: selectedProjectId,
+            payload: { keyword: parsed[0], location_code: projectCountryCode, location: projectCountry, device },
+          })
+        );
+      } else {
+        resultAction = await dispatch(
+          bulkAddKeywords({
+            projectId: selectedProjectId,
+            keywords: parsed,
+            location_code: projectCountryCode,
+            location: projectCountry,
+            device,
+          })
+        );
+      }
 
-    if (
-      (parsed.length === 1
-        ? addKeywordToProject.fulfilled.match(resultAction)
-        : bulkAddKeywords.fulfilled.match(resultAction))
-    ) {
-      setKeywordText('');
-      setIsAddModalOpen(false);
-      setTimeout(fetchTableData, 500);
+      if (
+        (parsed.length === 1
+          ? addKeywordToProject.fulfilled.match(resultAction)
+          : bulkAddKeywords.fulfilled.match(resultAction))
+      ) {
+        setKeywordText('');
+        setIsAddModalOpen(false);
+        setTimeout(fetchTableData, 500);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -204,17 +230,24 @@ function KeywordsPage() {
     setShowCsvConfirm(false);
     if (!selectedProjectId || csvPreview.length === 0) return;
 
-    const resultAction = await dispatch(
-      bulkAddKeywords({
-        projectId: selectedProjectId,
-        keywords: csvPreview,
-        location: location,
-      })
-    );
+    setIsCsvSubmitting(true);
+    try {
+      const resultAction = await dispatch(
+        bulkAddKeywords({
+          projectId: selectedProjectId,
+          keywords: csvPreview,
+          location_code: projectCountryCode,
+          location: projectCountry,
+          device,
+        })
+      );
 
-    if (bulkAddKeywords.fulfilled.match(resultAction)) {
-      setCsvPreview([]);
-      setTimeout(fetchTableData, 500);
+      if (bulkAddKeywords.fulfilled.match(resultAction)) {
+        setCsvPreview([]);
+        setTimeout(fetchTableData, 500);
+      }
+    } finally {
+      setIsCsvSubmitting(false);
     }
   };
 
@@ -230,10 +263,11 @@ function KeywordsPage() {
       icon: faTrashCan,
       onConfirm: async () => {
         dispatch(clearKeywordMessage());
+        const ids = selectedIds.map((row) => row.id);
         const resultAction = await dispatch(
           bulkDeleteKeywords({
             projectId: selectedProjectId,
-            keywordIds: selectedIds,
+            keywordIds: ids,
           })
         );
         if (bulkDeleteKeywords.fulfilled.match(resultAction)) {
@@ -253,7 +287,7 @@ function KeywordsPage() {
       description: 'Any related ranking results for this keyword may also be affected.',
       confirmText: 'Delete keyword',
       tone: 'danger',
-      icon: faTrashCan,
+      icon: faTrash,
       onConfirm: async () => {
         dispatch(clearKeywordMessage());
         const resultAction = await dispatch(
@@ -318,6 +352,15 @@ function KeywordsPage() {
     return `${(vis * 100).toFixed(0)}%`;
   };
 
+  const checkUrlBodyTemplate = (rowData) => {
+    if (!rowData.check_url) return '—';
+    return (
+      <a href={rowData.check_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate block max-w-[200px]">
+        {rowData.check_url}
+      </a>
+    );
+  };
+
   const headerTemplate = () => {
     return (
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -377,8 +420,8 @@ function KeywordsPage() {
         <DataTable
           value={filteredData}
           paginator
-          rows={20}
-          rowsPerPageOptions={[20, 50, 100]}
+          rows={10}
+          rowsPerPageOptions={[10, 20, 50, 100]}
           selection={selectedIds}
           onSelectionChange={(e) => setSelectedIds(e.value)}
           selectionMode="multiple"
@@ -406,7 +449,8 @@ function KeywordsPage() {
           <Column field="intent" header="Intent" style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
           <Column field="position" header="Position" sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
           <Column field="visibility" header="Visibility" sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
-          <Column header="AIO" style={{ width: '8rem' }} body={aiBodyTemplate} />
+          <Column header="Ranking URL" style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
+          <Column header="AI Overview" style={{ width: '8rem' }} body={aiBodyTemplate} />
           <Column header="Actions" body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
 
@@ -425,18 +469,27 @@ function KeywordsPage() {
 
       <Modal
         open={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={() => !isSubmitting && setIsAddModalOpen(false)}
         title="Add Keywords"
         size="lg"
         footer={
           <>
-            <Button variant="outline" onClick={() => setIsAddModalOpen(false)} >Cancel</Button>
-            <Button onClick={handleAddKeywords} disabled={!keywordText.trim()} >
-              <FontAwesomeIcon icon={faPlus} /> Add Keywords
+            <Button variant="outline" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting} >Cancel</Button>
+            <Button onClick={handleAddKeywords} disabled={!keywordText.trim() || isSubmitting} loading={isSubmitting} >
+              <FontAwesomeIcon icon={faPlus} /> {isSubmitting ? 'Adding...' : 'Add Keywords'}
             </Button>
           </>
         }
       >
+        {isSubmitting && (
+          <div className="flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800 mb-4">
+            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <span>Fetching keyword data from DataForSEO. This may take a few seconds...</span>
+          </div>
+        )}
         <form onSubmit={handleAddKeywords} className="grid gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -447,26 +500,24 @@ function KeywordsPage() {
               onChange={(e) => setKeywordText(e.target.value)}
               placeholder="Enter keywords (one per line)"
               rows={6}
-              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+              disabled={isSubmitting}
+              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="Location"
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
-              />
+              <label className="block text-sm font-medium text-slate-700 mb-1">Country</label>
+              <div className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50 text-slate-700">
+                {projectCountry} <span className="text-slate-400 text-xs ml-2">(from project)</span>
+              </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Device</label>
               <select
                 value={device}
                 onChange={(e) => setDevice(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+                disabled={isSubmitting}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
               >
                 <option value="desktop">Desktop</option>
                 <option value="mobile">Mobile</option>
@@ -474,10 +525,10 @@ function KeywordsPage() {
             </div>
           </div>
           <div>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <label className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 ${isSubmitting ? 'opacity-50 pointer-events-none' : ''}`}>
               <FontAwesomeIcon icon={faUpload} />
               <span>Upload CSV</span>
-              <input type="file" accept=".csv" onChange={handleCsvChange} className="hidden" />
+              <input type="file" accept=".csv" onChange={handleCsvChange} disabled={isSubmitting} className="hidden" />
             </label>
             <p className="mt-1 text-xs text-slate-400">
               CSV format: first column is keyword. One keyword per line.
@@ -509,7 +560,7 @@ function KeywordsPage() {
           cancelText="Cancel"
           tone="info"
           icon={faUpload}
-          loading={false}
+          loading={isCsvSubmitting}
           onConfirm={handleCsvConfirm}
           onClose={() => {
             setShowCsvConfirm(false);

@@ -73,13 +73,6 @@ def verify_user_access_privileges(
             detail="Payment Required: Your subscription has expired or you have insufficient credits. Please upgrade your plan or purchase credits."
         )
     
-    # Check if free_trial user is attempting bulk/AIO operations
-    if user.selectedPlan == "free_trial" and not allow_free_trial_bulk:
-        raise HTTPException(
-            status_code=403,
-            detail="Upgrade Required: Bulk operations and AIO tracking are available on paid plans only. Please upgrade to Starter, Pro, or Agency to access these features."
-        )
-    
     return user
 
 

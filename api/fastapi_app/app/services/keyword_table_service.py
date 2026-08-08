@@ -58,7 +58,7 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
         rank_info = latest_ranks.get(keyword_text, {})
         aio_info = aio_map.get(keyword_text, {})
         track_aio = tracked_aio_map.get(keyword_text, False)
-        has_ai_overview = aio_info.get("hasAIOverview", False)
+        has_ai_overview = aio_info.get("hasAIOverview", False) or kw.ai_badge == "AIO"
 
         if has_ai_overview:
             ai = "AIO"
@@ -81,6 +81,7 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "intent": kw.intent if kw.intent not in (None, "—") else (cache.intent if cache else None),
             "position": kw.position if kw.position is not None else (cache.position if cache else None),
             "url": rank_info.get("url"),
+            "check_url": kw.check_url or (cache.check_url if cache else None),
             "rankCheckedAt": rank_info.get("checkedAt"),
             "ai": ai,
             "hasAIOverview": has_ai_overview,

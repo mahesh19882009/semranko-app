@@ -15,25 +15,67 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def research_keyword(db: Session, user_id: str, keyword: str, location: str = "India") -> dict:
+def research_keyword(db: Session, user_id: str, keyword: str, location_code: int = 2840) -> dict:
     from app.services.dataforseo_client import DataForSEOClient
+    from app.services.keyword_research_cache_service import query_research_cache, save_research_cache
 
-    ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location, limit=50)
+    cached_ideas = query_research_cache(db, user_id, keyword, location_code)
+    if cached_ideas is not None:
+        logger.info("Returning cached keyword research for '%s' (location=%s)", keyword, location_code)
+        normalized = [_normalize_idea(i) for i in cached_ideas]
+        return _build_research_response(keyword, normalized, credits_charged=0)
+
+    ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location_code, limit=50)
+    save_research_cache(db, user_id, keyword, location_code, ideas or [])
+    return _build_research_response(keyword, ideas or [], credits_charged=1 if ideas else 0)
+
+
+def _normalize_idea(idea: dict) -> dict:
+    idea = dict(idea)
+    if "search_volume" in idea and "volume" not in idea:
+        idea["volume"] = idea.pop("search_volume")
+    if "keyword_difficulty" in idea and "difficulty" not in idea:
+        idea["difficulty"] = idea.pop("keyword_difficulty")
+    return idea
+
+
+def _build_research_response(seed_keyword: str, ideas: list[dict], credits_charged: int) -> dict:
+    seed_lower = seed_keyword.lower().strip()
+    seed_metrics = {
+        "volume": None,
+        "kd": None,
+        "cpc": None,
+        "intent": None,
+        "competition": None,
+    }
+    for idea in ideas:
+        if idea.get("keyword", "").lower().strip() == seed_lower:
+            seed_metrics = {
+                "volume": idea.get("volume"),
+                "kd": idea.get("difficulty"),
+                "cpc": idea.get("cpc"),
+                "intent": idea.get("intent"),
+                "competition": None,
+            }
+            break
+
     return {
-        "seed": keyword,
-        "ideas": ideas or [],
-        "credits_charged": 1 if ideas else 0,
+        "seed": seed_keyword,
+        "ideas": ideas,
+        "suggestions": ideas,
+        **seed_metrics,
+        "credits_charged": credits_charged,
     }
 
 
-def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keyword], location: str, domain: str) -> None:
+def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keyword], location_code: int, domain: str) -> None:
     if not created:
         return
 
     try:
         keywords_to_fetch = []
         for kw in created:
-            cached = _get_cached_keyword_data(db, kw.keyword, location)
+            cached = _get_cached_keyword_data(db, kw.keyword, str(location_code))
             if cached:
                 kw.volume = cached.get("volume")
                 kw.kd = cached.get("kd")
@@ -50,7 +92,7 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
             rows = helper.fetch_cheapest_dashboard_data(
                 keywords_to_fetch,
                 domain,
-                location_code=2840,
+                location_code=location_code,
                 language_code="en",
             )
             row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
@@ -83,7 +125,7 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
         raise
 
 
-def add_keywords_to_project(db: Session, user_id: str, project_id: str, keywords: list[str], location: str = "India") -> list[Keyword]:
+def add_keywords_to_project(db: Session, user_id: str, project_id: str, keywords: list[str], location_code: int = 2840, location: str = "India") -> list[Keyword]:
     project = db.scalar(
         select(Project).where(Project.id == project_id, Project.userId == user_id)
     )
@@ -115,7 +157,7 @@ def add_keywords_to_project(db: Session, user_id: str, project_id: str, keywords
     for kw in created:
         db.refresh(kw)
 
-    _apply_day_one_tracking_bulk(db, user_id, created, location, project.domain)
+    _apply_day_one_tracking_bulk(db, user_id, created, location_code, project.domain)
 
     for kw in created:
         db.refresh(kw)

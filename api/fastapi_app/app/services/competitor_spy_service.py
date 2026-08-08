@@ -10,14 +10,17 @@ from app.core.errors import ApiError
 logger = logging.getLogger(__name__)
 
 
-def spy_competitor_keywords(db: Session, user_id: str, domain: str, location: str = "India", limit: int = 100) -> list:
+def spy_competitor_keywords(db: Session, user_id: str, domain: str, location_code: int = 2840, limit: int = 100) -> list:
     try:
-        result = DataForSEOClient.get_competitor_keywords_cached(db, user_id, domain, location, limit)
+        result = DataForSEOClient.get_competitor_keywords_cached(db, user_id, domain, location_code, limit)
         keywords = result.get("keywords", [])
 
         if not keywords:
-            logger.warning("Competitor spy: no keywords returned for domain=%s location=%s", domain, location)
-            raise ApiError(502, "Competitor keywords lookup returned no results. The domain may not have enough SERP data for this location.")
+            logger.warning("Competitor spy: no keywords returned for domain=%s location_code=%s", domain, location_code)
+            return []
+
+        from app.services.competitor_cache_service import save_cached_competitor
+        save_cached_competitor(db, domain, str(location_code), keywords)
 
         from datetime import datetime
         month_key = datetime.utcnow().strftime("%Y-%m")

@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import ProjectCard from '../components/ProjectCard';
 import ConfirmModal from '../components/ConfirmModal';
+import CountrySelector from '../components/CountrySelector';
 import {
   createProject,
   deleteProjectById,
@@ -14,6 +15,7 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
+import { COUNTRY_LOCATION_CODES } from '../data/locations';
 
 function ProjectsPage() {
   const dispatch = useDispatch();
@@ -30,13 +32,23 @@ function ProjectsPage() {
     name: '',
     domain: '',
     device: 'desktop',
-    location: 'India',
+    country: 'India',
+    countryCode: 2356,
   });
 
   const handleChange = (e) => {
+    const { name, value } = e.target;
     setForm((prev) => ({
       ...prev,
-      [e.target.name]: e.target.value,
+      [name]: value,
+    }));
+  };
+
+  const handleCountryChange = (country) => {
+    setForm((prev) => ({
+      ...prev,
+      country,
+      countryCode: COUNTRY_LOCATION_CODES[country] || 2840,
     }));
   };
 
@@ -51,7 +63,8 @@ function ProjectsPage() {
         name: '',
         domain: '',
         device: 'desktop',
-        location: 'India',
+        country: 'India',
+        countryCode: 2356,
       });
       setShowForm(false);
     }
@@ -59,11 +72,28 @@ function ProjectsPage() {
 
   const handleEditProject = (project) => {
     setProjectToEdit(project);
+    let country = 'India';
+    let countryCode = 2840;
+    if (project.location) {
+      try {
+        const parsed = JSON.parse(project.location);
+        if (parsed && typeof parsed === 'object') {
+          country = parsed.country || 'India';
+          countryCode = parsed.locationCode || parsed.countryCode || getCountryCode(country) || project.locationCode || 2840;
+        }
+      } catch {
+        country = project.location || 'India';
+        countryCode = project.locationCode || getCountryCode(country);
+      }
+    } else if (project.locationCode) {
+      countryCode = project.locationCode;
+    }
     setForm({
       name: project.name,
       domain: project.domain,
-      device: 'desktop',
-      location: 'India',
+      device: project.device || 'desktop',
+      country,
+      countryCode,
     });
     setShowForm(true);
   };
@@ -77,6 +107,9 @@ function ProjectsPage() {
         payload: {
           name: form.name,
           domain: form.domain,
+          location: form.country,
+          locationCode: form.countryCode,
+          device: form.device,
         },
       })
     );
@@ -87,7 +120,8 @@ function ProjectsPage() {
         name: '',
         domain: '',
         device: 'desktop',
-        location: 'India',
+        country: 'India',
+        countryCode: 2356,
       });
       setShowForm(false);
     }
@@ -176,13 +210,10 @@ function ProjectsPage() {
               <option value="mobile">Mobile</option>
             </Input.Select>
 
-            <Input
-              label="Location"
-              name="location"
-              placeholder="Location"
-              value={form.location}
-              onChange={handleChange}
-            />
+            <div className="md:col-span-4 block gap-3">
+              <label className="text-sm font-bold !mb-5 text-slate-700 !mb-5">Location</label>
+              <CountrySelector value={form.country} onChange={handleCountryChange} disabled={creating || updating} />
+            </div>
 
             <div className="md:col-span-2 flex gap-3">
               <Button
@@ -202,7 +233,8 @@ function ProjectsPage() {
                     name: '',
                     domain: '',
                     device: 'desktop',
-                    location: 'India',
+                    country: 'India',
+                    countryCode: 2356,
                   });
                 }}
               >
@@ -240,7 +272,7 @@ function ProjectsPage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <div key={project.id} className="space-y-3">
-                <ProjectCard project={project}/>
+                <ProjectCard project={project} />
                 <div className="inline-flex gap-2">
                   <Button
                     onClick={() => handleDeleteProject(project)}

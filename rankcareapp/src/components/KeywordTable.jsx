@@ -11,6 +11,7 @@ import {
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/Button';
 import Alert from './ui/Alert';
+import { getCountryCode } from '../data/locations';
 import { formatDateTime } from '../utils/date';
 import {
   addKeywordToProject,
@@ -48,10 +49,28 @@ function KeywordTable() {
   } = useSelector((state) => state.keywords);
 
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
+  const projects = useSelector((state) => state.projects.list);
   const pricingCurrent = useSelector((state) => state.pricing.current);
 
+  const selectedProject = projects.find((p) => String(p.id) === String(selectedProjectId));
+  let projectCountry = 'India';
+  let projectCountryCode = 2356;
+  if (selectedProject?.location) {
+    try {
+      const parsed = JSON.parse(selectedProject.location);
+      if (parsed && typeof parsed === 'object') {
+        projectCountry = parsed.country || 'India';
+        projectCountryCode = parsed.locationCode || parsed.countryCode || selectedProject.locationCode || getCountryCode(projectCountry) || 2356;
+      }
+    } catch {
+      projectCountry = selectedProject.location || 'India';
+      projectCountryCode = selectedProject.locationCode || getCountryCode(projectCountry);
+    }
+  } else if (selectedProject?.locationCode) {
+    projectCountryCode = selectedProject.locationCode;
+  }
+
   const [keywordText, setKeywordText] = useState('');
-  const [location, setLocation] = useState('India');
   const [device, setDevice] = useState('desktop');
   const [csvPreview, setCsvPreview] = useState([]);
   const [showCsvConfirm, setShowCsvConfirm] = useState(false);
@@ -199,7 +218,7 @@ function KeywordTable() {
       description: 'This action cannot be undone.',
       confirmText: 'Delete result',
       tone: 'danger',
-      icon: faTrashCan,
+      icon: faTrash,
       onConfirm: async () => {
         dispatch(clearKeywordMessage());
         const resultAction = await dispatch(
@@ -228,7 +247,7 @@ function KeywordTable() {
       icon: faTriangleExclamation,
       onConfirm: async () => {
         dispatch(clearKeywordMessage());
-        const resultAction = await dispatch(clearProjectRankings(selectedProjectId));
+        await dispatch(clearProjectRankings(selectedProjectId));
 
         if (clearProjectRankings.fulfilled.match(resultAction)) {
           closeConfirmModal();
@@ -252,11 +271,14 @@ function KeywordTable() {
       parsed.length === 1
         ? addKeywordToProject({
             projectId: selectedProjectId,
-            payload: { keyword: parsed[0], location: location },
+            payload: { keyword: parsed[0], location_code: projectCountryCode, location: projectCountry, device },
           })
         : bulkAddKeywords({
             projectId: selectedProjectId,
             keywords: parsed,
+            location_code: projectCountryCode,
+            location: projectCountry,
+            device,
           })
     );
 
@@ -270,8 +292,7 @@ function KeywordTable() {
   };
 
   const handleCsvChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    if (!e.target.files?.[0]) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -281,17 +302,20 @@ function KeywordTable() {
       setCsvPreview(keywords);
       setShowCsvConfirm(true);
     };
-    reader.readAsText(file);
+    reader.readAsText(e.target.files[0]);
   };
 
   const handleCsvConfirm = async () => {
     setShowCsvConfirm(false);
-    if (!selectedProjectId || csvPreview.length === 0) return;
+    if (!selectedProjectId) return;
 
     const resultAction = await dispatch(
       bulkAddKeywords({
         projectId: selectedProjectId,
         keywords: csvPreview,
+        location_code: projectCountryCode,
+        location: projectCountry,
+        device,
       })
     );
 
@@ -371,22 +395,24 @@ function KeywordTable() {
             />
 
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="Location"
-                className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
-              />
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Country</label>
+                <div className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50 text-slate-700">
+                  {projectCountry} <span className="text-slate-400 text-xs ml-2">(from project)</span>
+                </div>
+              </div>
 
-              <select
-                value={device}
-                onChange={(e) => setDevice(e.target.value)}
-                className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
-              >
-                <option value="desktop">Desktop</option>
-                <option value="mobile">Mobile</option>
-              </select>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Device</label>
+                <select
+                  value={device}
+                  onChange={(e) => setDevice(e.target.value)}
+                  className="rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none"
+                >
+                  <option value="desktop">Desktop</option>
+                  <option value="mobile">Mobile</option>
+                </select>
+              </div>
 
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 <FontAwesomeIcon icon={faUpload} />
@@ -464,68 +490,72 @@ function KeywordTable() {
                 <table className="min-w-full text-left">
                   <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
                     <tr>
-                    <th className="px-5 py-4 w-12">
-                      <input
-                        type="checkbox"
-                        checked={filteredKeywords.length > 0 && selectedKeywords.length === filteredKeywords.length}
-                        onChange={toggleAllKeywords}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                    </th>
-                    <th className="px-5 py-4">Keyword</th>
-                    <th className="px-5 py-4">Device</th>
-                    <th className="px-5 py-4">Location</th>
-                    <th className="px-5 py-4">Created at</th>
-                    <th className="px-5 py-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredKeywords.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100">
-                      <td className="px-5 py-4 w-12">
+                      <th className="px-5 py-4 w-12">
                         <input
                           type="checkbox"
-                          checked={selectedKeywords.includes(row.id)}
-                          onChange={() => toggleKeyword(row.id)}
+                          checked={filteredKeywords.length > 0 && selectedKeywords.length === filteredKeywords.length}
+                          onChange={toggleAllKeywords}
                           className="h-4 w-4 rounded border-slate-300"
                         />
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-slate-900">
-                        {row.keyword || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.device || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.location || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.createdAt ? formatDateTime(row.createdAt) : '-'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <Button
-                          onClick={() => handleDeleteKeyword(row)}
-                          disabled={deletingKeyword}
-                          variant="ghost"
-                          className="!text-red-600 hover:!text-red-700"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </Button>
-                      </td>
+                      </th>
+                      <th className="px-5 py-4">Keyword</th>
+                      <th className="px-5 py-4">Device</th>
+                      <th className="px-5 py-4">Location</th>
+                      <th className="px-5 py-4">Check URL</th>
+                      <th className="px-5 py-4">Created at</th>
+                      <th className="px-5 py-4">Actions</th>
                     </tr>
-                  ))}
+                  </thead>
+                  <tbody>
+                    {filteredKeywords.map((row) => (
+                      <tr key={row.id} className="border-t border-slate-100">
+                        <td className="px-5 py-4 w-12">
+                          <input
+                            type="checkbox"
+                            checked={selectedKeywords.includes(row.id)}
+                            onChange={() => toggleKeyword(row.id)}
+                            className="h-4 w-4 rounded border-slate-300"
+                          />
+                        </td>
+                        <td className="px-5 py-4 font-semibold text-slate-900">
+                          {row.keyword || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.device || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.location || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.check_url ? <a href={row.check_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate block max-w-[200px]">{row.check_url}</a> : '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.createdAt ? formatDateTime(row.createdAt) : '-'}
+                        </td>
+                        <td className="px-5 py-4">
+                          <Button
+                            onClick={() => handleDeleteKeyword(row)}
+                            disabled={deletingKeyword}
+                            variant="ghost"
+                            className="!text-red-600 hover:!text-red-700"
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
 
-                  {filteredKeywords.length === 0 && (
-                    <tr>
-                      <td colSpan="6" className="px-5 py-10 text-center text-sm text-slate-500">
-                        No keywords added yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                    {filteredKeywords.length === 0 && (
+                      <tr>
+                        <td colSpan="7" className="px-5 py-10 text-center text-sm text-slate-500">
+                          No keywords added yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
           )}
           {filteredRankings.length > 0 && (
             <div className="border-t border-slate-200 px-5 py-3 text-center text-xs text-slate-400">
@@ -559,7 +589,7 @@ function KeywordTable() {
                 disabled={clearingRankings || filteredRankings.length === 0}
                 variant="danger"
               >
-                {clearingRankings ? 'Clearing...' : 'Clear Rankings'}
+                <FontAwesomeIcon icon={faTrash} /> Clear Rankings
               </Button>
 
               <Button
@@ -573,27 +603,8 @@ function KeywordTable() {
           </div>
 
           {selectedRankings.length > 0 && (
-            <div className="border-b border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-rose-700">
-                {selectedRankings.length} selected
-              </span>
-              <Button
-                onClick={() => {
-                  openConfirmModal({
-                    title: 'Delete selected rankings',
-                    message: `Delete ${selectedRankings.length} selected ranking results?`,
-                    description: 'This action cannot be undone.',
-                    confirmText: 'Delete selected',
-                    tone: 'danger',
-                    icon: faTrashCan,
-                    onConfirm: handleBulkRankingConfirm,
-                  });
-                }}
-                disabled={isBulkLoading}
-                variant="danger"
-              >
-                Delete selected
-              </Button>
+            <div className="border-t border-slate-200 px-5 py-3 text-center text-xs text-slate-400">
+              Showing {selectedRankings.length} ranking{selectedRankings.length === 1 ? '' : 's'}
             </div>
           )}
 
@@ -607,78 +618,73 @@ function KeywordTable() {
                 <table className="min-w-full text-left">
                   <thead className="sticky top-0 bg-slate-50 text-xs uppercase tracking-[0.2em] text-slate-400">
                     <tr>
-                    <th className="px-5 py-4 w-12">
-                      <input
-                        type="checkbox"
-                        checked={filteredRankings.length > 0 && selectedRankings.length === filteredRankings.length}
-                        onChange={toggleAllRankings}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                    </th>
-                    <th className="px-5 py-4">Keyword</th>
-                    <th className="px-5 py-4">URL</th>
-                    <th className="px-5 py-4">Position</th>
-                    <th className="px-5 py-4">Device</th>
-                    <th className="px-5 py-4">Location</th>
-                    <th className="px-5 py-4">Checked at</th>
-                    <th className="px-5 py-4">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRankings.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-100">
-                      <td className="px-5 py-4 w-12">
+                      <th className="px-5 py-4 w-12">
                         <input
                           type="checkbox"
-                          checked={selectedRankings.includes(row.id)}
-                          onChange={() => toggleRanking(row.id)}
+                          checked={filteredRankings.length > 0 && selectedRankings.length === filteredRankings.length}
+                          onChange={toggleAllRankings}
                           className="h-4 w-4 rounded border-slate-300"
                         />
-                      </td>
-                      <td className="px-5 py-4 font-semibold text-slate-900">
-                        {row.keywordText || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-500">{row.url || '-'}</td>
-                      <td className="px-5 py-4 text-sm font-semibold text-slate-900">
-                        {row.position ? `#${row.position}` : '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.device || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.location || '-'}
-                      </td>
-                      <td className="px-5 py-4 text-sm text-slate-700">
-                        {row.checkedAt ? formatDateTime(row.checkedAt) : '-'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <Button
-                          onClick={() => handleDeleteRanking(row)}
-                          disabled={deletingRanking}
-                          variant="ghost"
-                          className="!text-red-600 hover:!text-red-700"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </Button>
-                      </td>
+                      </th>
+                      <th className="px-5 py-4">Keyword</th>
+                      <th className="px-5 py-4">URL</th>
+                      <th className="px-5 py-4">Position</th>
+                      <th className="px-5 py-4">Device</th>
+                      <th className="px-5 py-4">Location</th>
+                      <th className="px-5 py-4">Checked at</th>
+                      <th className="px-5 py-4">Actions</th>
                     </tr>
-                  ))}
+                  </thead>
+                  <tbody>
+                    {filteredRankings.map((row) => (
+                      <tr key={row.id} className="border-t border-slate-100">
+                        <td className="px-5 py-4 w-12">
+                          <input
+                            type="checkbox"
+                            checked={selectedRankings.includes(row.id)}
+                            onChange={() => toggleRanking(row.id)}
+                            className="h-4 w-4 rounded border-slate-300"
+                          />
+                        </td>
+                        <td className="px-5 py-4 font-semibold text-slate-900">
+                          {row.keywordText || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-500">{row.url || '-'}</td>
+                        <td className="px-5 py-4 text-sm font-semibold text-slate-900">
+                          {row.position ? `#${row.position}` : '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.device || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.location || '-'}
+                        </td>
+                        <td className="px-5 py-4 text-sm text-slate-700">
+                          {row.checkedAt ? formatDateTime(row.checkedAt) : '-'}
+                        </td>
+                        <td className="px-5 py-4">
+                          <Button
+                            onClick={() => handleDeleteRanking(row)}
+                            disabled={deletingRanking}
+                            variant="ghost"
+                            className="!text-red-600 hover:!text-red-700"
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
 
-                  {filteredRankings.length === 0 && (
-                    <tr>
-                      <td colSpan="8" className="px-5 py-10 text-center text-sm text-slate-500">
-                        No rankings available yet. Add a keyword and run rank check.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          )}
-          {filteredRankings.length > 0 && (
-            <div className="border-t border-slate-200 px-5 py-3 text-center text-xs text-slate-400">
-              Showing {filteredRankings.length} ranking{filteredRankings.length === 1 ? '' : 's'}
+                    {filteredRankings.length === 0 && (
+                      <tr>
+                        <td colSpan="8" className="px-5 py-10 text-center text-sm text-slate-500">
+                          No rankings available yet. Add a keyword and run rank check.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </section>
@@ -693,7 +699,6 @@ function KeywordTable() {
         cancelText="Cancel"
         tone={confirmState.tone}
         icon={confirmState.icon}
-        loading={isBulkLoading}
         onConfirm={confirmState.onConfirm}
         onClose={closeConfirmModal}
       />

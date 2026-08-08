@@ -9,8 +9,9 @@ from app.api.deps import db_session, get_current_user
 from app.db.models import Keyword, KeywordCache, Project, RankResult
 from app.services.keyword_table_service import get_enriched_keywords
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
+from app.services.dataforseo_client import LOCATION_MAP
 from app.services.team_service import get_team_owner_id
-from app.services.credit_service import deduct_credits
+from app.services.credit_service import deduct_credits, refund_credits
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
 from app.core.config import get_settings
 from app.core.errors import ApiError
@@ -45,20 +46,46 @@ def _get_cached_keyword_data(db: Session, keyword_text: str, location: str):
     }
 
 
+def _calculate_visibility(position):
+    if position is None or position > 100:
+        return 0.0
+    if 1 <= position <= 10:
+        return round(1.0 - (position - 1) * 0.1, 2)
+    if 11 <= position <= 20:
+        return 0.05
+    return 0.0
+
+
 def _update_keyword_from_data(keyword_row: Keyword, data: dict) -> None:
-    keyword_row.volume = data.get("volume")
-    keyword_row.kd = data.get("kd")
-    keyword_row.cpc = data.get("cpc")
-    keyword_row.competition = data.get("competition")
-    keyword_row.backlinks = data.get("backlinks")
-    keyword_row.referring_domains = data.get("referring_domains")
-    keyword_row.intent = data.get("intent")
-    keyword_row.position = data.get("position")
-    keyword_row.ai_badge = data.get("ai_badge")
-    keyword_row.updatedAt = datetime.utcnow()
+    updates = {}
+    for field in ["volume", "kd", "cpc", "competition", "backlinks", "referring_domains", "intent", "position", "ai_badge"]:
+        value = data.get(field)
+        if value is not None:
+            updates[field] = value
+
+    position = data.get("position")
+    if position is not None:
+        updates["visibility"] = _calculate_visibility(position)
+
+    if updates:
+        logger.info("Updating keyword %s with fields: %s", keyword_row.keyword, updates)
+        for field, value in updates.items():
+            setattr(keyword_row, field, value)
+        keyword_row.updatedAt = datetime.utcnow()
+    else:
+        logger.info("No valid fields to update for keyword %s from data: %s", keyword_row.keyword, data)
 
 
-def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location: str, domain: str) -> bool:
+def _is_valid_keyword_data(data: dict) -> bool:
+    if not data:
+        return False
+    data_fields = ["volume", "kd", "cpc", "competition", "backlinks", "referring_domains", "intent", "position", "ai_badge"]
+    result = any(data.get(field) is not None for field in data_fields)
+    logger.info("_is_valid_keyword_data for %s: %s", data.get("keyword", "unknown"), result)
+    return result
+
+
+def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str) -> bool:
     """
     Fetch DataForSEO data and update Keyword + KeywordCache.
     Charges user-configured credits only after a successful API response.
@@ -66,16 +93,18 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
     Raises on failure so callers can return an error response.
     """
     try:
-        cached = _get_cached_keyword_data(db, keyword_text, location)
+        cached = _get_cached_keyword_data(db, keyword_text, str(location_code))
         if cached:
+            logger.info("Day-one cache hit for %s", keyword_text)
             keyword_row = db.scalar(
                 select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
             )
-            if keyword_row:
+            if keyword_row and _is_valid_keyword_data(cached):
                 _update_keyword_from_data(keyword_row, cached)
-                _update_or_create_cache_from_route(db, keyword_text, location, cached)
+                _update_or_create_cache_from_route(db, keyword_text, str(location_code), cached)
                 db.commit()
-            # Always charge 20 credits for adding a keyword, even if using cached data
+            else:
+                logger.warning("Day-one cache data invalid for %s", keyword_text)
             owner_id = get_team_owner_id(db, user_id)
             deduct_credits(db, owner_id, 20, "KEYWORD_ADD", f"Keyword add: {keyword_text} (cached data)")
             return False
@@ -84,36 +113,48 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
         rows = helper.fetch_cheapest_dashboard_data(
             [keyword_text],
             domain,
-            location_code=2840,
+            location_code=location_code,
             language_code="en",
         )
 
         if not rows:
-            logger.warning("Day-one tracking: no data returned from DataForSEO for %s", keyword_text)
+            logger.warning("Day-one tracking: no rows returned from DataForSEO for %s", keyword_text)
             return False
 
         row = rows[0]
+        logger.info("Day-one tracking raw data for %s: %s", keyword_text, row)
+
+        if not _is_valid_keyword_data(row):
+            logger.warning("Day-one tracking: all null data returned from DataForSEO for %s. Full row=%s", keyword_text, row)
+            return False
+
         owner_id = get_team_owner_id(db, user_id)
         deduct_credits(db, owner_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
 
-        keyword_row = db.scalar(
-            select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
-        )
-        if keyword_row:
-            _update_keyword_from_data(keyword_row, row)
-        _update_or_create_cache_from_route(db, keyword_text, location, row)
-        db.commit()
+        try:
+            keyword_row = db.scalar(
+                select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
+            )
+            if keyword_row:
+                _update_keyword_from_data(keyword_row, row)
+            _update_or_create_cache_from_route(db, keyword_text, str(location_code), row)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            refund_credits(db, owner_id, 20, f"Refund: day-one tracking failed for {keyword_text}")
+            raise
+
         return True
     except Exception:
         db.rollback()
         raise
 
 
-def _update_or_create_cache_from_route(db: Session, keyword_text: str, location: str, data: dict) -> None:
+def _update_or_create_cache_from_route(db: Session, keyword_text: str, location_code: str, data: dict) -> None:
     cache_entry = db.scalar(
         select(KeywordCache).where(
             KeywordCache.keyword == keyword_text,
-            KeywordCache.location == location,
+            KeywordCache.location == location_code,
         )
     )
     if cache_entry:
@@ -131,7 +172,7 @@ def _update_or_create_cache_from_route(db: Session, keyword_text: str, location:
     else:
         cache_entry = KeywordCache(
             keyword=keyword_text,
-            location=location,
+            location=location_code,
             volume=data.get("volume"),
             kd=data.get("kd"),
             cpc=data.get("cpc"),
@@ -168,16 +209,6 @@ def list_keywords(
     return {"success": True, "data": keywords}
 
 
-@router.delete("/{keyword_id}")
-def remove_keyword(
-    keyword_id: str,
-    user: dict = Depends(get_current_user),
-    db: Session = Depends(db_session),
-):
-    delete_keyword(db, user["userId"], keyword_id)
-    return {"success": True, "message": "Keyword deleted successfully"}
-
-
 @router.delete("/bulk")
 def bulk_remove_keywords(
     payload: dict = Body(...),
@@ -189,6 +220,16 @@ def bulk_remove_keywords(
     return {"success": True, "message": f"Deleted {deleted} keywords"}
 
 
+@router.delete("/{keyword_id}")
+def remove_keyword(
+    keyword_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    delete_keyword(db, user["userId"], keyword_id)
+    return {"success": True, "message": "Keyword deleted successfully"}
+
+
 @router.post("/{project_id}")
 def create_keyword(
     project_id: str,
@@ -198,6 +239,7 @@ def create_keyword(
 ) -> JSONResponse:
     keyword_text = payload.get("keyword")
     location = payload.get("location") or "India"
+    location_code = payload.get("location_code") or LOCATION_MAP.get(location, 2840)
 
     if not keyword_text:
         raise ApiError(400, "Keyword is required")
@@ -241,7 +283,7 @@ def create_keyword(
 
     tracking_error = None
     try:
-        _apply_day_one_tracking(db, user["userId"], normalized_keyword, location, project.domain)
+        _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain)
         db.refresh(keyword)
     except Exception as exc:
         db.rollback()
@@ -285,6 +327,8 @@ def bulk_create_keywords(
 ) -> dict:
     keywords = payload.get("keywords", [])
     location = payload.get("location") or "India"
+    location_code = payload.get("location_code") or LOCATION_MAP.get(location, 2840)
+    device = payload.get("device") or "desktop"
 
     if not keywords:
         raise ApiError(400, "keywords list is required")
@@ -320,7 +364,7 @@ def bulk_create_keywords(
             userId=user["userId"],
             keyword=kw,
             location=location,
-            device="desktop",
+            device=device,
             volume=0,
             kd=0,
             cpc=0.0,
@@ -342,7 +386,7 @@ def bulk_create_keywords(
     tracking_errors = []
     for kw_text in added:
         try:
-            tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location, project.domain)
+            tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain)
             if tracked:
                 processed += 1
         except Exception as exc:
@@ -350,9 +394,13 @@ def bulk_create_keywords(
             tracking_errors.append({"keyword": kw_text, "error": str(exc)})
             logger.warning("Day-one tracking failed for %s: %s", kw_text, exc)
 
+    message = f"Added {len(added)} keywords, skipped {len(normalized_keywords) - len(added)} duplicates"
+    if failed_tracking:
+        message += f", {failed_tracking} tracking failures"
+
     return {
         "success": True,
-        "message": f"Added {len(added)} keywords, skipped {len(normalized_keywords) - len(added)} duplicates" + (f", {failed_tracking} tracking failures" if failed_tracking else ""),
+        "message": message,
         "data": {
             "added": len(added),
             "skipped": len(normalized_keywords) - len(added),

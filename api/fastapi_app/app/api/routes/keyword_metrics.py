@@ -7,9 +7,11 @@ from app.api.deps import db_session, get_current_user, verify_user_access_privil
 from app.schemas.common import ok
 from app.schemas.keywords import KeywordMetricsRequest, KeywordMetricResult, KeywordIdeasRequest, CompetitorSpyRequest
 from app.services.dataforseo_client import DataForSEOClient
+from app.services.dataforseo_client import LOCATION_MAP
 from app.services.credit_service import refund_credits
 from app.services.keyword_cache_service import query_cached_keyword, save_cached_keyword
 from app.services.competitor_cache_service import query_cached_competitor, save_cached_competitor
+from app.services.keyword_research_cache_service import save_research_cache
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,8 @@ async def lookup_keyword_metrics(
 @router.get("/ideas")
 async def get_keyword_ideas(
     seed_keyword: str = Query(..., description="Seed keyword for ideas"),
-    location: str = Query("India", description="Location"),
+    location_code: int = Query(2840, description="DataForSEO location code"),
+    location: str = Query("India", description="Location display name"),
     current_user = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
@@ -55,7 +58,9 @@ async def get_keyword_ideas(
         raise HTTPException(status_code=400, detail="seed_keyword is required")
 
     try:
-        result = DataForSEOClient.get_keyword_ideas(db, current_user['id'], seed_keyword, location)
+        result = DataForSEOClient.get_keyword_ideas(db, current_user['id'], seed_keyword, location_code)
+        ideas = result.get("ideas", [])
+        save_research_cache(db, current_user['id'], seed_keyword, location_code, ideas or [])
         return ok("Keyword ideas retrieved", result)
     except HTTPException:
         raise
@@ -67,7 +72,8 @@ async def get_keyword_ideas(
 @router.get("/competitor-spy")
 async def spy_competitor(
     domain: str = Query(..., description="Competitor domain"),
-    location: str = Query("India", description="Location"),
+    location_code: int = Query(2840, description="DataForSEO location code"),
+    location: str = Query("India", description="Location display name"),
     limit: int = Query(100, description="Max keywords to return"),
     current_user = Depends(get_current_user),
     db: Session = Depends(db_session),
@@ -78,7 +84,9 @@ async def spy_competitor(
         raise HTTPException(status_code=400, detail="domain is required")
 
     try:
-        result = DataForSEOClient.get_competitor_keywords_cached(db, current_user['id'], domain, location, limit)
+        result = DataForSEOClient.get_competitor_keywords_cached(db, current_user['id'], domain, location_code, limit)
+        keywords = result.get("keywords", [])
+        save_cached_competitor(db, domain, str(location_code), keywords)
         return ok("Competitor keywords retrieved", result)
     except HTTPException:
         raise

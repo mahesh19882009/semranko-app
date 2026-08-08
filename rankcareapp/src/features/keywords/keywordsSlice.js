@@ -209,11 +209,11 @@ export const clearProjectRankings = createAsyncThunk(
 
 export const bulkAddKeywords = createAsyncThunk(
   'keywords/bulkAddKeywords',
-  async ({ projectId, keywords }, thunkAPI) => {
+  async ({ projectId, keywords, location_code, location, device }, thunkAPI) => {
     try {
       const response = await apiRequest(`/keywords/${projectId}/bulk`, {
         method: 'POST',
-        body: JSON.stringify({ keywords }),
+        body: JSON.stringify({ keywords, location_code, location, device }),
       });
 
       const selectedProjectId = thunkAPI.getState().projects.selectedProjectId;

@@ -93,7 +93,7 @@ trap cleanup SIGINT SIGTERM
 echo "Starting FastAPI server on http://localhost:4000..."
 cd "$PROJECT_DIR"
 export PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/fastapi_app:$PYTHONPATH"
-"$PROJECT_DIR/.venv/bin/python" -m uvicorn --app-dir fastapi_app app.main:app --reload --host 0.0.0.0 --port 4000 &
+"$PROJECT_DIR/.venv/bin/python" -m uvicorn --app-dir fastapi_app app.main:app --reload --host 0.0.0.0 --port 4000 > /tmp/uvicorn.log 2>&1 &
 FASTAPI_PID=$!
 sleep 2
 
@@ -108,7 +108,7 @@ echo "✓ FastAPI server started (PID: $FASTAPI_PID)"
 echo "Starting RQ worker..."
 export PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/fastapi_app:$PYTHONPATH"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
-"$PROJECT_DIR/.venv/bin/rq" worker rank-check &
+"$PROJECT_DIR/.venv/bin/rq" worker rank-check > /tmp/rq-worker.log 2>&1 &
 WORKER_PID=$!
 sleep 1
 
@@ -125,6 +125,8 @@ echo "✓ All services are running!"
 echo "=========================================="
 echo "FastAPI: http://localhost:4000"
 echo "API Docs: http://localhost:4000/docs"
+echo "Server logs: /tmp/uvicorn.log"
+echo "Worker logs: /tmp/rq-worker.log"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""

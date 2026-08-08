@@ -19,6 +19,8 @@ import Card from "../components/ui/Card";
 import { useToast } from "../components/ui/Toast";
 import { ToastProvider } from "../components/ui/Toast";
 import { formatDate } from "../utils/date";
+import { DataTable } from 'primereact/datatable';
+import { Column } from 'primereact/column';
 
 function formatCurrency(amount) {
   if (amount === null || amount === undefined) return "—";
@@ -38,7 +40,7 @@ function StatusChip({ status }) {
         ? "error"
         : "warning";
   return (
-    <Alert variant={tone} className="!p-0 !py-1 !px-2">
+    <Alert variant={tone} className="!pt-1 !pb-[6px] !px-2">
       {status}
     </Alert>
   );
@@ -141,7 +143,6 @@ export default function BillingPage() {
               addToast(`Successfully topped up ${added.toLocaleString()} credits!`, "success");
               setMultiplier(1);
 
-              // Update credit balance in Redux immediately
               if (newBalance !== undefined) {
                 dispatch(updateCreditBalance(newBalance));
               }
@@ -173,7 +174,7 @@ export default function BillingPage() {
               loadHistory();
             }
           } catch (err) {
-            logger.error("Failed to mark payment as failed: %s", err);
+            console.error("Failed to mark payment as failed: %s", err);
           }
         },
       });
@@ -250,65 +251,59 @@ export default function BillingPage() {
               <p className="text-sm text-slate-500">No transactions found.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                    <th className="px-6 py-4 font-medium">Title</th>
-                    <th className="px-6 py-4 font-medium">Invoice</th>
-                    <th className="px-6 py-4 font-medium">Date</th>
-                    <th className="px-6 py-4 font-medium">Amount (₹)</th>
-                    <th className="px-6 py-4 font-medium">Status</th>
-                    <th className="px-6 py-4 font-medium text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {history.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-6 py-4">
-                        {item.purchase_type && (
-                          <div className="font-bold text-md text-slate-900">{item.purchase_type === "SUBSCRIPTION_UPGRADE" ? "Subscription" : "Credit Top-Up"}</div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-col">
-                          {(item.status == 'completed' || item.status == 'paid') ? (<>
-                            <span className="font-mono text-xs text-slate-500">{item.invoice_number || `INV-${item.id.slice(0, 8).toUpperCase()}`}</span>
-                            <span className="text-xs text-slate-400">{item.order_id ? `Order ${item.order_id.slice(0, 12)}...` : "—"}</span>
-                          </>) : ('—')}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-600">{formatDate(item.timestamp)}</td>
-                      <td className="px-6 py-4 font-semibold text-slate-900">{formatCurrency(item.amount_paid_inr, "INR")}</td>
-                      <td className="px-6 py-4">
-                        <StatusChip status={item.status} />
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        {item.status === "completed" || item.status === "paid" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDownloadInvoice(item.id)}
-                            className="gap-1.5"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                              <path d="M7 1V9M7 9L4 6M7 9L10 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                              <path d="M1 10V12H13V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                            PDF
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-slate-400">N/A</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                  }
-                </tbody >
-              </table >
-            </div >
+            <DataTable
+              value={history}
+              paginator
+              rows={10}
+              rowsPerPageOptions={[10, 20, 50, 100]}
+              dataKey="id"
+              emptyMessage="No transactions found."
+              loading={loadingHistory}
+              tableStyle={{ minWidth: '60rem', width: '100%' }}
+              className="compact-datatable"
+              scrollable
+              scrollHeight="flex"
+              frozenWidth="18rem"
+            >
+              <Column field="purchase_type" header="Title" style={{ width: '14rem' }} body={(rowData) => (
+                <div className="font-bold text-md text-slate-900">
+                  {rowData.purchase_type === "SUBSCRIPTION_UPGRADE" ? "Subscription" : rowData.purchase_type === "CREDIT_TOP_UP" ? "Credit Top-Up" : "—"}
+                </div>
+              )} />
+              <Column header="Invoice" style={{ width: '16rem' }} body={(rowData) => (
+                <div className="flex flex-col">
+                  {(rowData.status == 'completed' || rowData.status == 'paid') ? (
+                    <>
+                      <span className="font-mono text-xs text-slate-500">{rowData.invoice_number || `INV-${rowData.id.slice(0, 8).toUpperCase()}`}</span>
+                      <span className="text-xs text-slate-400">{rowData.order_id ? `Order ${rowData.order_id.slice(0, 12)}...` : "—"}</span>
+                    </>
+                  ) : '—'}
+                </div>
+              )} />
+              <Column field="timestamp" header="Date" style={{ width: '12rem' }} body={(rowData) => <span className="text-slate-600">{formatDate(rowData.timestamp)}</span>} />
+              <Column header="Amount (₹)" style={{ width: '10rem' }} body={(rowData) => <span className="font-semibold text-slate-900">{formatCurrency(rowData.amount_paid_inr, "INR")}</span>} />
+              <Column header="Status" style={{ width: '10rem' }} body={(rowData) => <StatusChip status={rowData.status} />} />
+              <Column header="Actions" style={{ width: '8rem' }} body={(rowData) => (
+                (rowData.status === "completed" || rowData.status === "paid") ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDownloadInvoice(rowData.id)}
+                    className="gap-1.5"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M7 1V9M7 9L4 6M7 9L10 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M1 10V12H13V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    PDF
+                  </Button>
+                ) : (
+                  <span className="text-xs text-slate-400">N/A</span>
+                )
+              )} />
+            </DataTable>
           )}
-        </Card >
+        </Card>
 
         {/* Razorpay Tier Grid */}
         < div >

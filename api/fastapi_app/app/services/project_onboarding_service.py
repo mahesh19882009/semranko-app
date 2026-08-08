@@ -9,7 +9,7 @@ from app.core.errors import ApiError
 logger = logging.getLogger(__name__)
 
 
-def create_project_with_keywords(db: Session, user_id: str, name: str, domain: str, location: str, keywords: list[str]) -> Project:
+def create_project_with_keywords(db: Session, user_id: str, name: str, domain: str, location_code: int, location: str, keywords: list[str]) -> Project:
     ensure_project_limit(db, user_id)
 
     project = Project(userId=user_id, name=name, domain=domain)

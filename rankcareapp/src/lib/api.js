@@ -92,18 +92,19 @@ export async function resetPasswordApi(token, newPassword) {
   return result;
 }
 
-export async function researchKeywordApi(keyword, location = "India") {
-  return apiRequest(`/keyword-research/research?keyword=${encodeURIComponent(keyword)}&location=${encodeURIComponent(location)}`);
+export async function researchKeywordApi(keyword, locationCode = 2840, location = "India") {
+  return apiRequest(`/keyword-research/research?keyword=${encodeURIComponent(keyword)}&location_code=${encodeURIComponent(locationCode)}&location=${encodeURIComponent(location)}`);
 }
 
-export async function competitorSpyApi(domain, location = "India", limit = 100) {
-  return apiRequest(`/keyword-research/competitor-spy?domain=${encodeURIComponent(domain)}&location=${encodeURIComponent(location)}&limit=${limit}`);
+export async function competitorSpyApi(domain, locationCode = 2840, location = "India", limit = 100) {
+  return apiRequest(`/keyword-research/competitor-spy?domain=${encodeURIComponent(domain)}&location_code=${encodeURIComponent(locationCode)}&location=${encodeURIComponent(location)}&limit=${limit}`);
 }
 
-export async function onboardProjectApi({ name, domain, location, keywords }) {
+export async function onboardProjectApi({ name, domain, locationCode, location = "India", keywords }) {
   const params = new URLSearchParams();
   params.set('name', name);
   params.set('domain', domain);
+  params.set('location_code', locationCode);
   params.set('location', location);
   keywords.forEach(kw => params.append('keywords', kw));
   return apiRequest(`/keyword-research/project/onboard?${params.toString()}`, {

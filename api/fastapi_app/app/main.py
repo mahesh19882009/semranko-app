@@ -67,65 +67,105 @@ def on_startup() -> None:
 
         if "project" in table_names:
             columns = [c["name"] for c in inspector.get_columns("Project")]
+            project_alters = []
             if "client_logo_url" not in columns:
-                with engine.connect() as conn:
-                    conn.execute(text('ALTER TABLE "Project" ADD COLUMN client_logo_url VARCHAR(500)'))
-                    conn.commit()
-                logger.info("Added client_logo_url column to Project")
+                project_alters.append('ADD COLUMN IF NOT EXISTS "client_logo_url" VARCHAR(500)')
+            if "location" not in columns:
+                project_alters.append('ADD COLUMN IF NOT EXISTS "location" VARCHAR')
+            if "locationCode" not in columns:
+                project_alters.append('ADD COLUMN IF NOT EXISTS "locationCode" INTEGER')
+            if "device" not in columns:
+                project_alters.append('ADD COLUMN IF NOT EXISTS "device" VARCHAR')
+            if project_alters:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text(f'ALTER TABLE "Project" {", ".join(project_alters)}'))
+                        conn.commit()
+                    logger.info("Added missing Project columns: %s", ", ".join(project_alters))
+                except Exception as exc:
+                    logger.error("Failed to add Project columns: %s", exc)
 
         if "keyword" in table_names:
             columns = [c["name"] for c in inspector.get_columns("Keyword")]
             keyword_alters = []
             if "userId" not in columns:
-                keyword_alters.append('ADD COLUMN "userId" VARCHAR NOT NULL DEFAULT \'\'')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "userId" VARCHAR NOT NULL DEFAULT \'\'')
             if "position" not in columns:
-                keyword_alters.append('ADD COLUMN "position" INTEGER')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "position" INTEGER')
             if "ai_badge" not in columns:
-                keyword_alters.append('ADD COLUMN "ai_badge" VARCHAR')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "ai_badge" VARCHAR')
+            if "check_url" not in columns:
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "check_url" VARCHAR')
             if "visibility" not in columns:
-                keyword_alters.append('ADD COLUMN "visibility" FLOAT')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "visibility" FLOAT')
             if "isActive" not in columns:
-                keyword_alters.append('ADD COLUMN "isActive" BOOLEAN NOT NULL DEFAULT TRUE')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT TRUE')
             if "updatedAt" not in columns:
-                keyword_alters.append('ADD COLUMN "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()')
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()')
             if keyword_alters:
-                with engine.connect() as conn:
-                    conn.execute(text(f'ALTER TABLE "Keyword" {", ".join(keyword_alters)}'))
-                    conn.commit()
-                logger.info("Added missing Keyword columns: %s", ", ".join(keyword_alters))
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text(f'ALTER TABLE "Keyword" {", ".join(keyword_alters)}'))
+                        conn.commit()
+                    logger.info("Added missing Keyword columns: %s", ", ".join(keyword_alters))
+                except Exception as exc:
+                    logger.error("Failed to add Keyword columns: %s", exc)
 
         if "rankeresult" in table_names:
             columns = [c["name"] for c in inspector.get_columns("RankResult")]
             if "etv" not in columns:
-                with engine.connect() as conn:
-                    conn.execute(text('ALTER TABLE "RankResult" ADD COLUMN "etv" FLOAT'))
-                    conn.commit()
-                logger.info("Added etv column to RankResult")
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text('ALTER TABLE "RankResult" ADD COLUMN IF NOT EXISTS "etv" FLOAT'))
+                        conn.commit()
+                    logger.info("Added etv column to RankResult")
+                except Exception as exc:
+                    logger.error("Failed to add etv column to RankResult: %s", exc)
             indexes = [c["name"] for c in inspector.get_indexes("RankResult")]
             if "RankResult_projectId_keywordId_checkedAt_idx" not in indexes:
-                with engine.connect() as conn:
-                    conn.execute(text('CREATE INDEX "RankResult_projectId_keywordId_checkedAt_idx" ON "RankResult" ("projectId", "keywordId", "checkedAt")'))
-                    conn.commit()
-                logger.info("Created RankResult history index")
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text('CREATE INDEX IF NOT EXISTS "RankResult_projectId_keywordId_checkedAt_idx" ON "RankResult" ("projectId", "keywordId", "checkedAt")'))
+                        conn.commit()
+                    logger.info("Created RankResult history index")
+                except Exception as exc:
+                    logger.error("Failed to create RankResult history index: %s", exc)
+
+        if "keywordcache" in table_names:
+            columns = [c["name"] for c in inspector.get_columns("KeywordCache")]
+            cache_alters = []
+            if "check_url" not in columns:
+                cache_alters.append('ADD COLUMN IF NOT EXISTS "check_url" VARCHAR')
+            if cache_alters:
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text(f'ALTER TABLE "KeywordCache" {", ".join(cache_alters)}'))
+                        conn.commit()
+                    logger.info("Added missing KeywordCache columns: %s", ", ".join(cache_alters))
+                except Exception as exc:
+                    logger.error("Failed to add KeywordCache columns: %s", exc)
 
         if "aiotracking" in table_names:
             columns = [c["name"] for c in inspector.get_columns("AIOTracking")]
             aio_alters = []
             if "aiOverviewTitle" not in columns:
-                aio_alters.append('ADD COLUMN "aiOverviewTitle" VARCHAR')
+                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewTitle" VARCHAR')
             if "aiOverviewMarkdown" not in columns:
-                aio_alters.append('ADD COLUMN "aiOverviewMarkdown" TEXT')
+                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewMarkdown" TEXT')
             if "references" not in columns:
-                aio_alters.append('ADD COLUMN "references" JSON')
+                aio_alters.append('ADD COLUMN IF NOT EXISTS "references" JSON')
             if "images" not in columns:
-                aio_alters.append('ADD COLUMN "images" JSON')
+                aio_alters.append('ADD COLUMN IF NOT EXISTS "images" JSON')
             if "aiOverviewType" not in columns:
-                aio_alters.append('ADD COLUMN "aiOverviewType" VARCHAR')
+                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewType" VARCHAR')
             if aio_alters:
-                with engine.connect() as conn:
-                    conn.execute(text(f'ALTER TABLE "AIOTracking" {", ".join(aio_alters)}'))
-                    conn.commit()
-                logger.info("Added missing AIOTracking columns: %s", ", ".join(aio_alters))
+                try:
+                    with engine.connect() as conn:
+                        conn.execute(text(f'ALTER TABLE "AIOTracking" {", ".join(aio_alters)}'))
+                        conn.commit()
+                    logger.info("Added missing AIOTracking columns: %s", ", ".join(aio_alters))
+                except Exception as exc:
+                    logger.error("Failed to add AIOTracking columns: %s", exc)
     except Exception as exc:
         logger.error(f"Startup migration failed: {exc}")
 

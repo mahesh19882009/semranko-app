@@ -48,3 +48,4 @@ def save_cached_competitor(db: Session, domain: str, location: str, keywords: li
     else:
         row = CompetitorCache(domain=domain, location=location, **payload)
         db.add(row)
+    db.commit()
