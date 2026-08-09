@@ -325,7 +325,7 @@ class DataForSEOClient:
 
             if item_type == "organic":
                 return {
-                    "position": item.get("rank_absolute") or item.get("rank_group"),
+                    "position": item.get("rank_group") or item.get("rank_absolute"),
                     "url": item_url or f"https://{item_domain}",
                     "etv": item.get("etv"),
                 }
@@ -474,86 +474,38 @@ class DataForSEOClient:
 
     @classmethod
     def get_keyword_metrics(cls, db, user_id: str, keywords: list[dict]) -> dict:
-        from app.services.keyword_cache_service import query_cached_keyword
-
         if not keywords:
             return {"results": [], "credits_charged": 0, "cached_count": 0, "user_cache_hits": 0}
 
-        cached_results = []
-        cached_count = 0
-
-        for kw in keywords:
-            keyword_text = kw.get("keyword", "")
-            location = kw.get("location", "India")
-            cached = query_cached_keyword(db, keyword_text, location)
-            if cached:
-                cached_results.append(cached)
-                cached_count += 1
+        keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
+        location = keywords[0].get("location", "India") if keywords else "India"
+        results = cls._fetch_keyword_data_batch(keyword_texts, location)
 
         return {
-            "results": cached_results,
-            "credits_charged": 0,
-            "cached_count": cached_count,
-            "user_cache_hits": cached_count,
+            "results": list(results.values()),
+            "credits_charged": len(results),
+            "cached_count": 0,
+            "user_cache_hits": 0,
         }
 
     @classmethod
     def bulk_keyword_lookup(cls, db, user_id: str, keywords: list[dict]) -> dict:
-        from app.services.keyword_cache_service import query_cached_keyword
-
         if not keywords:
             return {"results": [], "credits_charged": 0, "cached_count": 0, "missing_count": 0}
 
-        cached_items = []
-        cached_count = 0
-        missing = []
-
-        for kw in keywords:
-            keyword_text = kw.get("keyword", "")
-            location = kw.get("location", "India")
-            cached = query_cached_keyword(db, keyword_text, location)
-            if cached:
-                cached_items.append(cached)
-                cached_count += 1
-            else:
-                missing.append(kw)
-
-        missing_count = len(missing)
-        credits_charged = 0
-
-        if missing:
-            keyword_texts = [kw.get("keyword", "") for kw in missing]
-            api_results = cls._fetch_keyword_data_batch(keyword_texts, missing[0].get("location", "India") if missing else "India")
-            for kw in missing:
-                keyword_text = kw.get("keyword", "")
-                data = api_results.get(keyword_text)
-                if data:
-                    credits_charged += 1
-                    cached_items.append({
-                        "keyword": keyword_text,
-                        "location": kw.get("location", "India"),
-                        **data,
-                    })
+        keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
+        location = keywords[0].get("location", "India") if keywords else "India"
+        results = cls._fetch_keyword_data_batch(keyword_texts, location)
 
         return {
-            "results": cached_items,
-            "credits_charged": credits_charged,
-            "cached_count": cached_count,
-            "missing_count": missing_count,
+            "results": list(results.values()),
+            "credits_charged": len(results),
+            "cached_count": 0,
+            "missing_count": 0,
         }
 
     @classmethod
     def get_keyword_ideas(cls, db, user_id: str, seed_keyword: str, location_code: int = 2840) -> dict:
-        from app.services.keyword_cache_service import query_cached_keyword
-
-        cached = query_cached_keyword(db, seed_keyword, str(location_code))
-        if cached:
-            return {
-                "seed": seed_keyword,
-                "ideas": [cached],
-                "credits_charged": 0,
-            }
-
         ideas = cls.get_keyword_ideas_api(seed_keyword, location_code)
         return {
             "seed": seed_keyword,

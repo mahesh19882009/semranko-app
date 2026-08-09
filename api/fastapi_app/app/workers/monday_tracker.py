@@ -6,11 +6,12 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from app.db.models import User, Project, Keyword, KeywordCache
+from app.db.models import User, Project, Keyword, AIOTracking
 from app.db.session import SessionLocal
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.team_service import get_team_owner_id
 from app.services.credit_service import deduct_credits
+from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -101,35 +102,7 @@ def run_monday_tracker() -> dict:
                 "total_deducted": total_deducted,
             }
 
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        cache_rows = db.scalars(
-            select(KeywordCache).where(KeywordCache.keyword.in_(unique_active_keywords))
-        ).all()
-
-        fresh_cache = {}
-        stale_or_missing = []
-
-        for row in cache_rows:
-            if row.updatedAt and row.updatedAt >= seven_days_ago:
-                fresh_cache[row.keyword] = row
-            else:
-                stale_or_missing.append(row.keyword)
-
-        for kw in unique_active_keywords:
-            if kw not in fresh_cache:
-                stale_or_missing.append(kw)
-
-        stale_and_missing_demanded_keywords = sorted(set(stale_or_missing))
-
-        if not stale_and_missing_demanded_keywords:
-            logger.info("Monday tracker: all active keywords are fresh in cache")
-            return {
-                "scanned_users": len(active_user_ids),
-                "updated_keywords": 0,
-                "total_deducted": total_deducted,
-            }
-
-        if stale_and_missing_demanded_keywords:
+        if unique_active_keywords:
             helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
             target_domain = _get_user_domains(db, list(active_user_ids)[0])[0] if _get_user_domains(db, list(active_user_ids)[0]) else None
             if not target_domain:
@@ -137,7 +110,7 @@ def run_monday_tracker() -> dict:
 
             try:
                 rows = helper.fetch_cheapest_dashboard_data(
-                    stale_and_missing_demanded_keywords,
+                    unique_active_keywords,
                     target_domain,
                     location_code=2840,
                     language_code="en",
@@ -145,44 +118,25 @@ def run_monday_tracker() -> dict:
                 row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
                 now = datetime.utcnow()
                 updated = 0
-                for kw_text in stale_and_missing_demanded_keywords:
-                    cache_entry = db.scalar(
-                        select(KeywordCache).where(
-                            KeywordCache.keyword == kw_text,
-                            KeywordCache.location == "India",
-                        )
+                for kw_text in unique_active_keywords:
+                    keyword_row = db.scalar(
+                        select(Keyword).where(Keyword.keyword == kw_text)
                     )
                     row = row_map.get(kw_text.lower().strip())
-                    if row:
-                        if cache_entry:
-                            cache_entry.volume = row.get("volume")
-                            cache_entry.kd = row.get("kd")
-                            cache_entry.cpc = row.get("cpc")
-                            cache_entry.competition = row.get("competition")
-                            cache_entry.backlinks = row.get("backlinks")
-                            cache_entry.referring_domains = row.get("referring_domains")
-                            cache_entry.intent = row.get("intent")
-                            cache_entry.position = row.get("position")
-                            cache_entry.ai_badge = row.get("ai_badge")
-                            cache_entry.lastApiCallAt = now
-                            cache_entry.updatedAt = now
-                        else:
-                            cache_entry = KeywordCache(
-                                keyword=kw_text,
-                                location="India",
-                                volume=row.get("volume"),
-                                kd=row.get("kd"),
-                                cpc=row.get("cpc"),
-                                competition=row.get("competition"),
-                                backlinks=row.get("backlinks"),
-                                referring_domains=row.get("referring_domains"),
-                                intent=row.get("intent"),
-                                position=row.get("position"),
-                                ai_badge=row.get("ai_badge"),
-                                lastApiCallAt=now,
-                                updatedAt=now,
-                            )
-                            db.add(cache_entry)
+                    if row and keyword_row:
+                        keyword_row.volume = row.get("volume")
+                        keyword_row.kd = row.get("kd")
+                        keyword_row.cpc = row.get("cpc")
+                        keyword_row.competition = row.get("competition")
+                        keyword_row.backlinks = row.get("backlinks")
+                        keyword_row.referring_domains = row.get("referring_domains")
+                        keyword_row.intent = row.get("intent")
+                        keyword_row.position = row.get("position")
+                        keyword_row.ai_badge = row.get("ai_badge")
+                        if row.get("ai_badge") and keyword_row.projectId:
+                            ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, row.get("ai_badge"))
+                        keyword_row.updatedAt = now
+                        db.add(keyword_row)
                         updated += 1
 
                 # Deduct credits only after successful API response
@@ -205,12 +159,12 @@ def run_monday_tracker() -> dict:
             "Monday tracker completed: users=%d unique_keywords=%d refreshed=%d deducted=%d",
             len(active_user_ids),
             len(unique_active_keywords),
-            0,
+            updated,
             total_deducted,
         )
         return {
             "scanned_users": len(active_user_ids),
-            "updated_keywords": 0,
+            "updated_keywords": updated,
             "total_deducted": total_deducted,
         }
 

@@ -11,6 +11,25 @@ from app.core.errors import ApiError
 logger = logging.getLogger(__name__)
 
 
+def ensure_aio_tracking(db: Session, project_id: str, keyword_text: str, ai_badge: str | None) -> None:
+    if not ai_badge:
+        return
+    existing = db.scalar(
+        select(AIOTracking).where(
+            AIOTracking.projectId == project_id,
+            AIOTracking.keywordText == keyword_text,
+        )
+    )
+    if not existing:
+        db.add(
+            AIOTracking(
+                projectId=project_id,
+                keywordText=keyword_text,
+                hasAIOverview=True,
+            )
+        )
+
+
 def track_aio_for_project(db: Session, user_id: str, project_id: str) -> dict:
     project = db.scalar(select(Project).where(Project.id == project_id))
     if not project:
@@ -154,6 +173,25 @@ def get_aio_detail(db: Session, user_id: str, project_id: str, keyword_text: str
         )
     )
     if not track:
+        keyword = db.scalar(
+            select(Keyword).where(
+                Keyword.projectId == project_id,
+                Keyword.keyword == keyword_text,
+            )
+        )
+        if keyword and keyword.hasAIOverview:
+            return {
+                "keyword": keyword.keyword,
+                "hasAIOverview": keyword.hasAIOverview,
+                "aiOverviewText": None,
+                "aiOverviewTitle": None,
+                "aiOverviewMarkdown": None,
+                "references": None,
+                "images": None,
+                "aiOverviewType": None,
+                "citedDomains": None,
+                "checkedAt": keyword.updatedAt.isoformat() if keyword.updatedAt else None,
+            }
         return None
 
     return {

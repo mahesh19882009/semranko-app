@@ -23,7 +23,6 @@ from app.db.models import (
     Project, 
     User, 
     RankResult, 
-    KeywordCache,
     Competitor,
     CompetitorRank
 )
@@ -190,7 +189,7 @@ def process_completed_async_task(
 ) -> None:
     """
     Process completed async task results and update all relevant tables.
-    Updates KeywordCache (global) and RankResult (user-specific).
+    Updates RankResult (user-specific).
     """
     try:
         keywords = json.loads(task.keywordsJson or "[]")
@@ -224,14 +223,6 @@ def process_completed_async_task(
             location = serp_data.get("location", "India")
             key = (keyword_text.lower().strip(), location)
             
-            # Update global KeywordCache
-            cache_entry = db.scalar(
-                select(KeywordCache).where(
-                    KeywordCache.keyword == keyword_text,
-                    KeywordCache.location == location
-                )
-            )
-            
             # Parse SERP data
             organic_items = serp_data.get("organic_items", [])
             position = None
@@ -242,25 +233,9 @@ def process_completed_async_task(
                 for item in organic_items:
                     item_domain = item.get("domain", "")
                     if task.domain.lower() in item_domain.lower():
-                        position = item.get("rank_group")
+                        position = item.get("rank_group") or item.get("rank_absolute")
                         url = item.get("url")
                         break
-            
-            # Update or create cache entry
-            if cache_entry:
-                cache_entry.position = position
-                cache_entry.updatedAt = now
-                cache_entry.lastApiCallAt = now
-                db.add(cache_entry)
-            else:
-                cache_entry = KeywordCache(
-                    keyword=keyword_text,
-                    location=location,
-                    position=position,
-                    lastApiCallAt=now,
-                    updatedAt=now
-                )
-                db.add(cache_entry)
             
             # Update user-specific RankResult entries
             if key in keyword_map:

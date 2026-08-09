@@ -10,7 +10,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.db.models import Keyword, RankResult, Competitor, Project, KeywordCache
+from app.db.models import Keyword, RankResult, Competitor, Project
 
 logger = logging.getLogger(__name__)
 

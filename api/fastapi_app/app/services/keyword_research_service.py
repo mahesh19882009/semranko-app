@@ -3,16 +3,24 @@ import math
 from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from app.db.models import Keyword, Project, KeywordCache
-from app.services.keyword_service import _get_cached_keyword_data, _update_keyword_from_data
+from app.db.models import Keyword, Project, AIOTracking
 from app.services.cache_service import increment_usage
 from app.services.credit_service import deduct_credits, refund_credits
 from app.services.team_service import get_team_owner_id
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
+from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _is_cache_data_valid(data: dict) -> bool:
+    if not data:
+        return False
+    core_fields = ["volume", "kd", "cpc", "position", "intent"]
+    non_null_count = sum(1 for field in core_fields if data.get(field) is not None)
+    return non_null_count >= 2
 
 
 def research_keyword(db: Session, user_id: str, keyword: str, location_code: int = 2840) -> dict:
@@ -73,18 +81,7 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
         return
 
     try:
-        keywords_to_fetch = []
-        for kw in created:
-            cached = _get_cached_keyword_data(db, kw.keyword, str(location_code))
-            if cached:
-                kw.volume = cached.get("volume")
-                kw.kd = cached.get("kd")
-                kw.cpc = cached.get("cpc")
-                kw.intent = cached.get("intent")
-                kw.position = cached.get("position")
-                kw.ai_badge = cached.get("ai_badge")
-            else:
-                keywords_to_fetch.append(kw.keyword)
+        keywords_to_fetch = [kw.keyword for kw in created]
 
         fetched_ok_count = 0
         if keywords_to_fetch:
@@ -106,6 +103,8 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
                     kw.intent = row.get("intent")
                     kw.position = row.get("position")
                     kw.ai_badge = row.get("ai_badge")
+                    if row.get("ai_badge") and kw.projectId:
+                        ensure_aio_tracking(db, kw.projectId, kw.keyword, row.get("ai_badge"))
                     fetched_ok_count += 1
 
         if fetched_ok_count:

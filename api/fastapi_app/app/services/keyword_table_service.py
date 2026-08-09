@@ -1,7 +1,7 @@
 import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.models import AIOTracking, Keyword, KeywordCache, RankResult, TrackedKeyword
+from app.db.models import AIOTracking, Keyword, RankResult, TrackedKeyword
 from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
@@ -13,11 +13,6 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
     ).all()
 
     keyword_strings = [kw.keyword for kw in keywords if kw.keyword]
-
-    cache_rows = db.scalars(
-        select(KeywordCache).where(KeywordCache.keyword.in_(keyword_strings))
-    ).all()
-    cache_map = {row.keyword: row for row in cache_rows}
 
     latest_ranks = {}
     for kw in keywords:
@@ -54,7 +49,6 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
     results = []
     for kw in keywords:
         keyword_text = kw.keyword
-        cache = cache_map.get(keyword_text)
         rank_info = latest_ranks.get(keyword_text, {})
         aio_info = aio_map.get(keyword_text, {})
         track_aio = tracked_aio_map.get(keyword_text, False)
@@ -72,16 +66,16 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "keyword": keyword_text,
             "location": kw.location or "India",
             "device": kw.device or "desktop",
-            "volume": kw.volume if kw.volume is not None else (cache.volume if cache else None),
-            "kd": kw.kd if kw.kd is not None else (cache.kd if cache else None),
-            "cpc": kw.cpc if kw.cpc is not None else (cache.cpc if cache else None),
-            "competition": kw.competition if kw.competition is not None else (cache.competition if cache else None),
-            "backlinks": kw.backlinks if kw.backlinks is not None else (cache.backlinks if cache else None),
-            "domains": kw.referring_domains if kw.referring_domains is not None else (cache.referring_domains if cache else None),
-            "intent": kw.intent if kw.intent not in (None, "—") else (cache.intent if cache else None),
-            "position": kw.position if kw.position is not None else (cache.position if cache else None),
+            "volume": kw.volume,
+            "kd": kw.kd,
+            "cpc": kw.cpc,
+            "competition": kw.competition,
+            "backlinks": kw.backlinks,
+            "domains": kw.referring_domains,
+            "intent": kw.intent,
+            "position": kw.position,
             "url": rank_info.get("url"),
-            "check_url": kw.check_url or (cache.check_url if cache else None),
+            "check_url": kw.check_url,
             "rankCheckedAt": rank_info.get("checkedAt"),
             "ai": ai,
             "hasAIOverview": has_ai_overview,

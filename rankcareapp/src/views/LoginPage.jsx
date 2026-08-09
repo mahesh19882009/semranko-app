@@ -51,7 +51,7 @@ function LoginPage() {
 
   return (
     <div style={{
-      minHeight: "100vh",
+      minHeight: "calc(100vh - 135px)",
       display: "grid",
       placeItems: "center",
       background: "#f5f7fb",

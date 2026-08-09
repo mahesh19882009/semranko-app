@@ -132,7 +132,6 @@ const styles = {
   footer: {
     borderTop: "1px solid #e2e8f0",
     background: "#ffffff",
-    marginTop: "40px",
   },
   footerText: {
     padding: "20px 0",

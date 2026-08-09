@@ -8,10 +8,11 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.services.dataforseo_client import LOCATION_MAP
 from app.services.payment_service import razorpay_client
-from app.db.models import User, PaymentOrder, Subscription, CreditLedger
+from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword, AIOTracking
 from app.db.session import SessionLocal
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ID_TO_KEY
 from app.services import email_service
+from app.services.aio_service import ensure_aio_tracking
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -262,7 +263,7 @@ async def dataforseo_webhook(request: Request):
                             continue
 
                         if item.get("type") == "organic" and item.get("url"):
-                            detected_position = item.get("rank_absolute")
+                            detected_position = item.get("rank_group") or item.get("rank_absolute")
 
                         if item.get("type") == "ai_overview":
                             references = item.get("ai_overview_reference", []) or []
@@ -294,40 +295,6 @@ async def dataforseo_webhook(request: Request):
             if detected_position is not None and str(detected_position).replace(".", "", 1).isdigit():
                 position_int = int(float(detected_position))
 
-            cache_entry = db.scalar(
-                select(KeywordCache).where(
-                    KeywordCache.keyword == current_keyword,
-                    KeywordCache.location == location_name,
-                )
-            )
-            if cache_entry:
-                cache_entry.volume = volume_int
-                cache_entry.kd = kd_int
-                cache_entry.cpc = cpc_float
-                cache_entry.competition = competition_float
-                cache_entry.backlinks = backlinks_float
-                cache_entry.referring_domains = referring_domains_float
-                cache_entry.intent = search_intent
-                cache_entry.position = position_int
-                cache_entry.ai_badge = has_aio_badge
-                cache_entry.updatedAt = datetime.utcnow()
-            else:
-                cache_entry = KeywordCache(
-                    keyword=current_keyword,
-                    location=location_name,
-                    volume=volume_int,
-                    kd=kd_int,
-                    cpc=cpc_float,
-                    competition=competition_float,
-                    backlinks=backlinks_float,
-                    referring_domains=referring_domains_float,
-                    intent=search_intent,
-                    position=position_int,
-                    ai_badge=has_aio_badge,
-                    updatedAt=datetime.utcnow(),
-                )
-                db.add(cache_entry)
-
             keyword_row = db.scalar(
                 select(Keyword).where(Keyword.keyword == current_keyword)
             )
@@ -341,6 +308,8 @@ async def dataforseo_webhook(request: Request):
                 keyword_row.intent = search_intent
                 keyword_row.position = position_int
                 keyword_row.ai_badge = has_aio_badge
+                if has_aio_badge and keyword_row.projectId:
+                    ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, has_aio_badge)
                 keyword_row.updatedAt = datetime.utcnow()
 
             updated_count += 1

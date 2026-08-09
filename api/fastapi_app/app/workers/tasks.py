@@ -184,7 +184,7 @@ def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: li
                     item_domain = (item.get("domain") or "").lower()
                     item_url = item.get("url") or ""
                     if target_domain in item_domain or target_domain in item_url:
-                        rank = item.get("rank_group")
+                        rank = item.get("rank_group") or item.get("rank_absolute")
                         url = item_url
                         break
 

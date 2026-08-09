@@ -131,20 +131,6 @@ def on_startup() -> None:
                 except Exception as exc:
                     logger.error("Failed to create RankResult history index: %s", exc)
 
-        if "keywordcache" in table_names:
-            columns = [c["name"] for c in inspector.get_columns("KeywordCache")]
-            cache_alters = []
-            if "check_url" not in columns:
-                cache_alters.append('ADD COLUMN IF NOT EXISTS "check_url" VARCHAR')
-            if cache_alters:
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(text(f'ALTER TABLE "KeywordCache" {", ".join(cache_alters)}'))
-                        conn.commit()
-                    logger.info("Added missing KeywordCache columns: %s", ", ".join(cache_alters))
-                except Exception as exc:
-                    logger.error("Failed to add KeywordCache columns: %s", exc)
-
         if "aiotracking" in table_names:
             columns = [c["name"] for c in inspector.get_columns("AIOTracking")]
             aio_alters = []

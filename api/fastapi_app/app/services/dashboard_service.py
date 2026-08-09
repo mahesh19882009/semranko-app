@@ -6,7 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.errors import ApiError
-from app.db.models import Project, Keyword, RankResult, CreditLedger, KeywordCache, Competitor
+from app.db.models import Project, Keyword, RankResult, CreditLedger, Competitor
 from app.services.plan_service import build_usage_snapshot, get_user_or_404, get_user_plan_limits
 
 
@@ -105,7 +105,7 @@ def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
 
 def get_dashboard_overview(db: Session, user_id: str) -> dict:
     """
-    Get dashboard overview using Keyword -> KeywordCache chain.
+    Get dashboard overview using Keyword data.
     """
     user = get_user_or_404(db, user_id)
 
@@ -123,23 +123,14 @@ def get_dashboard_overview(db: Session, user_id: str) -> dict:
             "chart_data": {"labels": [], "positions": [], "credits": []},
         }
 
-    keyword_strings = [kw.keyword for kw in keywords if kw.keyword]
-    keyword_locations = [(kw.keyword, kw.location or "India") for kw in keywords if kw.keyword]
-
-    cache_rows = db.scalars(
-        select(KeywordCache).where(KeywordCache.keyword.in_(keyword_strings))
-    ).all()
-    cache_map = {(row.keyword, row.location): row for row in cache_rows}
-
     valid_positions = []
     keywords_data = []
 
     for kw in keywords:
         keyword_text = kw.keyword
         location = kw.location or "India"
-        cache = cache_map.get((keyword_text, location))
 
-        current_rank = kw.position if kw.position else (getattr(cache, "position", None) if cache else None)
+        current_rank = kw.position
         if current_rank is not None:
             try:
                 r_val = int(current_rank)
@@ -153,16 +144,16 @@ def get_dashboard_overview(db: Session, user_id: str) -> dict:
             "keyword": keyword_text,
             "current_rank": current_rank,
             "previous_rank": None,
-            "search_volume": kw.volume if kw.volume else (getattr(cache, "volume", 0) or 0 if cache else 0),
-            "difficulty": kw.kd if kw.kd else (getattr(cache, "kd", 0) or 0 if cache else 0),
-            "cpc": float(kw.cpc if kw.cpc else (getattr(cache, "cpc", 0) or 0 if cache else 0.0)),
-            "competition": float(kw.competition if kw.competition else (getattr(cache, "competition", 0) or 0 if cache else 0.0)),
-            "intent": kw.intent if kw.intent else (getattr(cache, "intent", "Unknown") or "Unknown" if cache else "Unknown"),
-            "backlinks": kw.backlinks if kw.backlinks else (getattr(cache, "backlinks", 0) or 0 if cache else 0),
-            "referring_domains": kw.referring_domains if kw.referring_domains else (getattr(cache, "referring_domains", 0) or 0 if cache else 0),
-            "ai_badge": kw.ai_badge if kw.ai_badge else (getattr(cache, "ai_badge", None) if cache else None),
+            "search_volume": kw.volume or 0,
+            "difficulty": kw.kd or 0,
+            "cpc": float(kw.cpc if kw.cpc else 0.0),
+            "competition": float(kw.competition if kw.competition else 0.0),
+            "intent": kw.intent or "Unknown",
+            "backlinks": kw.backlinks or 0,
+            "referring_domains": kw.referring_domains or 0,
+            "ai_badge": kw.ai_badge,
             "location": location,
-            "last_updated": kw.updatedAt.isoformat() if getattr(kw, "updatedAt", None) else (cache.updatedAt.isoformat() if cache and getattr(cache, "updatedAt", None) else None),
+            "last_updated": kw.updatedAt.isoformat() if getattr(kw, "updatedAt", None) else None,
         })
 
     average_rank = round(sum(valid_positions) / len(valid_positions), 1) if valid_positions else 0.0

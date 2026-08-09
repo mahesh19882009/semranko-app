@@ -9,7 +9,6 @@ from app.schemas.keywords import KeywordMetricsRequest, KeywordMetricResult, Key
 from app.services.dataforseo_client import DataForSEOClient
 from app.services.dataforseo_client import LOCATION_MAP
 from app.services.credit_service import refund_credits
-from app.services.keyword_cache_service import query_cached_keyword, save_cached_keyword
 from app.services.competitor_cache_service import query_cached_competitor, save_cached_competitor
 from app.services.keyword_research_cache_service import save_research_cache
 

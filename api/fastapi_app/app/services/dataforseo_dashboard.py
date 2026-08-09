@@ -23,6 +23,7 @@ class DataForSeoDashboardHelper:
         labs_payload = [
             {
                 "keywords": keywords,
+                "location_code": location_code,
                 "language_code": language_code,
             }
         ]
@@ -65,15 +66,36 @@ class DataForSeoDashboardHelper:
                     continue
 
                 metrics_map[keyword_text] = {
+                    "keyword": keyword_text,
                     "volume": keyword_info.get("search_volume"),
                     "kd": keyword_properties.get("keyword_difficulty"),
                     "cpc": keyword_info.get("cpc"),
                     "competition": keyword_info.get("competition"),
+                    "competition_level": keyword_info.get("competition_level"),
                     "intent": search_intent_info.get("main_intent"),
+                    "foreign_intent": search_intent_info.get("foreign_intent"),
                     "backlinks": avg_backlinks_info.get("backlinks"),
+                    "dofollow": avg_backlinks_info.get("dofollow"),
+                    "referring_pages": avg_backlinks_info.get("referring_pages"),
                     "referring_domains": avg_backlinks_info.get("referring_domains"),
+                    "referring_main_domains": avg_backlinks_info.get("referring_main_domains"),
+                    "domain_rank": avg_backlinks_info.get("main_domain_rank"),
+                    "etv": avg_backlinks_info.get("etv"),
+                    "categories": keyword_info.get("categories"),
+                    "monthly_searches": keyword_info.get("monthly_searches"),
+                    "search_volume_trend": keyword_info.get("search_volume_trend"),
+                    "low_top_of_page_bid": keyword_info.get("low_top_of_page_bid"),
+                    "high_top_of_page_bid": keyword_info.get("high_top_of_page_bid"),
+                    "detected_language": keyword_properties.get("detected_language"),
+                    "words_count": keyword_properties.get("words_count"),
                 }
-                logger.info("DataForSEO Labs metrics for '%s': %s", keyword_text, metrics_map[keyword_text])
+                logger.info("DataForSEO Labs metrics for '%s': volume=%s kd=%s cpc=%s competition=%s intent=%s",
+                            keyword_text,
+                            metrics_map[keyword_text].get("volume"),
+                            metrics_map[keyword_text].get("kd"),
+                            metrics_map[keyword_text].get("cpc"),
+                            metrics_map[keyword_text].get("competition"),
+                            metrics_map[keyword_text].get("intent"))
 
         serp_url = f"{self.BASE_URL}/serp/google/organic/live/advanced"
         serp_tasks = [
@@ -122,7 +144,7 @@ class DataForSeoDashboardHelper:
 
                     if item_type == "organic" and item.get("url"):
                         if target_domain and target_domain.lower() in item.get("url", "").lower():
-                            candidate_position = item.get("rank_absolute") or item.get("rank_group")
+                            candidate_position = item.get("rank_group") or item.get("rank_absolute")
                             if candidate_position and (detected_position is None or candidate_position < detected_position):
                                 detected_position = candidate_position
                             if not check_url:
@@ -133,11 +155,13 @@ class DataForSeoDashboardHelper:
                         domain = item.get("domain") or ""
                         if target_domain and (target_domain.lower() in url.lower() or target_domain.lower() in domain.lower()):
                             if detected_position is None:
-                                detected_position = 1
+                                detected_position = item.get("rank_group") or item.get("rank_absolute") or 1
                             if not check_url:
                                 check_url = url or f"https://{domain}" if domain else url
 
                     if item_type == "ai_overview":
+                        if item.get("asynchronous_ai_overview") is True:
+                            has_aio_badge = "AIO"
                         references = item.get("ai_overview_reference", []) or item.get("references", []) or []
                         if isinstance(references, list):
                             for ref in references:
@@ -168,25 +192,20 @@ class DataForSeoDashboardHelper:
         final_table_rows = []
         for kw in keywords:
             kw_metrics = metrics_map.get(kw, {
+                "keyword": kw,
                 "volume": None, "kd": None, "cpc": None,
                 "competition": None, "backlinks": None, "referring_domains": None,
-                "intent": None,
+                "intent": None, "foreign_intent": None, "competition_level": None,
+                "dofollow": None, "referring_pages": None, "referring_main_domains": None,
+                "domain_rank": None, "etv": None, "categories": None,
+                "monthly_searches": None, "search_volume_trend": None,
+                "low_top_of_page_bid": None, "high_top_of_page_bid": None,
+                "detected_language": None, "words_count": None,
             })
             serp_data = serp_map.get(kw, {})
 
-            final_table_rows.append({
-                "keyword": kw,
-                "volume": kw_metrics.get("volume"),
-                "kd": kw_metrics.get("kd"),
-                "cpc": kw_metrics.get("cpc"),
-                "competition": kw_metrics.get("competition"),
-                "backlinks": kw_metrics.get("backlinks"),
-                "referring_domains": kw_metrics.get("referring_domains"),
-                "intent": kw_metrics.get("intent"),
-                "position": serp_data.get("position"),
-                "ai_badge": serp_data.get("ai_badge"),
-                "check_url": serp_data.get("check_url"),
-            })
+            merged = {**kw_metrics, **serp_data}
+            final_table_rows.append(merged)
 
         logger.info("DataForSEO dashboard fetch complete: %d keywords, %d with metrics, %d with SERP",
                     len(keywords), len(metrics_map), len(serp_map))
