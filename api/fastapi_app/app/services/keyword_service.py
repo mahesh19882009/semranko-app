@@ -9,7 +9,6 @@ from app.db.models import Keyword, Project, AIOTracking
 from app.services.plan_service import get_user_or_404
 from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
 from app.services.credit_service import deduct_credits
-from app.services.team_service import get_team_owner_id
 from app.utils.serializers import model_to_dict
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.aio_service import ensure_aio_tracking
@@ -63,8 +62,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             logger.warning("Day-one tracking: DataForSEO returned empty data for %s, skipping charge", keyword_text)
             return False
 
-        owner_id = get_team_owner_id(db, user_id)
-        deduct_credits(db, owner_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        deduct_credits(db, user_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
 
         keyword_row = db.scalar(
             select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
@@ -213,10 +211,9 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
                     fetched_ok_count += 1
 
             if fetched_ok_count:
-                owner_id = get_team_owner_id(db, user_id)
                 deduct_credits(
                     db,
-                    owner_id,
+                    user_id,
                     float(fetched_ok_count * 25),
                     "ON_DEMAND_ADD",
                     f"Day-one tracking: {fetched_ok_count} keyword(s)",

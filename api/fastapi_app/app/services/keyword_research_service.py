@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.db.models import Keyword, Project, AIOTracking
 from app.services.cache_service import increment_usage
 from app.services.credit_service import deduct_credits, refund_credits
-from app.services.team_service import get_team_owner_id
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
@@ -108,10 +107,9 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
                     fetched_ok_count += 1
 
         if fetched_ok_count:
-            owner_id = get_team_owner_id(db, user_id)
             deduct_credits(
                 db,
-                owner_id,
+                user_id,
                 float(fetched_ok_count * 25),
                 "ON_DEMAND_ADD",
                 f"Day-one tracking: {fetched_ok_count} keyword(s)",

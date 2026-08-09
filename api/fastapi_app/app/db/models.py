@@ -66,8 +66,6 @@ class User(Base):
         primaryjoin="and_(CreditLedger.userId == User.id, CreditLedger.userId != None)",
     )
     dataforseoCosts: Mapped[list["DataForSEOCost"]] = relationship("DataForSEOCost", back_populates="user")
-    ownedTeams: Mapped[list["Team"]] = relationship("Team", back_populates="owner")
-    teamMemberships: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="user")
 
 
 class KeywordList(Base):
@@ -483,52 +481,20 @@ class UserCacheUnlock(Base):
     )
 
 
-class Team(Base):
-    __tablename__ = "Team"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    owner: Mapped[User] = relationship("User")
-    members: Mapped[list["TeamMember"]] = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
-
-
-class TeamMember(Base):
-    __tablename__ = "TeamMember"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    teamId: Mapped[str] = mapped_column(String, ForeignKey("Team.id", ondelete="CASCADE"), nullable=False)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    role: Mapped[str] = mapped_column(String, nullable=False, default="Viewer")
-    joinedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    team: Mapped[Team] = relationship("Team", back_populates="members")
-    user: Mapped[User] = relationship("User")
-
-    __table_args__ = (
-        Index("TeamMember_teamId_idx", "teamId"),
-        Index("TeamMember_userId_idx", "userId"),
-        Index("TeamMember_team_user_key", "teamId", "userId", unique=True),
-        # Check constraint will be added via migration
-    )
-
-
 class AsyncTaskQueue(Base):
     __tablename__ = "AsyncTaskQueue"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # DataForSEO task ID
-    taskType: Mapped[str] = mapped_column(String, nullable=False)  # 'rank_tracking', 'competitor_spy', 'keyword_research'
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")  # pending, processing, completed, failed
-    keywordsJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array of keywords
-    domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Target domain for rank tracking
+    taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    taskType: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    keywordsJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     locationCode: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String, nullable=True, default="desktop")
-    userId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)  # Null for global bulk jobs
+    userId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)
     projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
-    resultJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON result data
+    resultJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     errorMessage: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(

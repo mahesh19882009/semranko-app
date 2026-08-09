@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "../lib/navigation";
-import { getAccessToken, setAccessToken, setStoredUser } from "../utils/auth";
+import { getAccessToken, setAccessToken, setStoredUser, setSessionToken } from "../utils/auth";
 import { apiRequest } from "../lib/api";
 
 function LoginPage() {
@@ -39,6 +39,7 @@ function LoginPage() {
 
       setAccessToken(data.data.accessToken);
       setStoredUser(data.data.user);
+      setSessionToken(data.data.sessionToken);
 
       navigate(from, { replace: true });
     } catch (err) {

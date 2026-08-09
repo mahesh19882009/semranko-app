@@ -16,7 +16,6 @@ from app.api.routes.credits import router as credits_router
 from app.api.routes.keyword_metrics import router as keyword_metrics_router
 from app.api.routes.marketing import router as marketing_router
 from app.api.routes.tracked_keywords import router as tracked_keywords_router
-from app.api.routes.teams import router as teams_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.webhooks import router as webhooks_router
 from app.api.routes.settings import router as settings_router
@@ -39,7 +38,6 @@ api_router.include_router(credits_router)
 api_router.include_router(keyword_metrics_router)
 api_router.include_router(marketing_router)
 api_router.include_router(tracked_keywords_router)
-api_router.include_router(teams_router)
 api_router.include_router(reports_router)
 api_router.include_router(webhooks_router)
 api_router.include_router(settings_router)

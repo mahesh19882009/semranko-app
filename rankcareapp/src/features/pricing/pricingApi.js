@@ -118,54 +118,6 @@ export const downloadInvoiceApi = async (invoiceId) => {
   return response.blob();
 };
 
-export const createTeamApi = async (name) => {
-  const response = await apiRequest('/teams/', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  });
-  return response.data || null;
-};
-
-export const listTeamsApi = async () => {
-  const response = await apiRequest('/teams/');
-  return response.data || { teams: [] };
-};
-
-export const getTeamApi = async (teamId) => {
-  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}`);
-  return response.data || null;
-};
-
-export const addTeamMemberApi = async (teamId, email, role = 'Viewer') => {
-  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ email, role }),
-  });
-  return response.data || null;
-};
-
-export const updateTeamMemberRoleApi = async (teamId, userId, role) => {
-  const response = await apiRequest(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ role }),
-  });
-  return response.data || null;
-};
-
-export const removeTeamMemberApi = async (teamId, userId) => {
-  const response = await apiRequest(`/teams/${teamId}/members/${userId}`, {
-    method: 'DELETE',
-  });
-  return response.data || null;
-};
-
-export const deleteTeamApi = async (teamId) => {
-  const response = await apiRequest(`/teams/${teamId}`, {
-    method: 'DELETE',
-  });
-  return response.data || null;
-};
-
 export const exportProjectReportApi = async (projectId, payload) => {
   const response = await apiRequest(`/projects/${projectId}/export-report`, {
     method: 'POST',

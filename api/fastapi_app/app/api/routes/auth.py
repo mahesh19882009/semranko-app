@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from typing import Optional
 
-from app.api.deps import db_session
+from app.api.deps import db_session, get_current_user
+from app.core.session import generate_session_token, invalidate_session, store_session
 from app.schemas.common import ok
 from app.services.auth_service import (
     forgot_password,
@@ -25,6 +27,11 @@ def register(payload: dict = Body(...), db: Session = Depends(db_session)) -> JS
 @router.post("/login")
 def login(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = login_user(db, payload)
+    user_id = result["user"]["id"]
+    invalidate_session(user_id)
+    session_token = generate_session_token()
+    store_session(user_id, session_token)
+    result["sessionToken"] = session_token
     return ok("Login successful", result)
 
 @router.post("/verify-email")
@@ -56,3 +63,12 @@ def forgot_password_route(payload: dict = Body(...), db: Session = Depends(db_se
 def reset_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = reset_password(db, payload)
     return ok("Password reset successfully", result)
+
+
+@router.post("/logout")
+def logout(
+    current_user: dict = Depends(get_current_user),
+    session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+):
+    invalidate_session(current_user["id"])
+    return ok("Logged out")

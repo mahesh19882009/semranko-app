@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.db.models import User, Project, Keyword, AIOTracking
 from app.db.session import SessionLocal
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
-from app.services.team_service import get_team_owner_id
 from app.services.credit_service import deduct_credits
 from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
@@ -71,7 +70,6 @@ def run_monday_tracker() -> dict:
 
         for user_id, kws in user_keyword_groups.items():
             active_count = len(kws)
-            owner_id = get_team_owner_id(db, user_id)
             user = db.scalar(select(User).where(User.id == user_id))
 
             if not user:
@@ -85,7 +83,7 @@ def run_monday_tracker() -> dict:
                 continue
 
             eligible_user_keyword_counts[user_id] = {
-                "owner_id": owner_id,
+                "owner_id": user_id,
                 "count": active_count,
                 "required": required,
             }

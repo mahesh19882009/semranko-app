@@ -10,7 +10,6 @@ from app.db.models import Keyword, Project, RankResult, AIOTracking
 from app.services.keyword_table_service import get_enriched_keywords
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.dataforseo_client import LOCATION_MAP
-from app.services.team_service import get_team_owner_id
 from app.services.credit_service import deduct_credits, refund_credits
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
 from app.services.aio_service import track_aio_for_project, ensure_aio_tracking
@@ -95,8 +94,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             logger.warning("Day-one tracking: all null data returned from DataForSEO for %s. Full row=%s", keyword_text, row)
             return False
 
-        owner_id = get_team_owner_id(db, user_id)
-        deduct_credits(db, owner_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        deduct_credits(db, user_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
 
         try:
             keyword_row = db.scalar(
@@ -107,7 +105,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             db.commit()
         except Exception as exc:
             db.rollback()
-            refund_credits(db, owner_id, 20, f"Refund: day-one tracking failed for {keyword_text}")
+            refund_credits(db, user_id, 20, f"Refund: day-one tracking failed for {keyword_text}")
             raise
 
         return True

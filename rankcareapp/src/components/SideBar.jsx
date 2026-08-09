@@ -21,7 +21,6 @@ const navItems = [
   { to: '/keyword-research', label: 'Keyword Research', icon: faLightbulb },
   { to: '/aio', label: 'AIO Overview', icon: faBrain },
   { to: '/dashboard/billing', label: 'Billing', icon: faFileInvoiceDollar },
-  { to: '/dashboard/team', label: 'Team', icon: faUsers },
   { to: '/dashboard/usage', label: 'Usage', icon: faChartSimple },
   { to: '/dashboard/settings', label: 'Settings', icon: faGear },
 ];

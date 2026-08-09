@@ -209,66 +209,7 @@ export async function deleteScheduledReportApi(reportId) {
   });
 }
 
-export async function createTeamApi(name) {
-  return apiRequest('/teams/create', {
-    method: "POST",
-    body: JSON.stringify({ name }),
-  });
-}
 
-export async function listTeamsApi() {
-  return apiRequest('/teams/list');
-}
-
-export async function getTeamApi(teamId) {
-  return apiRequest(`/teams/${teamId}`);
-}
-
-export async function getTeamMembersApi(teamId) {
-  return apiRequest(`/teams/${teamId}/members`);
-}
-
-export async function inviteTeamMemberApi(teamId, email, role) {
-  return apiRequest(`/teams/${teamId}/invite`, {
-    method: "POST",
-    body: JSON.stringify({ email, role }),
-  });
-}
-
-export async function updateTeamMemberRoleApi(teamId, userId, role) {
-  return apiRequest(`/teams/${teamId}/members/${userId}/role`, {
-    method: "PUT",
-    body: JSON.stringify({ role }),
-  });
-}
-
-export async function removeTeamMemberApi(teamId, userId) {
-  return apiRequest(`/teams/${teamId}/members/${userId}`, {
-    method: "DELETE",
-  });
-}
-
-export async function deleteTeamApi(teamId) {
-  return apiRequest(`/teams/${teamId}`, {
-    method: "DELETE",
-  });
-}
-
-export async function getTeamInvitesApi(teamId) {
-  return apiRequest(`/teams/${teamId}/invites`);
-}
-
-export async function acceptTeamInviteApi(teamId, inviteId) {
-  return apiRequest(`/teams/${teamId}/invites/${inviteId}/accept`, {
-    method: "POST",
-  });
-}
-
-export async function cancelTeamInviteApi(teamId, inviteId) {
-  return apiRequest(`/teams/${teamId}/invites/${inviteId}`, {
-    method: "DELETE",
-  });
-}
 
 export async function getAgencyOverviewApi() {
   return apiRequest('/agency-dashboard/overview');
@@ -287,6 +228,7 @@ function handleUnauthenticated() {
   try {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('user');
+    localStorage.removeItem('sessionToken');
   } catch {
     // ignore storage errors
   }
@@ -297,20 +239,26 @@ function handleUnauthenticated() {
 
 export const apiRequest = async (endpoint, options = {}) => {
   let token = null;
+  let sessionToken = null;
 
   try {
     token = localStorage.getItem('accessToken');
+    sessionToken = localStorage.getItem('sessionToken');
   } catch {
     token = null;
+    sessionToken = null;
   }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(sessionToken ? { 'X-Session-Token': sessionToken } : {}),
+    ...(options.headers || {}),
+  };
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
+    headers,
   });
 
   if (response.status === 401) {
@@ -339,6 +287,26 @@ export const apiRequest = async (endpoint, options = {}) => {
 
   return data;
 };
+
+export async function logoutApi() {
+  const sessionToken = localStorage.getItem('sessionToken');
+  const url = `${API_BASE_URL}/auth/logout`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      'Content-Type': 'application/json',
+      ...(sessionToken ? { 'X-Session-Token': sessionToken } : {}),
+    },
+  });
+
+  if (response.ok) {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('sessionToken');
+  }
+
+  return response.ok;
+}
 
 export async function registerApi(payload) {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {

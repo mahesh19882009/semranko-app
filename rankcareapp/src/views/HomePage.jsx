@@ -40,7 +40,7 @@ function HomePage() {
     { label: "Projects", value: "Multi-project" },
     { label: "Tracking", value: "Weekly rank checks" },
     { label: "Reports", value: "Client-ready workflow" },
-    { label: "Focus", value: "SEO teams and agencies" },
+    { label: "Focus", value: "SEO workflows" },
   ];
 
   return (
@@ -54,7 +54,7 @@ function HomePage() {
                 Track rankings, monitor competitors, and manage SEO work from one place
               </h1>
               <p style={styles.heroText}>
-                RankCare is built for marketers, growing teams, and agencies that want a cleaner way
+                RankCare is built for marketers and agencies that want a cleaner way
                 to manage keyword tracking, reports, audits, and project-level SEO workflows.
               </p>
 

@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from app.api.deps import db_session, get_current_user, verify_user_access_privileges
 from app.schemas.common import ok
-from app.services.team_service import get_team_owner_id
 from app.services.credit_service import deduct_credits, get_credit_balance
 from app.db.models import TrackedKeyword, User, Keyword, Project
 

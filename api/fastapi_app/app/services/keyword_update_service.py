@@ -22,8 +22,6 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Keyword, Project
 from app.services.credit_service import deduct_credits
-from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
-from app.services.team_service import get_team_owner_id
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -58,9 +56,8 @@ def refresh_keyword_data(
     if not project:
         return {"success": False, "error": "PROJECT_NOT_FOUND"}
 
-    owner_id = get_team_owner_id(db, user_id)
     from app.db.models import User
-    owner = db.scalar(select(User).where(User.id == owner_id))
+    owner = db.scalar(select(User).where(User.id == user_id))
     current_balance = float(getattr(owner, "creditBalance", 0.0) or 0.0) if owner else 0.0
 
     query = select(Keyword).where(
@@ -117,7 +114,7 @@ def refresh_keyword_data(
     for kw in batch:
         row = row_map.get(kw.keyword.lower().strip())
         if row:
-            _update_keyword_from_data(kw, row)
+            _update_keyword_from_data(db, kw, row)
             updated += 1
         else:
             failed += 1
@@ -125,7 +122,7 @@ def refresh_keyword_data(
     if updated:
         deduct_credits(
             db,
-            owner_id,
+            user_id,
             float(updated * CREDIT_COST_PER_KEYWORD),
             "ON_DEMAND_REFRESH",
             f"Keyword refresh: {updated} keyword(s) for project {project_id}",

@@ -196,7 +196,7 @@ export default function PricingPage() {
         {/* Pricing Header */}
         <div className="mx-auto max-w-3xl text-center mt-12">
           <h1 className="text-4xl font-bold tracking-tight text-slate-900 md:text-5xl">
-            Simple plans for growing SEO teams
+            Simple plans for growing SEO workflows
           </h1>
           <p className="mt-4 text-lg text-slate-600">
             Start with a 7-day free trial and choose the plan that fits your SEO workflow.

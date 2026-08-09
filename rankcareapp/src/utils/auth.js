@@ -1,6 +1,7 @@
 'use client'
 const ACCESS_TOKEN_KEY = "accessToken";
 const USER_KEY = "user";
+const SESSION_TOKEN_KEY = "sessionToken";
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -42,4 +43,21 @@ export function clearStoredUser() {
 export function logoutUser() {
   removeAccessToken();
   clearStoredUser();
+  clearSessionToken();
+}
+
+export function getSessionToken() {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionToken(token) {
+  localStorage.setItem(SESSION_TOKEN_KEY, token);
+}
+
+export function clearSessionToken() {
+  localStorage.removeItem(SESSION_TOKEN_KEY);
 }

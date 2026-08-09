@@ -273,8 +273,7 @@ async def download_invoice(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(db_session),
 ):
-    from app.services.team_service import get_team_owner_id
-    owner_id = get_team_owner_id(db, current_user['id'])
+    owner_id = current_user['id']
     
     logger.info(f"[invoice-download] Looking for invoice_id: {invoice_id} for user: {current_user['id']}")
     

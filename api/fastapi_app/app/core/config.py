@@ -103,7 +103,6 @@ class Settings(BaseSettings):
         "extra_project": 10,
         "tracked_keyword": 20,
         "download_report": 10,
-        "team_member": 10,
     }
 
     PLAN_KEYWORD_LIMITS: dict = {

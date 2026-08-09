@@ -13,11 +13,11 @@ settings = get_settings()
 
 def _get_plan_defaults(plan_key: str) -> dict:
     base = {
-        "free_trial": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 0, "monthlyCredits": 100, "keywordLimit": 5, "competitorSpyLimit": 5, "competitorsPerProject": 3, "reportsPerMonth": 2, "teamMembers": 1, "weeklyTrackingEnabled": False},
-        "starter": {"monthlyPrice": 999, "yearlyPrice": 10789, "domain_limit": 1, "monthlyCredits": 6000, "keywordLimit": 100, "competitorSpyLimit": 50, "competitorsPerProject": 3, "reportsPerMonth": 5, "teamMembers": 2, "weeklyTrackingEnabled": True},
-        "pro": {"monthlyPrice": 3999, "yearlyPrice": 43189, "domain_limit": 5, "monthlyCredits": 30000, "keywordLimit": 500, "competitorSpyLimit": 200, "competitorsPerProject": 10, "reportsPerMonth": 10, "teamMembers": 5, "weeklyTrackingEnabled": True},
-        "agency": {"monthlyPrice": 9999, "yearlyPrice": 107989, "domain_limit": 20, "monthlyCredits": 80000, "keywordLimit": 1500, "competitorSpyLimit": 500, "competitorsPerProject": 20, "reportsPerMonth": 50, "teamMembers": 10, "weeklyTrackingEnabled": True},
-        "enterprise": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 999, "monthlyCredits": 999999, "keywordLimit": 999999, "competitorSpyLimit": 5000, "competitorsPerProject": 999, "reportsPerMonth": 999, "teamMembers": 999, "weeklyTrackingEnabled": True},
+        "free_trial": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 0, "monthlyCredits": 100, "keywordLimit": 5, "competitorSpyLimit": 5, "competitorsPerProject": 3, "reportsPerMonth": 2, "weeklyTrackingEnabled": False},
+        "starter": {"monthlyPrice": 999, "yearlyPrice": 10789, "domain_limit": 1, "monthlyCredits": 6000, "keywordLimit": 100, "competitorSpyLimit": 50, "competitorsPerProject": 3, "reportsPerMonth": 5, "weeklyTrackingEnabled": True},
+        "pro": {"monthlyPrice": 3999, "yearlyPrice": 43189, "domain_limit": 5, "monthlyCredits": 30000, "keywordLimit": 500, "competitorSpyLimit": 200, "competitorsPerProject": 10, "reportsPerMonth": 10, "weeklyTrackingEnabled": True},
+        "agency": {"monthlyPrice": 9999, "yearlyPrice": 107989, "domain_limit": 20, "monthlyCredits": 80000, "keywordLimit": 1500, "competitorSpyLimit": 500, "competitorsPerProject": 20, "reportsPerMonth": 50, "weeklyTrackingEnabled": True},
+        "enterprise": {"monthlyPrice": 0, "yearlyPrice": 0, "domain_limit": 999, "monthlyCredits": 999999, "keywordLimit": 999999, "competitorSpyLimit": 5000, "competitorsPerProject": 999, "reportsPerMonth": 999, "weeklyTrackingEnabled": True},
     }
     return base.get(plan_key, base["free_trial"])
 
@@ -75,7 +75,7 @@ PLAN_DEFINITIONS = {
         "name": "Enterprise",
         "monthlyPrice": 0,
         "yearlyPrice": 0,
-        "description": "Custom bulk allocation for large teams. Contact sales for pricing.",
+        "description": "Custom bulk allocation for large accounts. Contact sales for pricing.",
         "highlighted": False,
         "cta": "Contact Sales",
         "refreshFrequency": "weekly",
@@ -167,7 +167,6 @@ def get_user_plan_limits_from_plan(plan: dict) -> dict:
     limit_keys = [
         "competitorsPerProject",
         "reportsPerMonth",
-        "teamMembers",
         "monthlyCredits",
         "competitorSpyLimit",
         "weeklyTrackingEnabled",
@@ -422,7 +421,6 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "limits": {
             "competitorsPerProject": limits["competitorsPerProject"],
             "reportsPerMonth": limits["reportsPerMonth"],
-            "teamMembers": limits["teamMembers"],
             "keywordResearchCreditsPerMonth": limits.get("keywordResearchCreditsPerMonth", 0),
             "monthlyCredits": limits.get("monthlyCredits", 0),
             "domain_limit": plan_def.get("domain_limit", 0),

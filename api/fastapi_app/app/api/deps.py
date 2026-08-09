@@ -5,11 +5,16 @@ from typing import Optional
 
 from app.core.errors import ApiError
 from app.core.security import decode_access_token
+from app.core.session import validate_session
 from app.db.session import get_db
 from app.db.models import User
 
 
-def get_current_user(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)) -> dict:
+def get_current_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+    session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
+) -> dict:
     token = None
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split(" ", 1)[1]
@@ -26,6 +31,15 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
     if not user_id:
         raise ApiError(401, "Invalid token")
 
+    if not session_token:
+        raise ApiError(401, "Session expired or invalid")
+
+    try:
+        if not validate_session(user_id, session_token):
+            raise ApiError(401, "Session expired or invalid")
+    except Exception:
+        raise ApiError(401, "Session expired or invalid")
+
     user = db.scalar(select(User).where(User.id == user_id))
     if user:
         payload["selectedPlan"] = user.selectedPlan
@@ -39,12 +53,6 @@ def get_current_user(authorization: Optional[str] = Header(default=None), db: Se
 
 def db_session(db: Session = Depends(get_db)) -> Session:
     return db
-
-
-def require_team_action(db: Session = Depends(db_session), current_user: dict = Depends(get_current_user)):
-    from app.services.team_service import get_team_owner_id
-    owner_id = get_team_owner_id(db, current_user["id"])
-    return {"db": db, "owner_id": owner_id, "user_id": current_user["id"]}
 
 
 def verify_user_access_privileges(
