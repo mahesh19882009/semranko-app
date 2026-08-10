@@ -156,32 +156,6 @@ def queue_competitor_tracking_for_project(db: Session, project_id: str) -> dict 
     }
 
 
-def queue_aio_tracking_for_project(db: Session, project_id: str) -> dict | None:
-    project = db.scalar(select(Project).where(Project.id == project_id))
-    if not project:
-        return None
-
-    keywords = db.scalars(select(Keyword).where(Keyword.projectId == project_id)).all()
-    if not keywords:
-        return None
-
-    queue = get_rank_check_queue()
-    payload_keywords = [model_to_dict(keyword) for keyword in keywords]
-    job = queue.enqueue(
-        "fastapi_app.app.workers.tasks.process_aio_tracking_job",
-        project.id,
-        payload_keywords,
-        job_timeout="600",
-    )
-
-    return {
-        "queued": True,
-        "jobId": job.id,
-        "projectId": project.id,
-        "keywordCount": len(payload_keywords),
-    }
-
-
 def queue_labs_metrics_refresh_for_project(db: Session, project_id: str) -> dict | None:
     project = db.scalar(select(Project).where(Project.id == project_id))
     if not project:
@@ -213,7 +187,6 @@ def queue_weekly_tracking_for_all_projects(db: Session) -> dict:
     queued_projects = 0
     rank_jobs = []
     competitor_jobs = []
-    aio_jobs = []
     labs_jobs = []
 
     for project in projects:
@@ -226,10 +199,6 @@ def queue_weekly_tracking_for_all_projects(db: Session) -> dict:
         if competitor_result:
             competitor_jobs.append(competitor_result["jobId"])
 
-        aio_result = queue_aio_tracking_for_project(db, project.id)
-        if aio_result:
-            aio_jobs.append(aio_result["jobId"])
-
         labs_result = queue_labs_metrics_refresh_for_project(db, project.id)
         if labs_result:
             labs_jobs.append(labs_result["jobId"])
@@ -239,6 +208,5 @@ def queue_weekly_tracking_for_all_projects(db: Session) -> dict:
         "projectsQueued": queued_projects,
         "rankJobIds": rank_jobs,
         "competitorJobIds": competitor_jobs,
-        "aioJobIds": aio_jobs,
         "labsJobIds": labs_jobs,
     }

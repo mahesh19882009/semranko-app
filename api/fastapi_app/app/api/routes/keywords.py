@@ -6,13 +6,12 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
 from app.api.deps import db_session, get_current_user
-from app.db.models import Keyword, Project, RankResult, AIOTracking
+from app.db.models import Keyword, Project, RankResult
 from app.services.keyword_table_service import get_enriched_keywords
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.dataforseo_client import LOCATION_MAP
 from app.services.credit_service import deduct_credits, refund_credits
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
-from app.services.aio_service import track_aio_for_project, ensure_aio_tracking
 from app.core.config import get_settings
 from app.core.errors import ApiError
 
@@ -36,9 +35,11 @@ def _calculate_visibility(position):
 
 def _update_keyword_from_data(db: Session, keyword_row: Keyword, data: dict) -> None:
     updates = {}
-    for field in ["volume", "kd", "cpc", "competition", "backlinks", "referring_domains", "intent", "position", "ai_badge", "check_url"]:
+    for field in ["volume", "kd", "cpc", "competition", "backlinks", "referring_domains", "intent", "position", "ai_badge", "ai_description", "check_url"]:
         value = data.get(field)
         if value is not None:
+            if field == "ai_description" and isinstance(value, str):
+                value = re.sub(r'\.{3}\s*Read more$', '', value.strip()) or None
             updates[field] = value
 
     position = data.get("position")
@@ -51,11 +52,7 @@ def _update_keyword_from_data(db: Session, keyword_row: Keyword, data: dict) -> 
             setattr(keyword_row, field, value)
         keyword_row.updatedAt = datetime.utcnow()
     else:
-        logger.info("No valid fields to update for keyword %s from data: %s", keyword_row.keyword, data)
-
-    ai_badge = data.get("ai_badge")
-    if ai_badge:
-        ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, ai_badge)
+        logger.warning("No fields to update for keyword %s from data keys: %s", keyword_row.keyword, list(data.keys()))
 
 
 def _is_valid_keyword_data(data: dict) -> bool:
@@ -74,6 +71,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
     Returns True if data was fetched from API, False if no data fetched.
     Raises on failure so callers can return an error response.
     """
+    logger.info("DAY_ONE_TRACKING START: keyword=%s location=%s domain=%s", keyword_text, location_code, domain)
     try:
         helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
         rows = helper.fetch_cheapest_dashboard_data(
@@ -89,6 +87,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
 
         row = rows[0]
         logger.info("Day-one tracking raw data for %s: %s", keyword_text, row)
+        logger.info("Day-one tracking ai_description for %s: %s", keyword_text, row.get("ai_description"))
 
         if not _is_valid_keyword_data(row):
             logger.warning("Day-one tracking: all null data returned from DataForSEO for %s. Full row=%s", keyword_text, row)
@@ -209,8 +208,10 @@ def create_keyword(
 
     tracking_error = None
     try:
+        logger.info("CREATE_KEYWORD: calling _apply_day_one_tracking for keyword=%s", normalized_keyword)
         _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain)
         db.refresh(keyword)
+        logger.info("CREATE_KEYWORD: day-one tracking completed for keyword=%s", normalized_keyword)
     except Exception as exc:
         db.rollback()
         tracking_error = str(exc)

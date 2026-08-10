@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
@@ -6,11 +7,10 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from app.db.models import User, Project, Keyword, AIOTracking
+from app.db.models import User, Project, Keyword
 from app.db.session import SessionLocal
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.services.credit_service import deduct_credits
-from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -131,8 +131,10 @@ def run_monday_tracker() -> dict:
                         keyword_row.intent = row.get("intent")
                         keyword_row.position = row.get("position")
                         keyword_row.ai_badge = row.get("ai_badge")
-                        if row.get("ai_badge") and keyword_row.projectId:
-                            ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, row.get("ai_badge"))
+                        ai_description = row.get("ai_description")
+                        if isinstance(ai_description, str):
+                            ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
+                        keyword_row.ai_description = ai_description
                         keyword_row.updatedAt = now
                         db.add(keyword_row)
                         updated += 1

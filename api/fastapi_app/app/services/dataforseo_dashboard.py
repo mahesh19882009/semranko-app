@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 
 import requests
@@ -138,6 +139,7 @@ class DataForSeoDashboardHelper:
                 detected_position = None
                 has_aio_badge = None
                 check_url = None
+                ai_description = None
 
                 for item in serp_items:
                     item_type = item.get("type", "")
@@ -162,12 +164,35 @@ class DataForSeoDashboardHelper:
                     if item_type == "ai_overview":
                         if item.get("asynchronous_ai_overview") is True:
                             has_aio_badge = "AIO"
+                        logger.info("AIO item fields for '%s': %s", keyword_text, list(item.keys()))
+                        ai_description = item.get("description") or item.get("text") or item.get("content") or ai_description
+                        if not ai_description and item.get("markdown"):
+                            ai_description = item.get("markdown")
+                        nested_items = item.get("items") or []
+                        if isinstance(nested_items, list):
+                            for nested in nested_items:
+                                if not ai_description and nested and nested.get("description"):
+                                    ai_description = nested.get("description")
+                                if not ai_description and nested and nested.get("text"):
+                                    ai_description = nested.get("text")
                         references = item.get("ai_overview_reference", []) or item.get("references", []) or []
                         if isinstance(references, list):
                             for ref in references:
                                 if ref and ref.get("url") and target_domain:
                                     if target_domain in ref.get("url", "").lower():
                                         has_aio_badge = "AIO"
+                        logger.info("AIO extracted for '%s': has_aio=%s description=%s", keyword_text, has_aio_badge, ai_description)
+
+                    if item_type == "organic" and item.get("url"):
+                        item_domain = (item.get("domain") or "").lower()
+                        item_url = item.get("url") or ""
+                        if target_domain and (target_domain.lower() in item_url.lower() or target_domain.lower() in item_domain):
+                            if has_aio_badge != "AIO":
+                                has_aio_badge = "AIO"
+                            if not ai_description and item.get("description"):
+                                ai_description = item.get("description")
+                            if not check_url:
+                                check_url = item_url
 
                 item_groups = first_block.get("item_groups", []) or []
                 for group in item_groups:
@@ -184,6 +209,7 @@ class DataForSeoDashboardHelper:
                 serp_map[keyword_text] = {
                     "position": detected_position,
                     "ai_badge": has_aio_badge,
+                    "ai_description": ai_description,
                     "check_url": check_url,
                 }
                 logger.info("DataForSEO SERP detection for '%s': position=%s, aio=%s, check_url=%s",

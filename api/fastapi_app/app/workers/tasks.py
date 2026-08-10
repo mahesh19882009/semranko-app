@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 import requests
 from sqlalchemy import delete, select
-from app.db.models import RankResult, CompetitorRank, AIOTracking, TrackedKeyword, Keyword
+from app.db.models import RankResult, CompetitorRank, TrackedKeyword, Keyword
 from app.db.session import SessionLocal
 from app.core.config import get_settings
 
@@ -231,82 +231,5 @@ def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: li
         db.close()
 
 
-def process_aio_tracking_job(project_id: str, keywords: list[dict]) -> dict:
-    if not project_id or not isinstance(keywords, list):
-        raise ValueError("Invalid AIO job payload")
 
-    from app.services.dataforseo_client import DataForSEOClient
-
-    db = SessionLocal()
-    try:
-        location = keywords[0].get("location", "India") if keywords else "India"
-        serp_map = DataForSEOClient.get_serp_data_batch(keywords, location)
-        tracked = 0
-
-        for keyword in keywords:
-            keyword_text = keyword.get("keyword", "")
-            serp_data = serp_map.get(keyword_text)
-            if not serp_data:
-                continue
-
-            has_ai_overview = bool(serp_data.get("ai_overview"))
-            ai_overview_text = None
-            ai_overview_title = None
-            ai_overview_markdown = None
-            references = None
-            images = None
-            ai_overview_type = None
-            cited_domains = {}
-
-            if serp_data.get("ai_overview"):
-                ai_item = serp_data["ai_overview"]
-                ai_overview_text = ai_item.get("description") or ai_item.get("text") or ai_item.get("content")
-                ai_overview_title = ai_item.get("title")
-                ai_overview_markdown = ai_item.get("markdown")
-                references = ai_item.get("references") or ai_item.get("ai_overview_reference") or None
-                images = ai_item.get("images") or None
-                ai_overview_type = ai_item.get("type") or "ai_overview"
-                cited_domains = serp_data.get("cited_domains", {})
-
-            existing = db.scalar(
-                select(AIOTracking).where(
-                    AIOTracking.projectId == project_id,
-                    AIOTracking.keywordText == keyword_text,
-                )
-            )
-            if existing:
-                existing.hasAIOverview = has_ai_overview
-                existing.aiOverviewText = ai_overview_text
-                existing.aiOverviewTitle = ai_overview_title
-                existing.aiOverviewMarkdown = ai_overview_markdown
-                existing.references = references
-                existing.images = images
-                existing.aiOverviewType = ai_overview_type
-                existing.citedDomains = cited_domains or None
-                from datetime import datetime as dt
-                existing.checkedAt = dt.utcnow()
-            else:
-                db.add(
-                    AIOTracking(
-                        projectId=project_id,
-                        keywordText=keyword_text,
-                        hasAIOverview=has_ai_overview,
-                        aiOverviewText=ai_overview_text,
-                        aiOverviewTitle=ai_overview_title,
-                        aiOverviewMarkdown=ai_overview_markdown,
-                        references=references,
-                        images=images,
-                        aiOverviewType=ai_overview_type,
-                        citedDomains=cited_domains or None,
-                    )
-                )
-            tracked += 1
-
-        db.commit()
-        return {"tracked": tracked}
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
 

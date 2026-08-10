@@ -6,9 +6,7 @@ import {
   faFolderOpen,
   faMagnifyingGlassChart,
   faLightbulb,
-  faBrain,
   faFileInvoiceDollar,
-  faUsers,
   faChartSimple,
   faGear,
 } from '@fortawesome/free-solid-svg-icons';
@@ -19,7 +17,6 @@ const navItems = [
   { to: '/projects', label: 'Projects', icon: faFolderOpen },
   { to: '/keywords', label: 'Keywords', icon: faMagnifyingGlassChart },
   { to: '/keyword-research', label: 'Keyword Research', icon: faLightbulb },
-  { to: '/aio', label: 'AIO Overview', icon: faBrain },
   { to: '/dashboard/billing', label: 'Billing', icon: faFileInvoiceDollar },
   { to: '/dashboard/usage', label: 'Usage', icon: faChartSimple },
   { to: '/dashboard/settings', label: 'Settings', icon: faGear },

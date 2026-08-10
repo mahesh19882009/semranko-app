@@ -107,28 +107,6 @@ class CompetitorRank(Base):
     )
 
 
-class AIOTracking(Base):
-    __tablename__ = "AIOTracking"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
-    keywordText: Mapped[str] = mapped_column(String, nullable=False)
-    hasAIOverview: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    aiOverviewText: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    aiOverviewTitle: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    aiOverviewMarkdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    references: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    images: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    aiOverviewType: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    citedDomains: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    checkedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    __table_args__ = (
-        Index("AIOTracking_projectId_idx", "projectId"),
-        Index("AIOTracking_projectId_keyword_key", "projectId", "keywordText", unique=True),
-    )
-
-
 class Project(Base):
     __tablename__ = "Project"
 
@@ -173,6 +151,7 @@ class Keyword(Base):
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    ai_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     check_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     visibility: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -380,31 +359,6 @@ class DataForSEOCost(Base):
         Index("DataForSEOCost_userId_idx", "userId"),
         Index("DataForSEOCost_createdAt_idx", "createdAt"),
         Index("DataForSEOCost_taskType_idx", "taskType"),
-    )
-
-
-class KeywordCache(Base):
-    __tablename__ = "KeywordCache"
-
-    keyword: Mapped[str] = mapped_column(String, primary_key=True)
-    location: Mapped[str] = mapped_column(String, primary_key=True)
-    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    kd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    cpc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    competition: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    check_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    lastApiCallAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)  # Track when API was last called for this keyword
-    updatedAt: Mapped[datetime] = mapped_column(
-        DateTime(timezone=False),
-        nullable=False,
-        default=func.now(),
-        server_default=func.now(),
-        onupdate=func.now(),
     )
 
 

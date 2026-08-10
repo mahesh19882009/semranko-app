@@ -19,16 +19,30 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('AIOTracking', sa.Column('aiOverviewTitle', sa.String(), nullable=True))
-    op.add_column('AIOTracking', sa.Column('aiOverviewMarkdown', sa.Text(), nullable=True))
-    op.add_column('AIOTracking', sa.Column('references', postgresql.JSON(astext_type=sa.Text()), nullable=True))
-    op.add_column('AIOTracking', sa.Column('images', postgresql.JSON(astext_type=sa.Text()), nullable=True))
-    op.add_column('AIOTracking', sa.Column('aiOverviewType', sa.String(), nullable=True))
+    from sqlalchemy import inspect as sa_inspect, text
+    from sqlalchemy.engine import Engine
+    engine: Engine = op.get_bind()
+    inspector = sa_inspect(engine)
+    table_names = [name.lower() for name in inspector.get_table_names()]
 
-    op.add_column('RankResult', sa.Column('etv', sa.Float(), nullable=True))
-    op.create_index('RankResult_projectId_keywordId_checkedAt_idx', 'RankResult', ['projectId', 'keywordId', 'checkedAt'])
+    if "aiotracking" in table_names:
+        op.add_column('AIOTracking', sa.Column('aiOverviewTitle', sa.String(), nullable=True))
+        op.add_column('AIOTracking', sa.Column('aiOverviewMarkdown', sa.Text(), nullable=True))
+        op.add_column('AIOTracking', sa.Column('references', postgresql.JSON(astext_type=sa.Text()), nullable=True))
+        op.add_column('AIOTracking', sa.Column('images', postgresql.JSON(astext_type=sa.Text()), nullable=True))
+        op.add_column('AIOTracking', sa.Column('aiOverviewType', sa.String(), nullable=True))
 
-    op.add_column('Keyword', sa.Column('visibility', sa.Float(), nullable=True))
+    rankresult_columns = [c["name"] for c in inspector.get_columns("RankResult")]
+    if "etv" not in rankresult_columns:
+        op.add_column('RankResult', sa.Column('etv', sa.Float(), nullable=True))
+
+    rankresult_indexes = [c["name"] for c in inspector.get_indexes("RankResult")]
+    if "RankResult_projectId_keywordId_checkedAt_idx" not in rankresult_indexes:
+        op.create_index('RankResult_projectId_keywordId_checkedAt_idx', 'RankResult', ['projectId', 'keywordId', 'checkedAt'])
+
+    keyword_columns = [c["name"] for c in inspector.get_columns("Keyword")]
+    if "visibility" not in keyword_columns:
+        op.add_column('Keyword', sa.Column('visibility', sa.Float(), nullable=True))
 
 
 def downgrade() -> None:

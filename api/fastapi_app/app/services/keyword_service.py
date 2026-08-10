@@ -1,17 +1,17 @@
 import logging
 import math
+import re
 from datetime import datetime, timedelta
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
-from app.db.models import Keyword, Project, AIOTracking
+from app.db.models import Keyword, Project
 from app.services.plan_service import get_user_or_404
 from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
 from app.services.credit_service import deduct_credits
 from app.utils.serializers import model_to_dict
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
-from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -28,12 +28,12 @@ def _update_keyword_from_data(db: Session, keyword_row: Keyword, data: dict) -> 
     keyword_row.intent = data.get("intent")
     keyword_row.position = data.get("position")
     keyword_row.ai_badge = data.get("ai_badge")
+    ai_description = data.get("ai_description")
+    if isinstance(ai_description, str):
+        ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
+    keyword_row.ai_description = ai_description
     keyword_row.check_url = data.get("check_url")
     keyword_row.updatedAt = datetime.utcnow()
-
-    ai_badge = data.get("ai_badge")
-    if ai_badge:
-        ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, ai_badge)
 
 
 def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str) -> bool:

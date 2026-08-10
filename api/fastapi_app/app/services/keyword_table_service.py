@@ -1,7 +1,7 @@
 import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from app.db.models import AIOTracking, Keyword, RankResult, TrackedKeyword
+from app.db.models import Keyword, RankResult
 from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
@@ -29,37 +29,11 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "checkedAt": rank[2].isoformat() if rank and rank[2] else None,
         }
 
-    aio_map = {}
-    tracks = db.scalars(
-        select(AIOTracking).where(AIOTracking.projectId == project_id)
-    ).all()
-    for track in tracks:
-        aio_map[track.keywordText] = {
-            "hasAIOverview": track.hasAIOverview,
-            "checkedAt": track.checkedAt.isoformat() if track.checkedAt else None,
-        }
-
-    tracked_aio_map = {}
-    tracked_rows = db.scalars(
-        select(TrackedKeyword).where(TrackedKeyword.userId == user_id, TrackedKeyword.isActive == True)
-    ).all()
-    for row in tracked_rows:
-        tracked_aio_map[row.keyword] = row.trackAio
-
     results = []
     for kw in keywords:
         keyword_text = kw.keyword
         rank_info = latest_ranks.get(keyword_text, {})
-        aio_info = aio_map.get(keyword_text, {})
-        track_aio = tracked_aio_map.get(keyword_text, False)
-        has_ai_overview = aio_info.get("hasAIOverview", False) or kw.ai_badge == "AIO"
-
-        if has_ai_overview:
-            ai = "AIO"
-        elif track_aio:
-            ai = "Tracking"
-        else:
-            ai = "Off"
+        has_ai_overview = kw.ai_badge == "AIO"
 
         results.append({
             "id": kw.id,
@@ -77,10 +51,9 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "url": rank_info.get("url"),
             "check_url": kw.check_url,
             "rankCheckedAt": rank_info.get("checkedAt"),
-            "ai": ai,
+            "ai": "AIO" if has_ai_overview else "Off",
             "hasAIOverview": has_ai_overview,
-            "aioCheckedAt": aio_info.get("checkedAt"),
-            "trackAio": track_aio,
+            "ai_description": kw.ai_description,
             "visibility": kw.visibility,
             "createdAt": kw.createdAt.isoformat() if getattr(kw, "createdAt", None) else None,
         })

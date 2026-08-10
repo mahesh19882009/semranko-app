@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import GST_RATE, get_settings
 from app.core.errors import ApiError
-from app.db.models import Competitor, Keyword, KeywordList, Project, Subscription, User, AIOTracking, KeywordListItem
+from app.db.models import Competitor, Keyword, KeywordList, Project, Subscription, User, KeywordListItem
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

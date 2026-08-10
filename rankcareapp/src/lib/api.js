@@ -112,24 +112,12 @@ export async function onboardProjectApi({ name, domain, locationCode, location =
   });
 }
 
-export async function getAioDetailApi(projectId, keywordText) {
-  return apiRequest(`/aio/${projectId}/keyword/${encodeURIComponent(keywordText)}`);
-}
-
 export async function getKeywordHistoryApi(projectId, keywordId) {
   return apiRequest(`/keywords/${projectId}/history/${keywordId}`);
 }
 
 export async function getWeeklyComparisonApi(projectId) {
   return apiRequest(`/keywords/${projectId}/weekly-comparison`);
-}
-
-export async function getAioDashboardApi(projectId) {
-  return apiRequest(`/aio/${projectId}/dashboard`);
-}
-
-export async function getAioCitationsApi(projectId) {
-  return apiRequest(`/aio/${projectId}/citations`);
 }
 
 export async function getLHFOpportunitiesApi(projectId, limit = 20) {

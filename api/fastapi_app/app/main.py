@@ -94,6 +94,8 @@ def on_startup() -> None:
                 keyword_alters.append('ADD COLUMN IF NOT EXISTS "position" INTEGER')
             if "ai_badge" not in columns:
                 keyword_alters.append('ADD COLUMN IF NOT EXISTS "ai_badge" VARCHAR')
+            if "ai_description" not in columns:
+                keyword_alters.append('ADD COLUMN IF NOT EXISTS "ai_description" TEXT')
             if "check_url" not in columns:
                 keyword_alters.append('ADD COLUMN IF NOT EXISTS "check_url" VARCHAR')
             if "visibility" not in columns:
@@ -131,27 +133,6 @@ def on_startup() -> None:
                 except Exception as exc:
                     logger.error("Failed to create RankResult history index: %s", exc)
 
-        if "aiotracking" in table_names:
-            columns = [c["name"] for c in inspector.get_columns("AIOTracking")]
-            aio_alters = []
-            if "aiOverviewTitle" not in columns:
-                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewTitle" VARCHAR')
-            if "aiOverviewMarkdown" not in columns:
-                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewMarkdown" TEXT')
-            if "references" not in columns:
-                aio_alters.append('ADD COLUMN IF NOT EXISTS "references" JSON')
-            if "images" not in columns:
-                aio_alters.append('ADD COLUMN IF NOT EXISTS "images" JSON')
-            if "aiOverviewType" not in columns:
-                aio_alters.append('ADD COLUMN IF NOT EXISTS "aiOverviewType" VARCHAR')
-            if aio_alters:
-                try:
-                    with engine.connect() as conn:
-                        conn.execute(text(f'ALTER TABLE "AIOTracking" {", ".join(aio_alters)}'))
-                        conn.commit()
-                    logger.info("Added missing AIOTracking columns: %s", ", ".join(aio_alters))
-                except Exception as exc:
-                    logger.error("Failed to add AIOTracking columns: %s", exc)
     except Exception as exc:
         logger.error(f"Startup migration failed: {exc}")
 

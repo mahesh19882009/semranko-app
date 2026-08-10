@@ -1,13 +1,13 @@
 import logging
 import math
+import re
 from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
-from app.db.models import Keyword, Project, AIOTracking
+from app.db.models import Keyword, Project
 from app.services.cache_service import increment_usage
 from app.services.credit_service import deduct_credits, refund_credits
 from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
-from app.services.aio_service import ensure_aio_tracking
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,10 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
                     kw.intent = row.get("intent")
                     kw.position = row.get("position")
                     kw.ai_badge = row.get("ai_badge")
-                    if row.get("ai_badge") and kw.projectId:
-                        ensure_aio_tracking(db, kw.projectId, kw.keyword, row.get("ai_badge"))
+                    ai_description = row.get("ai_description")
+                    if isinstance(ai_description, str):
+                        ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
+                    kw.ai_description = ai_description
                     fetched_ok_count += 1
 
         if fetched_ok_count:

@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
@@ -8,11 +9,10 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.services.dataforseo_client import LOCATION_MAP
 from app.services.payment_service import razorpay_client
-from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword, AIOTracking
+from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword
 from app.db.session import SessionLocal
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ID_TO_KEY
 from app.services import email_service
-from app.services.aio_service import ensure_aio_tracking
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -308,8 +308,10 @@ async def dataforseo_webhook(request: Request):
                 keyword_row.intent = search_intent
                 keyword_row.position = position_int
                 keyword_row.ai_badge = has_aio_badge
-                if has_aio_badge and keyword_row.projectId:
-                    ensure_aio_tracking(db, keyword_row.projectId, keyword_row.keyword, has_aio_badge)
+                ai_description = row.get("ai_description")
+                if isinstance(ai_description, str):
+                    ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
+                keyword_row.ai_description = ai_description
                 keyword_row.updatedAt = datetime.utcnow()
 
             updated_count += 1

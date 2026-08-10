@@ -5,6 +5,9 @@ import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import { InputText } from 'primereact/inputtext';
 import { Dropdown } from 'primereact/dropdown';
+import 'tippy.js/dist/tippy.css';
+import tippy from 'tippy.js';
+
 import Button from '../components/ui/Button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -14,7 +17,6 @@ import {
   faPlus,
   faTrash,
   faRefresh,
-  faStars,
   faWandSparkles,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from '../components/ConfirmModal';
@@ -29,7 +31,7 @@ import {
   clearKeywordMessage,
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
-import { getAioDetailApi, apiRequest } from '../lib/api';
+import { apiRequest } from '../lib/api';
 
 const rankOptions = [
   { label: 'All Ranks', value: 'all' },
@@ -37,6 +39,19 @@ const rankOptions = [
   { label: 'Top 10', value: 'top10' },
   { label: 'Not Ranking', value: 'not-ranking' },
 ];
+
+function TippyTooltip({ content, children, placement = 'top', ...rest }) {
+  const ref = useRef(null);
+  const restRef = useRef(rest);
+  restRef.current = rest;
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const instance = tippy(ref.current, { content, placement, ...restRef.current });
+    return () => instance.destroy();
+  }, [content, placement]);
+  return <span ref={ref}>{children}</span>;
+}
 
 function KeywordsPage() {
   const dispatch = useDispatch();
@@ -88,11 +103,6 @@ function KeywordsPage() {
     icon: null,
     onConfirm: null,
   });
-  const [aioModalOpen, setAioModalOpen] = useState(false);
-  const [aioModalKeyword, setAioModalKeyword] = useState(null);
-  const [aioModalData, setAioModalData] = useState(null);
-  const [aioModalLoading, setAioModalLoading] = useState(false);
-  const [aioModalError, setAioModalError] = useState('');
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -121,7 +131,7 @@ function KeywordsPage() {
   useEffect(() => {
     const fetchSchedule = async () => {
       try {
-      const json = await apiRequest('/rankings/schedule');
+        const json = await apiRequest('/rankings/schedule');
         if (res.ok && json.success) {
           setNextRefresh(json.data?.nextRunAt);
         }
@@ -152,6 +162,10 @@ function KeywordsPage() {
     if (rankFilter === 'not-ranking') rows = rows.filter((r) => r.position === null || r.position === undefined);
     return rows;
   }, [tableData, globalFilter, rankFilter]);
+
+  const aioCount = useMemo(() => {
+    return tableData.filter((r) => r.hasAIOverview).length;
+  }, [tableData]);
 
   const parseKeywords = (text) => {
     return text
@@ -293,60 +307,43 @@ function KeywordsPage() {
   };
 
   const positionBodyTemplate = (rowData) => {
-    return rowData.position ? `#${rowData.position}` : '—';
+    if (!rowData.position) return <span title="Not ranking">—</span>;
+    return <span title={`Ranked at position #${rowData.position}`}>#{rowData.position}</span>;
   };
 
   const actionBodyTemplate = (rowData) => {
     return (
-      <Button variant="danger" onClick={() => handleDeleteOne(rowData)}>
+      <Button variant="danger" onClick={() => handleDeleteOne(rowData)} title="Delete keyword">
         <FontAwesomeIcon icon={faTrash} />
       </Button>
     );
   };
 
-  const handleAioBadgeClick = async (rowData) => {
-    if (!rowData.hasAIOverview) return;
-    setAioModalKeyword(rowData);
-    setAioModalOpen(true);
-    setAioModalLoading(true);
-    setAioModalError('');
-    setAioModalData(null);
-    try {
-      const result = await getAioDetailApi(selectedProjectId, rowData.keyword);
-      setAioModalData(result.data);
-    } catch (err) {
-      setAioModalError(err?.message || 'Failed to load AIO details');
-    } finally {
-      setAioModalLoading(false);
-    }
-  };
-
   const aiBodyTemplate = (rowData) => {
     const hasAI = rowData.hasAIOverview;
+    const description = rowData.ai_description;
+    if (!hasAI) {
+      return <span className="text-slate-400 text-xs">—</span>;
+    }
     return (
-      <button
-        onClick={() => handleAioBadgeClick(rowData)}
-        disabled={!hasAI}
-        className={`inline-flex items-center gap-1 rounded-full px-3 py-3 text-xs font-medium transition-colors ${hasAI
-          ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-pointer'
-          : 'bg-slate-100 text-slate-500 cursor-default'
-          }`}
-      >
-        <FontAwesomeIcon icon={faWandSparkles} /> AI
-      </button>
+      <TippyTooltip content={description || 'AI Overview'} placement="left" appendTo={document.body}>
+        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700 cursor-pointer">
+          AIO
+        </span>
+      </TippyTooltip>
     );
   };
 
   const visibilityBodyTemplate = (rowData) => {
     const vis = rowData.visibility;
-    if (vis === null || vis === undefined) return '—';
-    return `${(vis * 100).toFixed(0)}%`;
+    if (vis === null || vis === undefined) return <span title="No visibility data">—</span>;
+    return <span title={`${(vis * 100).toFixed(0)}% visibility score`}>{(vis * 100).toFixed(0)}%</span>;
   };
 
   const checkUrlBodyTemplate = (rowData) => {
-    if (!rowData.check_url) return '—';
+    if (!rowData.check_url) return <span title="No ranking URL">—</span>;
     return (
-      <a href={rowData.check_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate block max-w-[200px]">
+      <a href={rowData.check_url} target="_blank" rel="noreferrer" title={rowData.check_url} className="text-blue-600 hover:underline truncate block max-w-[200px]">
         {rowData.check_url}
       </a>
     );
@@ -402,6 +399,12 @@ function KeywordsPage() {
           <p className="mt-1 text-sm text-slate-500">
             Tracked keywords with rank, volume, difficulty, CPC, and AI overview status in one place.
           </p>
+          {aioCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 mt-2">
+              <FontAwesomeIcon icon={faWandSparkles} className="text-[10px]" />
+              {aioCount} AI Overview
+            </span>
+          )}
         </div>
         <Button onClick={() => setIsAddModalOpen(true)}>
           <FontAwesomeIcon icon={faPlus} /> Add Keywords
@@ -432,17 +435,61 @@ function KeywordsPage() {
           <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
           <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
           <Column field="volume" header="Volume" sortable style={{ width: '8rem' }} />
-          <Column field="kd" header="KD" sortable style={{ width: '6rem' }} />
-          <Column field="cpc" header="CPC" sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
-          <Column field="competition" header="Competition" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
-          <Column field="backlinks" header="Backlinks" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
-          <Column field="domains" header="Domains" sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
-          <Column field="intent" header="Intent" style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
-          <Column field="position" header="Position" sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
-          <Column field="visibility" header="Visibility" sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
-          <Column header="Ranking URL" style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
-          <Column header="AI Overview" style={{ width: '8rem' }} body={aiBodyTemplate} />
-          <Column header="Actions" body={actionBodyTemplate} style={{ width: '5rem' }} />
+          <Column field="kd" header={
+            <TippyTooltip content="Keyword Difficulty (0-100) — how hard it is to rank" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>KD</span>
+            </TippyTooltip>
+          } sortable style={{ width: '6rem' }} />
+          <Column field="cpc" header={
+            <TippyTooltip content="Cost per click in INR" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>CPC</span>
+            </TippyTooltip>
+          } sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
+          <Column field="competition" header={
+            <TippyTooltip content="Competition level (0-1) for paid search" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Competition</span>
+            </TippyTooltip>
+          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
+          <Column field="backlinks" header={
+            <TippyTooltip content="Total backlinks pointing to this page" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Backlinks</span>
+            </TippyTooltip>
+          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
+          <Column field="domains" header={
+            <TippyTooltip content="Number of referring domains" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Domains</span>
+            </TippyTooltip>
+          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
+          <Column field="intent" header={
+            <TippyTooltip content="Search intent: informational, navigational, commercial, transactional" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Intent</span>
+            </TippyTooltip>
+          } style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
+          <Column field="position" header={
+            <TippyTooltip content="Current organic rank position (1 = top)" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>
+            </TippyTooltip>
+          } sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
+          <Column field="visibility" header={
+            <TippyTooltip content="Estimated visibility score based on rank position" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Visibility</span>
+            </TippyTooltip>
+          } sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
+          <Column header={
+            <TippyTooltip content="URL where this keyword ranks" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Ranking URL</span>
+            </TippyTooltip>
+          } style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
+          <Column header={
+            <TippyTooltip content="AI Overview presence and description" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>AI Overview</span>
+            </TippyTooltip>
+          } style={{ width: '8rem' }} body={aiBodyTemplate} />
+          <Column header={
+            <TippyTooltip content="Keyword actions" placement="top" appendTo={document.body}>
+              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Actions</span>
+            </TippyTooltip>
+          } body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
 
         {selectedIds.length > 0 && (
@@ -559,68 +606,6 @@ function KeywordsPage() {
           }}
         />
       )}
-
-      <Modal
-        open={aioModalOpen}
-        onClose={() => setAioModalOpen(false)}
-        title={aioModalKeyword ? `AIO Overview: ${aioModalKeyword.keyword}` : 'AIO Overview'}
-        size="lg"
-      >
-        {aioModalLoading && (
-          <div className="flex items-center justify-center py-10">
-            <p className="text-sm text-slate-500">Loading AIO details...</p>
-          </div>
-        )}
-        {aioModalError && <Alert variant="error" className="mb-4" message={aioModalError} />}
-        {!aioModalLoading && !aioModalError && aioModalData && (
-          <div className="space-y-4">
-            {aioModalData.aiOverviewTitle && (
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">{aioModalData.aiOverviewTitle}</h3>
-              </div>
-            )}
-            {aioModalData.aiOverviewType && (
-              <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                {aioModalData.aiOverviewType}
-              </span>
-            )}
-            {aioModalData.aiOverviewMarkdown ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <pre className="whitespace-pre-wrap text-sm text-slate-700">{aioModalData.aiOverviewMarkdown}</pre>
-              </div>
-            ) : aioModalData.aiOverviewText ? (
-              <p className="text-sm text-slate-700">{aioModalData.aiOverviewText}</p>
-            ) : (
-              <p className="text-sm text-slate-500">No AI Overview content available for this keyword.</p>
-            )}
-            {aioModalData.references && Array.isArray(aioModalData.references) && aioModalData.references.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">References</h4>
-                <ul className="space-y-1">
-                  {aioModalData.references.map((ref, idx) => (
-                    <li key={idx} className="text-sm text-blue-600">
-                      {ref.url || ref.domain || JSON.stringify(ref)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {aioModalData.images && Array.isArray(aioModalData.images) && aioModalData.images.length > 0 && (
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900 mb-2">Images</h4>
-                <div className="flex flex-wrap gap-2">
-                  {aioModalData.images.map((img, idx) => (
-                    <img key={idx} src={img.url || img} alt={img.title || `Image ${idx + 1}`} className="h-24 w-24 rounded-lg object-cover border border-slate-200" />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-        {!aioModalLoading && !aioModalError && !aioModalData && (
-          <p className="text-sm text-slate-500">No AI Overview data available for this keyword.</p>
-        )}
-      </Modal>
     </div>
   );
 }
