@@ -8,16 +8,20 @@ import { Dropdown } from 'primereact/dropdown';
 import 'tippy.js/dist/tippy.css';
 import tippy from 'tippy.js';
 
+import { Chart } from 'primereact/chart';
 import Button from '../components/ui/Button';
+import StatCard from '../components/StateCard';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faTrashCan,
   faUpload,
-  faTriangleExclamation,
   faPlus,
   faTrash,
   faRefresh,
   faWandSparkles,
+  faArrowTrendUp,
+  faChartSimple,
+  faMoneyBill1Wave,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from '../components/ConfirmModal';
 import Modal from '../components/ui/Modal';
@@ -32,6 +36,7 @@ import {
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
 import { apiRequest } from '../lib/api';
+import { Card } from '../components/ui';
 
 const rankOptions = [
   { label: 'All Ranks', value: 'all' },
@@ -166,6 +171,71 @@ function KeywordsPage() {
   const aioCount = useMemo(() => {
     return tableData.filter((r) => r.hasAIOverview).length;
   }, [tableData]);
+
+  const summaryStats = useMemo(() => {
+    const total = tableData.length;
+    const withPosition = tableData.filter((r) => r.position != null);
+    const avgPosition = withPosition.length
+      ? withPosition.reduce((a, b) => a + b.position, 0) / withPosition.length
+      : null;
+    const withCPC = tableData.filter((r) => r.cpc != null);
+    const avgCPC = withCPC.length
+      ? withCPC.reduce((a, b) => a + b.cpc, 0) / withCPC.length
+      : null;
+    const totalVolume = tableData.reduce((a, b) => a + (b.volume || 0), 0);
+    return { total, avgPosition, avgCPC, totalVolume, aioCount };
+  }, [tableData, aioCount]);
+
+  const positionDistribution = useMemo(() => {
+    const top3 = tableData.filter((r) => r.position != null && r.position <= 3).length;
+    const top10 = tableData.filter((r) => r.position != null && r.position > 3 && r.position <= 10).length;
+    const top50 = tableData.filter((r) => r.position != null && r.position > 10 && r.position <= 50).length;
+    const top100 = tableData.filter((r) => r.position != null && r.position > 50 && r.position <= 100).length;
+    const notRanking = tableData.filter((r) => r.position == null || r.position === undefined).length;
+    return { top3, top10, top50, top100, notRanking };
+  }, [tableData]);
+
+  const positionChartData = useMemo(() => {
+    const { top3, top10, top50, top100, notRanking } = positionDistribution;
+    const hasData = top3 + top10 + top50 + top100 + notRanking > 0;
+    return {
+      labels: hasData ? ['Top 3', 'Top 10', '11–50', '51–100', 'Not Ranking'] : ['No data'],
+      datasets: [
+        {
+          data: hasData ? [top3, top10, top50, top100, notRanking] : [1],
+          backgroundColor: ['#10B981', '#3B82F6', '#6366F1', '#F59E0B', '#94A3B8'],
+          borderWidth: 0,
+          hoverOffset: 4,
+        },
+      ],
+    };
+  }, [positionDistribution]);
+
+  const positionChartOptions = useMemo(() => ({
+    cutout: '70%',
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: {
+          usePointStyle: true,
+          padding: 16,
+          font: { size: 12 },
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context) => {
+            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+            const value = context.parsed;
+            const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+            return ` ${context.label}: ${value} (${percentage}%)`;
+          },
+        },
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+  }), []);
 
   const parseKeywords = (text) => {
     return text
@@ -399,17 +469,52 @@ function KeywordsPage() {
           <p className="mt-1 text-sm text-slate-500">
             Tracked keywords with rank, volume, difficulty, CPC, and AI overview status in one place.
           </p>
-          {aioCount > 0 && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 mt-2">
-              <FontAwesomeIcon icon={faWandSparkles} className="text-[10px]" />
-              {aioCount} AI Overview
-            </span>
-          )}
         </div>
         <Button onClick={() => setIsAddModalOpen(true)}>
           <FontAwesomeIcon icon={faPlus} /> Add Keywords
         </Button>
       </div>
+
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Card>
+          <h3 className="text-base font-semibold text-slate-900">Ranking Distribution</h3>
+          <p className="mt-1 text-xs text-slate-500">Keywords grouped by current position</p>
+          <div className="mt-4 h-24">
+            <Chart height='200px' type="pie" data={positionChartData} options={positionChartOptions} />
+          </div>
+        </Card>
+        <div className="grid grid-cols-2 gap-4 content-start">
+          <StatCard
+            title="Total Keywords"
+            value={summaryStats.total.toLocaleString('en-US')}
+            hint="Tracked keywords"
+            icon={faChartSimple}
+            tone="brand"
+          />
+          <StatCard
+            title="Avg Position"
+            value={summaryStats.avgPosition ? `#${summaryStats.avgPosition.toFixed(1)}` : '—'}
+            hint={summaryStats.avgPosition ? 'Current average rank' : 'No rank data'}
+            icon={faArrowTrendUp}
+            tone="green"
+          />
+          <StatCard
+            title="AIO Keywords"
+            value={summaryStats.aioCount.toLocaleString('en-US')}
+            hint="With AI Overview"
+            icon={faWandSparkles}
+            tone="amber"
+          />
+          <StatCard
+            title="Avg CPC"
+            value={summaryStats.avgCPC ? `₹${summaryStats.avgCPC.toFixed(2)}` : '—'}
+            hint="Cost per click"
+            icon={faMoneyBill1Wave}
+            tone="green"
+          />
+        </div>
+      </section>
+
       <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
         <DataTable
           value={filteredData}

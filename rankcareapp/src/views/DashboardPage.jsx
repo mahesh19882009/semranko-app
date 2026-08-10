@@ -5,6 +5,7 @@ import {
   faArrowTrendUp,
   faChartSimple,
   faFolderOpen,
+  faWallet,
 } from '@fortawesome/free-solid-svg-icons';
 import StatCard from '../components/StateCard';
 import Card from '../components/ui/Card';
@@ -177,19 +178,65 @@ function DashboardPage() {
     },
   };
 
+  const keywordPositionDistribution = useMemo(() => {
+    const keywords = overview?.keywords || [];
+    if (!keywords.length) {
+      return { labels: ['No data'], datasets: [{ data: [1], backgroundColor: ['#E2E8F0'], borderWidth: 0 }] };
+    }
+    const top3 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank <= 3).length;
+    const top10 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 3 && kw.current_rank <= 10).length;
+    const top50 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 10 && kw.current_rank <= 50).length;
+    const top100 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 50 && kw.current_rank <= 100).length;
+    const notRanking = keywords.filter((kw) => kw.current_rank == null || kw.current_rank === undefined).length;
+    return {
+      labels: ['Top 3', 'Top 10', '11–50', '51–100', 'Not Ranking'],
+      datasets: [
+        {
+          data: [top3, top10, top50, top100, notRanking],
+          backgroundColor: ['#10B981', '#3B82F6', '#6366F1', '#F59E0B', '#94A3B8'],
+          borderWidth: 0,
+          hoverOffset: 4,
+        },
+      ],
+    };
+  }, [overview]);
+
+  const keywordPositionOptions = useMemo(() => ({
+    cutout: '65%',
+    plugins: {
+      legend: {
+        position: 'bottom',
+        labels: {
+          usePointStyle: true,
+          padding: 16,
+          font: { size: 12 },
+        },
+      },
+      tooltip: {
+        callbacks: {
+          label: (context) => {
+            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+            const value = context.parsed;
+            const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+            return ` ${context.label}: ${value} (${percentage}%)`;
+          },
+        },
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+  }), []);
+
   return (
     <div className="space-y-6">
       <Card padding="p-6">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-brand-700">
-              Dashboard overview
-            </p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
-              {project ? project.name : 'SEO dashboard'}
+            <h1 className="text-xl font-bold uppercase text-brand-700">
+              Account overview
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              {project ? `Monitor rankings for ${project.name}.` : 'Select a project.'}
+              Monitor your account-level projects, rankings, and credit usage.
             </p>
           </div>
         </div>
@@ -226,7 +273,7 @@ function DashboardPage() {
           title="Credit balance"
           value={creditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           hint="Available credits"
-          icon={faChartSimple}
+          icon={faWallet}
           tone="purple"
         />
       </section>
@@ -249,6 +296,17 @@ function DashboardPage() {
                 <p className="text-xs mt-1">Run a tracking job to see trends.</p>
               </div>
             )}
+          </div>
+        </article>
+        <article className="rounded-md border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Keyword Distribution</h3>
+              <p className="mt-1 text-sm text-slate-500">Ranking positions across all keywords.</p>
+            </div>
+          </div>
+          <div className="mt-6 h-64">
+            <Chart type="doughnut" data={keywordPositionDistribution} options={keywordPositionOptions} />
           </div>
         </article>
       </section>
