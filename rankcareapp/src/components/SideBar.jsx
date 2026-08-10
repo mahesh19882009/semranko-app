@@ -9,6 +9,7 @@ import {
   faFileInvoiceDollar,
   faChartSimple,
   faGear,
+  faFilePdf,
 } from '@fortawesome/free-solid-svg-icons';
 import Button from './ui/Button';
 
@@ -17,9 +18,9 @@ const navItems = [
   { to: '/projects', label: 'Projects', icon: faFolderOpen },
   { to: '/keywords', label: 'Keywords', icon: faMagnifyingGlassChart },
   { to: '/keyword-research', label: 'Keyword Research', icon: faLightbulb },
+  { to: '/reports', label: 'Reports', icon: faFilePdf },
   { to: '/dashboard/billing', label: 'Billing', icon: faFileInvoiceDollar },
   { to: '/dashboard/usage', label: 'Usage', icon: faChartSimple },
-  { to: '/dashboard/settings', label: 'Settings', icon: faGear },
 ];
 
 function Sidebar({ open, onToggle }) {

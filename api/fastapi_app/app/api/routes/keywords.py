@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+import re
 
 from app.api.deps import db_session, get_current_user
 from app.db.models import Keyword, Project, RankResult
@@ -203,19 +204,22 @@ def create_keyword(
         ai_badge="—",
     )
     db.add(keyword)
-    db.commit()
-    db.refresh(keyword)
+    db.flush()
 
-    tracking_error = None
     try:
         logger.info("CREATE_KEYWORD: calling _apply_day_one_tracking for keyword=%s", normalized_keyword)
-        _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain)
+        tracked = _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain)
+        if not tracked:
+            db.rollback()
+            raise ApiError(502, f"Day-one tracking returned no data for \"{normalized_keyword}\". Keyword was not added.")
         db.refresh(keyword)
         logger.info("CREATE_KEYWORD: day-one tracking completed for keyword=%s", normalized_keyword)
+    except ApiError:
+        raise
     except Exception as exc:
         db.rollback()
-        tracking_error = str(exc)
         logger.warning("Day-one tracking failed for %s: %s", normalized_keyword, exc)
+        raise ApiError(502, f"Day-one tracking failed for \"{normalized_keyword}\". Keyword was not added. {exc}")
 
     response_data = {
         "id": keyword.id,
@@ -235,13 +239,6 @@ def create_keyword(
         "createdAt": keyword.createdAt.isoformat() if keyword.createdAt else None,
         "updatedAt": keyword.updatedAt.isoformat() if keyword.updatedAt else None,
     }
-    if tracking_error:
-        return JSONResponse(status_code=201, content={
-            "success": True,
-            "message": "Keyword added but data tracking failed",
-            "warning": tracking_error,
-            "data": response_data,
-        })
     return JSONResponse(status_code=201, content={"success": True, "message": "Keyword added", "data": response_data})
 
 
@@ -314,14 +311,34 @@ def bulk_create_keywords(
     for kw_text in added:
         try:
             tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain)
-            if tracked:
-                processed += 1
+            if not tracked:
+                failed_keyword = db.scalar(
+                    select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+                )
+                if failed_keyword:
+                    db.delete(failed_keyword)
+                    db.commit()
+                failed_tracking += 1
+                tracking_errors.append({"keyword": kw_text, "error": "No data returned from DataForSEO"})
+                logger.warning("Day-one tracking returned no data for %s", kw_text)
+                continue
+            processed += 1
+        except ApiError:
+            raise
         except Exception as exc:
             failed_tracking += 1
             tracking_errors.append({"keyword": kw_text, "error": str(exc)})
             logger.warning("Day-one tracking failed for %s: %s", kw_text, exc)
+            failed_keyword = db.scalar(
+                select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+            )
+            if failed_keyword:
+                db.delete(failed_keyword)
+                db.commit()
 
-    message = f"Added {len(added)} keywords, skipped {len(normalized_keywords) - len(added)} duplicates"
+    message = f"Added {processed} keywords"
+    if skipped := len(normalized_keywords) - len(added):
+        message += f", skipped {skipped} duplicates"
     if failed_tracking:
         message += f", {failed_tracking} tracking failures"
 
@@ -329,9 +346,9 @@ def bulk_create_keywords(
         "success": True,
         "message": message,
         "data": {
-            "added": len(added),
+            "added": processed,
             "skipped": len(normalized_keywords) - len(added),
-            "keywords": added,
+            "keywords": added[:processed],
             "processed": processed,
             "failed_tracking": failed_tracking,
             "tracking_errors": tracking_errors,

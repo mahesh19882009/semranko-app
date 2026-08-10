@@ -82,7 +82,7 @@ function Topbar({ onToggleSidebar }) {
 
   const handleSettingsClick = () => {
     setProfileOpen(false);
-    navigate("/projects");
+    navigate("/dashboard/settings");
   };
 
   const showSubscriptionBanner = subscriptionBannerOpen &&
@@ -132,42 +132,42 @@ function Topbar({ onToggleSidebar }) {
           </div>
         </div>
       )}
-      <header 
+      <header
         className="sticky top-0 z-30 border-b border-slate-200 bg-white backdrop-blur"
       >
-      <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onToggleSidebar}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600"
-          >
-            <FontAwesomeIcon icon={faBars} />
-          </button>
-
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em text-slate-900">
-              Selected project
-            </p>
-
-            <select
-              value={selectedProjectId || ""}
-              onChange={(e) => dispatch(setSelectedProjectId(e.target.value || null))}
-              className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate outline-none text-slate-900"
+        <div className="flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onToggleSidebar}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600"
             >
-              {projects.length === 0 ? (
-                <option value="">No project</option>
-              ) : (
-                projects.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-        </div>
+              <FontAwesomeIcon icon={faBars} />
+            </button>
 
-        <div className="relative" ref={profileRef}>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em text-slate-900">
+                Selected project
+              </p>
+
+              <select
+                value={selectedProjectId || ""}
+                onChange={(e) => dispatch(setSelectedProjectId(e.target.value || null))}
+                className="mt-1 max-w-[150px] rounded-xl border-0 bg-transparent p-0 text-lg !font-bold !text-[18px] truncate outline-none text-slate-900"
+              >
+                {projects.length === 0 ? (
+                  <option value="">No project</option>
+                ) : (
+                  projects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+          </div>
+
+          <div className="relative" ref={profileRef}>
             <button
               type="button"
               onClick={() => setProfileOpen((prev) => !prev)}
@@ -235,8 +235,8 @@ function Topbar({ onToggleSidebar }) {
               </div>
             )}
           </div>
-      </div>
-    </header>
+        </div>
+      </header>
     </>
   );
 }

@@ -305,7 +305,7 @@ function DashboardPage() {
               <p className="mt-1 text-sm text-slate-500">Ranking positions across all keywords.</p>
             </div>
           </div>
-          <div className="mt-6 h-64">
+          <div className="mt-6">
             <Chart type="doughnut" data={keywordPositionDistribution} options={keywordPositionOptions} />
           </div>
         </article>

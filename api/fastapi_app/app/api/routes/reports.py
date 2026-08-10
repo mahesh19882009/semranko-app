@@ -10,6 +10,7 @@ from app.api.deps import db_session, get_current_user
 from app.schemas.common import ok
 from app.services.report_service import generate_csv_report, generate_pdf_report, stream_project_keywords_csv
 from app.services import email_service
+from app.services.credit_service import deduct_credits
 from app.db.models import Project
 
 logger = logging.getLogger(__name__)
@@ -111,3 +112,29 @@ async def stream_project_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=project-{project_id}-keywords.csv"},
     )
+
+
+@router.post("/{project_id}/reports/keyword-pdf")
+async def generate_keyword_pdf_report(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == current_user["id"])
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    deduct_credits(
+        db,
+        current_user["id"],
+        20,
+        "Report Download Charges",
+        f"Keyword PDF report: {project.name}",
+    )
+
+    return ok("Credits deducted. You may now download the PDF report.", {
+        "project_id": project_id,
+        "credits_charged": 20,
+    })
