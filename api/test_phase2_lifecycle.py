@@ -77,7 +77,9 @@ class TestActivation:
         assert user.selectedPlan == "starter"
         assert user.planAnniversaryAt is not None
         assert user.lastCreditResetAt is not None
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.planCreditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_first_paid_activation_creates_subscription(self, mock_email):
@@ -97,13 +99,15 @@ class TestActivation:
         activate_paid_plan(self.db, user.id, "starter")
         ledger = self.db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
         assert ledger is not None
-        assert ledger.actionType in ("purchase", "upgrade")
-        assert float(ledger.amount) == 6000.0
+        assert ledger.actionType == "cycle_allocation"
+        assert float(ledger.amount) == 8000.0
         assert float(ledger.balanceBefore) == 0.0
-        assert float(ledger.balanceAfter) == 6000.0
-        assert float(ledger.netCreditChange) == 6000.0
+        assert float(ledger.balanceAfter) == 3000.0
+        assert float(ledger.netCreditChange) == 8000.0
+        assert float(ledger.planCreditsChange) == 3000.0
+        assert float(ledger.automaticCreditsChange) == 5000.0
         assert float(ledger.creditsConsumed) == 0.0
-        assert float(ledger.creditsReserved) == 0.0
+        assert float(ledger.creditsReserved) == 5000.0
         assert float(ledger.creditsRefunded) == 0.0
         assert ledger.projectId is None
         assert ledger.keywordId is None
@@ -113,7 +117,8 @@ class TestActivation:
         user = make_user(self.db, plan="free_trial", subscription_status="trialing", credit_balance=50.0)
         activate_paid_plan(self.db, user.id, "starter")
         self.db.refresh(user)
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_yearly_activation_creates_365_day_subscription(self, mock_email):
@@ -141,7 +146,7 @@ class TestRenewal:
         self.db.close()
 
     @patch.object(email_service, "send_payment_success_email")
-    def test_renewal_adds_credits_to_existing_balance(self, mock_email):
+    def test_renewal_replaces_expiring_plan_credits(self, mock_email):
         user = make_user(self.db, plan="starter", subscription_status="active", credit_balance=120.0)
         user.planAnniversaryAt = self.now - timedelta(days=30)
         user.lastCreditResetAt = self.now - timedelta(days=30)
@@ -167,7 +172,8 @@ class TestRenewal:
             billing_cycle="monthly",
         )
         self.db.refresh(user)
-        assert user.creditBalance == 6120.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_renewal_extends_subscription_end_date(self, mock_email):
@@ -225,9 +231,8 @@ class TestRenewal:
             select(CreditLedger).where(CreditLedger.userId == user.id, CreditLedger.actionType == "renewal")
         )
         assert ledger is not None
-        assert float(ledger.amount) == 6000.0
-        assert float(ledger.balanceBefore) == 100.0
-        assert float(ledger.balanceAfter) == 6100.0
+        assert float(ledger.amount) == 0.0
+        assert float(ledger.balanceAfter) == 3000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_duplicate_renewal_does_not_double_credit(self, mock_email):
@@ -265,7 +270,8 @@ class TestRenewal:
             order_id="order_renew2",
         )
         self.db.refresh(user)
-        assert user.creditBalance == balance_after_first + 6000.0
+        assert user.creditBalance == balance_after_first
+        assert user.automaticCreditBalance == 5000.0
 
 
 class TestUpgrade:
@@ -289,7 +295,8 @@ class TestUpgrade:
             order_id="order_up",
         )
         self.db.refresh(user)
-        assert user.creditBalance == 30000.0
+        assert user.creditBalance == 15000.0
+        assert user.automaticCreditBalance == 25000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_upgrade_resets_anniversary(self, mock_email):
@@ -472,7 +479,7 @@ class TestExpiration:
         self.db.refresh(user)
         assert user.subscriptionStatus == "active"
 
-    def test_grace_period_expiry_becomes_inactive(self):
+    def test_grace_period_expiry_becomes_permanent_free(self):
         user = make_user(self.db, plan="starter", subscription_status="past_due")
         sub = Subscription(
             id="sub-1",
@@ -488,7 +495,8 @@ class TestExpiration:
         
         handle_grace_period_expiry(self.db, user)
         self.db.refresh(user)
-        assert user.subscriptionStatus == "inactive"
+        assert user.subscriptionStatus == "free"
+        assert user.selectedPlan == "free_trial"
 
     def test_grace_period_not_expired_remains_past_due(self):
         user = make_user(self.db, plan="starter", subscription_status="past_due")
@@ -508,7 +516,7 @@ class TestExpiration:
         self.db.refresh(user)
         assert user.subscriptionStatus == "past_due"
 
-    def test_inactive_deactivates_keywords(self):
+    def test_paid_expiry_preserves_keyword_activation_state(self):
         user = make_user(self.db, plan="starter", subscription_status="past_due")
         sub = Subscription(
             id="sub-1",
@@ -528,7 +536,7 @@ class TestExpiration:
         
         handle_grace_period_expiry(self.db, user)
         self.db.refresh(kw)
-        assert kw.isActive is False
+        assert kw.isActive is True
 
     def test_historical_data_retained_after_expiration(self):
         user = make_user(self.db, plan="starter", subscription_status="active")
@@ -624,7 +632,8 @@ class TestReactivation:
         result = reactivate_subscription(self.db, user.id, "starter")
         self.db.refresh(result)
         assert result.subscriptionStatus == "active"
-        assert result.creditBalance == 6000.0
+        assert result.creditBalance == 3000.0
+        assert result.automaticCreditBalance == 5000.0
 
     @patch.object(email_service, "send_payment_success_email")
     def test_reactivation_resets_anniversary(self, mock_email):
@@ -657,10 +666,10 @@ class TestReactivation:
         user = make_user(self.db, plan="starter", subscription_status="inactive")
         reactivate_subscription(self.db, user.id, "starter")
         ledger = self.db.scalar(
-            select(CreditLedger).where(CreditLedger.userId == user.id, CreditLedger.actionType == "purchase")
+            select(CreditLedger).where(CreditLedger.userId == user.id, CreditLedger.actionType == "cycle_allocation")
         )
         assert ledger is not None
-        assert float(ledger.amount) == 6000.0
+        assert float(ledger.amount) == 8000.0
 
     def test_keyword_reactivation_respects_plan_limit(self):
         user = make_user(self.db, plan="starter", subscription_status="active")
@@ -769,7 +778,8 @@ class TestIdempotency:
             order_id="order_renew2",
         )
         self.db.refresh(user)
-        assert user.creditBalance == balance_after_first + 6000.0
+        assert user.creditBalance == balance_after_first
+        assert user.automaticCreditBalance == 5000.0
 
 
 class TestAccountWideKeywordLimit:

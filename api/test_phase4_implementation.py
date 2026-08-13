@@ -31,6 +31,7 @@ def make_user(db: Session, user_id="user-1", email=None, plan="starter", credit_
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -220,7 +221,8 @@ class TestPhase4aMonthlyMetricsRefresh:
         assert worker_result["processed"] == 1
         
         self.db.refresh(user)
-        assert user.creditBalance == 90.0
+        assert user.creditBalance == 100.0
+        assert user.automaticCreditBalance == 90.0
 
 
 class TestPhase4bCreditReservation:

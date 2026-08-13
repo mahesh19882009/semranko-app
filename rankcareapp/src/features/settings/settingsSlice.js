@@ -7,6 +7,7 @@ import {
   updateGstInfoApi,
   changePasswordApi,
 } from "./settingsApi";
+import { toRejectedValue } from "../../lib/api";
 
 export const fetchSettingsProfile = createAsyncThunk(
   "settings/fetchProfile",
@@ -14,7 +15,7 @@ export const fetchSettingsProfile = createAsyncThunk(
     try {
       return await getProfileApi();
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to fetch profile");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to fetch profile."));
     }
   }
 );
@@ -25,7 +26,7 @@ export const updateSettingsProfile = createAsyncThunk(
     try {
       return await updateProfileApi(name);
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to update profile");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to update profile."));
     }
   }
 );
@@ -36,7 +37,7 @@ export const fetchGstInfo = createAsyncThunk(
     try {
       return await getGstInfoApi();
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to fetch GST info");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to fetch GST info."));
     }
   }
 );
@@ -47,7 +48,7 @@ export const updateGstInfo = createAsyncThunk(
     try {
       return await updateGstInfoApi(payload);
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to update GST info");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to update GST info."));
     }
   }
 );
@@ -58,7 +59,7 @@ export const changeSettingsPassword = createAsyncThunk(
     try {
       return await changePasswordApi(currentPassword, newPassword);
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to change password");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to change password."));
     }
   }
 );

@@ -12,9 +12,12 @@ class PlanDefinition(BaseModel):
     domain_limit: int
     keyword_limit: int
     competitor_spy_limit: int
+    manual_refresh_limit: int
+    keyword_research_limit: int
     competitors_per_project: int
     reports_per_month: int
     monthly_credits: int
+    automatic_credits: int
     refresh_frequency: str
     individual_discount_pct: float
     cta: str
@@ -52,13 +55,13 @@ class PlanConfig(BaseModel):
     top_up: TopUpConfig
     conversion: ConversionConfig
     billing: BillingConfig
-    trial_days: int = 10
+    trial_days: int = 0
 
 
 # Define Free Plan Limits
 FREE_PLAN_LIMITS = {
     "projects": 1,
-    "keywords": 25,
+    "keywords": 5,
     "competitors": 3,
     "reports_per_month": 2
 }
@@ -70,12 +73,19 @@ class Settings(BaseSettings):
     ENV: str = "development"
     PORT: int = 4000
     FRONTEND_URL: str = "http://localhost:3000"
+    CORS_ORIGINS: Optional[str] = None
     
     # Security
     SECRET_KEY: str = secrets.token_urlsafe(32)
     JWT_ACCESS_SECRET: str = "dev-secret-key-change-in-production"
     JWT_ACCESS_EXPIRES_IN_DAYS: int = 1
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
+    AUTH_COOKIE_NAME: str = "rankcare_access"
+    SESSION_COOKIE_NAME: str = "rankcare_session"
+    CSRF_COOKIE_NAME: str = "rankcare_csrf"
+    CSRF_HEADER_NAME: str = "X-CSRF-Token"
+    AUTH_COOKIE_SAMESITE: str = "lax"
+    TURNSTILE_SECRET_KEY: Optional[str] = None
 
     @model_validator(mode='after')
     def validate_production_secrets(self):
@@ -86,8 +96,14 @@ class Settings(BaseSettings):
                 raise ValueError("DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD must be set in production")
             if not self.RAZORPAY_KEY_ID or not self.RAZORPAY_KEY_SECRET:
                 raise ValueError("RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be set in production")
+            if not self.RAZORPAY_WEBHOOK_SECRET:
+                raise ValueError("RAZORPAY_WEBHOOK_SECRET must be set in production")
+            if not self.DATAFORSEO_WEBHOOK_SECRET:
+                raise ValueError("DATAFORSEO_WEBHOOK_SECRET must be set in production")
             if not self.RESEND_API_KEY:
                 raise ValueError("RESEND_API_KEY must be set in production")
+            if not self.TURNSTILE_SECRET_KEY:
+                raise ValueError("TURNSTILE_SECRET_KEY must be set in production")
         return self
     
     # Database
@@ -152,20 +168,23 @@ class Settings(BaseSettings):
         plans={
             "free_trial": PlanDefinition(
                 key="free_trial",
-                name="Free Trial",
+                name="Free",
                 monthly_price_inr=0,
                 yearly_price_inr=0,
-                domain_limit=0,
+                domain_limit=1,
                 keyword_limit=5,
-                competitor_spy_limit=5,
+                competitor_spy_limit=0,
+                manual_refresh_limit=0,
+                keyword_research_limit=0,
                 competitors_per_project=3,
                 reports_per_month=2,
                 monthly_credits=100,
-                refresh_frequency="monthly",
+                automatic_credits=0,
+                refresh_frequency="none",
                 individual_discount_pct=0,
-                cta="Start Free Trial",
+                cta="Start Free",
                 highlighted=False,
-                description="7-day free trial to test RankCare.",
+                description="Permanent Free plan for core keyword tracking.",
                 dfs_cost_ceiling_usd=5.0,
             ),
             "starter": PlanDefinition(
@@ -175,10 +194,13 @@ class Settings(BaseSettings):
                 yearly_price_inr=10789,
                 domain_limit=1,
                 keyword_limit=100,
-                competitor_spy_limit=50,
+                competitor_spy_limit=3,
+                manual_refresh_limit=10,
+                keyword_research_limit=10,
                 competitors_per_project=3,
                 reports_per_month=5,
-                monthly_credits=6000,
+                monthly_credits=8000,
+                automatic_credits=5000,
                 refresh_frequency="monthly",
                 individual_discount_pct=0,
                 cta="Start Starter",
@@ -193,10 +215,13 @@ class Settings(BaseSettings):
                 yearly_price_inr=43189,
                 domain_limit=5,
                 keyword_limit=500,
-                competitor_spy_limit=200,
+                competitor_spy_limit=10,
+                manual_refresh_limit=50,
+                keyword_research_limit=30,
                 competitors_per_project=10,
                 reports_per_month=10,
-                monthly_credits=30000,
+                monthly_credits=40000,
+                automatic_credits=25000,
                 refresh_frequency="monthly",
                 individual_discount_pct=0,
                 cta="Start Pro",
@@ -211,10 +236,13 @@ class Settings(BaseSettings):
                 yearly_price_inr=107989,
                 domain_limit=20,
                 keyword_limit=1500,
-                competitor_spy_limit=500,
+                competitor_spy_limit=25,
+                manual_refresh_limit=150,
+                keyword_research_limit=75,
                 competitors_per_project=20,
                 reports_per_month=50,
-                monthly_credits=80000,
+                monthly_credits=120000,
+                automatic_credits=75000,
                 refresh_frequency="monthly",
                 individual_discount_pct=0,
                 cta="Start Agency",
@@ -230,9 +258,12 @@ class Settings(BaseSettings):
                 domain_limit=999,
                 keyword_limit=999999,
                 competitor_spy_limit=5000,
+                manual_refresh_limit=999999,
+                keyword_research_limit=999999,
                 competitors_per_project=999,
                 reports_per_month=999,
                 monthly_credits=999999,
+                automatic_credits=0,
                 refresh_frequency="monthly",
                 individual_discount_pct=0,
                 cta="Contact Sales",
@@ -245,12 +276,13 @@ class Settings(BaseSettings):
             "add_keyword": 20,
             "weekly_refresh_per_keyword": 10,
             "monthly_refresh_per_keyword": 10,
+            "manual_refresh_per_keyword": 20,
             "keyword_research": 20,
-            "competitor_spy": 20,
+            "competitor_spy": 30,
             "extra_project": 10,
             "tracked_keyword": 20,
             "download_report": 10,
-            "bulk_add_keyword": 25,
+            "bulk_add_keyword": 20,
         },
         dataforseo_costs={
             "serp_live_advanced": 0.024,
@@ -266,7 +298,7 @@ class Settings(BaseSettings):
         top_up=TopUpConfig(),
         conversion=ConversionConfig(),
         billing=BillingConfig(),
-        trial_days=10,
+        trial_days=0,
     )
 
     # Legacy fields kept for backward compatibility with existing code that reads settings.USER_CREDIT_COSTS etc.
@@ -274,6 +306,7 @@ class Settings(BaseSettings):
     DATAFORSEO_CREDIT_COSTS: dict = {}
     PLAN_KEYWORD_LIMITS: dict = {}
     PLAN_MONTHLY_CREDITS: dict = {}
+    PLAN_AUTOMATIC_CREDITS: dict = {}
     PLAN_COMPETITOR_SPY_LIMITS: dict = {}
     CREDIT_TOP_UP_CONFIG: dict = {}
     CONVERSION_RATE_USD_TO_INR: float = 0.0
@@ -289,6 +322,7 @@ class Settings(BaseSettings):
         self.DATAFORSEO_CREDIT_COSTS = self.plan_config.dataforseo_costs
         self.PLAN_KEYWORD_LIMITS = {k: v.keyword_limit for k, v in self.plan_config.plans.items()}
         self.PLAN_MONTHLY_CREDITS = {k: v.monthly_credits for k, v in self.plan_config.plans.items()}
+        self.PLAN_AUTOMATIC_CREDITS = {k: v.automatic_credits for k, v in self.plan_config.plans.items()}
         self.PLAN_COMPETITOR_SPY_LIMITS = {k: v.competitor_spy_limit for k, v in self.plan_config.plans.items()}
         self.CREDIT_TOP_UP_CONFIG = self.plan_config.top_up.model_dump()
         self.CONVERSION_RATE_USD_TO_INR = self.plan_config.conversion.rate
@@ -305,6 +339,7 @@ USER_CREDIT_COSTS = settings.plan_config.credit_costs
 DATAFORSEO_CREDIT_COSTS = settings.plan_config.dataforseo_costs
 PLAN_KEYWORD_LIMITS = {k: v.keyword_limit for k, v in settings.plan_config.plans.items()}
 PLAN_MONTHLY_CREDITS = {k: v.monthly_credits for k, v in settings.plan_config.plans.items()}
+PLAN_AUTOMATIC_CREDITS = {k: v.automatic_credits for k, v in settings.plan_config.plans.items()}
 PLAN_COMPETITOR_SPY_LIMITS = {k: v.competitor_spy_limit for k, v in settings.plan_config.plans.items()}
 CREDIT_TOP_UP_CONFIG = settings.plan_config.top_up.model_dump()
 CONVERSION_RATE_USD_TO_INR = settings.plan_config.conversion.rate

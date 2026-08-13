@@ -8,6 +8,7 @@ from app.api.deps import db_session, get_current_user
 from app.db.models import User, Subscription
 from app.schemas.common import ok
 from app.services.auth_service import change_user_password
+from app.services.plan_service import get_subscription_status, get_effective_plan_key
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -123,10 +124,10 @@ def get_profile(
     return ok("Profile fetched", {
         "name": user.name,
         "email": user.email,
-        "selectedPlan": user.selectedPlan,
-        "subscriptionStatus": user.subscriptionStatus,
-        "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
-        "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate else None,
+        "selectedPlan": get_effective_plan_key(user),
+        "subscriptionStatus": get_subscription_status(user),
+        "trialEndsAt": None if get_effective_plan_key(user) == "free_trial" else (user.trialEndsAt.isoformat() if user.trialEndsAt else None),
+        "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate and get_effective_plan_key(user) != "free_trial" else None,
         "creditBalance": user.creditBalance,
         "createdAt": user.createdAt.isoformat() if user.createdAt else None,
         "authProvider": user.authProvider,

@@ -400,8 +400,6 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
                 </html>
             """
         })
-        logger.info("RESEND PASSWORD RESET EMAIL RESPONSE: %s", response)
-
         logger.info("Password reset email sent to %s", to_email)
         return True
 
@@ -444,6 +442,5 @@ def send_email_with_attachment(
     except Exception as exc:
         logger.exception("FAILED TO SEND ATTACHMENT EMAIL: %s", exc)
         return False
-
 
 

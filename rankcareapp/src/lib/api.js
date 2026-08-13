@@ -20,26 +20,166 @@ async function parseJsonSafe(response) {
   }
 }
 
+export class ApiRequestError extends Error {
+  constructor(message, normalized = {}) {
+    super(message);
+    this.name = 'ApiRequestError';
+    Object.assign(this, normalizeApiError(normalized, message));
+    this.message = message;
+  }
+}
+
+const FIELD_LABELS = {
+  email: 'Email', password: 'Password', name: 'Name', mobile: 'Mobile number',
+  mobileNumber: 'Mobile number', otp: 'OTP', token: 'Verification token',
+  newPassword: 'New password', currentPassword: 'Current password',
+  domain: 'Domain', keyword: 'Keyword', keywords: 'Keywords', projectId: 'Project',
+  planId: 'Plan', amount: 'Amount', paymentId: 'Payment',
+};
+
+const CODE_MESSAGES = {
+  INVALID_CREDENTIALS: 'Invalid email or password.',
+  EMAIL_VERIFICATION_REQUIRED: 'Please verify your email before logging in.',
+  MOBILE_VERIFICATION_REQUIRED: 'Please verify your mobile number before logging in.',
+  VERIFICATION_TOKEN_EXPIRED: 'This verification link is invalid or has expired.',
+  MOBILE_VERIFICATION_SESSION_EXPIRED: 'Your mobile verification session is invalid or expired. Please log in again.',
+  OTP_EXPIRED: 'The OTP has expired. Please request a new one.',
+  OTP_INVALID: 'The OTP is incorrect. Please try again.',
+  OTP_ATTEMPTS_EXCEEDED: 'Maximum OTP attempts exceeded. Please request a new OTP.',
+  OTP_RESEND_COOLDOWN: 'Please wait before requesting another OTP.',
+  OTP_SEND_LIMIT_EXCEEDED: 'Too many OTP requests. Please try again later.',
+  TURNSTILE_REQUIRED: 'Complete the security check to continue.',
+  TURNSTILE_REJECTED: 'The security check failed. Please try again.',
+  CSRF_INVALID: 'Your security session is invalid. Refresh the page and try again.',
+  SESSION_EXPIRED: 'Your session has expired. Please log in again.',
+  upgrade_required: 'This feature is available on paid plans. Upgrade to continue.',
+  feature_limit_exceeded: 'Your allowance for this feature is exhausted until the next billing-cycle reset.',
+  KEYWORD_INACTIVE: 'Activate this keyword before refreshing it.',
+  INSUFFICIENT_CREDITS: 'You do not have enough spendable credits for this action.',
+  PROJECT_LIMIT_REACHED: 'Your project limit has been reached. Upgrade to add another project.',
+  KEYWORD_LIMIT_REACHED: 'Your keyword limit has been reached.',
+  DUPLICATE_KEYWORD: 'This keyword is already being tracked in the project.',
+  KEYWORD_READD_COOLDOWN: 'This keyword was recently deleted and cannot be added again yet.',
+  PAYMENT_VERIFICATION_FAILED: 'We could not verify this payment. Please try again or contact support.',
+  PAYMENT_PLAN_MISMATCH: 'This payment does not match the selected plan. No subscription changes were made.',
+};
+
+function inferLegacyCode(message, status) {
+  const text = String(message || '').toLowerCase();
+  if (text.includes('insufficient credit')) return 'INSUFFICIENT_CREDITS';
+  if (text.includes('domain limit') || text.includes('project limit')) return 'PROJECT_LIMIT_REACHED';
+  if (text.includes('keyword limit')) return 'KEYWORD_LIMIT_REACHED';
+  if (text.includes('recently deleted') || text.includes('cooldown')) return 'KEYWORD_READD_COOLDOWN';
+  if (text.includes('already exists') && text.includes('keyword')) return 'DUPLICATE_KEYWORD';
+  if (text.includes('activate this keyword')) return 'KEYWORD_INACTIVE';
+  if (text.includes('invalid otp')) return 'OTP_INVALID';
+  if (text.includes('otp has expired')) return 'OTP_EXPIRED';
+  if (text.includes('maximum otp attempts')) return 'OTP_ATTEMPTS_EXCEEDED';
+  if (text.includes('wait') && text.includes('otp')) return 'OTP_RESEND_COOLDOWN';
+  if (text.includes('payment') && text.includes('mismatch')) return 'PAYMENT_PLAN_MISMATCH';
+  if (status === 401) return 'UNAUTHORIZED';
+  return null;
+}
+
+function sentence(value) {
+  if (!value) return '';
+  const text = String(value).trim().replace(/\.$/, '');
+  return text ? `${text}.` : '';
+}
+
+function humanizeField(field) {
+  if (!field) return 'This field';
+  return FIELD_LABELS[field] || String(field)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/^./, (char) => char.toUpperCase());
+}
+
+export function normalizeValidationErrors(detail) {
+  if (!Array.isArray(detail)) return { fieldErrors: {}, message: null };
+  const fieldErrors = {};
+  const messages = [];
+  detail.forEach((item) => {
+    const loc = Array.isArray(item?.loc) ? item.loc : [];
+    const field = [...loc].reverse().find((part) => !['body', 'query', 'path'].includes(String(part)));
+    const label = humanizeField(field);
+    const raw = String(item?.msg || 'is invalid');
+    let message;
+    if (/field required|required/i.test(raw)) message = `${label} is required.`;
+    else if (/valid email/i.test(raw)) message = 'Enter a valid email address.';
+    else message = sentence(`${label} ${raw.replace(/^value /i, '').toLowerCase()}`);
+    if (field) fieldErrors[field] = message;
+    messages.push(message);
+  });
+  return { fieldErrors, message: messages.join(' ') || null };
+}
+
+export function getApiErrorMessage(data, fallback = 'Request failed') {
+  const structured = data?.data || {};
+  const code = structured.error || data?.error;
+  if (code === 'upgrade_required' || structured.upgrade_required) {
+    return 'This feature is available on paid plans. Upgrade to continue.';
+  }
+  if (code === 'feature_limit_exceeded') {
+    return 'Your allowance for this feature is exhausted until the next billing-cycle reset.';
+  }
+  if (code === 'KEYWORD_INACTIVE') return 'Activate this keyword before refreshing it.';
+  if (code === 'INSUFFICIENT_CREDITS') return data?.message || 'You do not have enough spendable credits for this action.';
+  return data?.message
+    || (typeof data?.detail === 'string' ? data.detail : null)
+    || normalizeValidationErrors(data?.detail).message
+    || fallback;
+}
+
+export function normalizeApiError(error, fallback = 'Request failed') {
+  if (error && error.__normalizedApiError) return error;
+  const payload = error?.responseData || error?.payload || error || {};
+  const structured = payload?.data && typeof payload.data === 'object' ? payload.data : {};
+  const validation = normalizeValidationErrors(payload?.detail);
+  const status = Number(error?.status ?? payload?.status ?? 0) || 0;
+  const code = error?.code || structured.error || payload.error
+    || inferLegacyCode(error?.message || getApiErrorMessage(payload, fallback), status);
+  let message = CODE_MESSAGES[code]
+    || error?.message
+    || getApiErrorMessage(payload, fallback);
+  if (!status && (error instanceof TypeError || /failed to fetch|networkerror/i.test(message || ''))) {
+    message = "We couldn't connect to RankCare. Check your connection and try again.";
+  } else if (error?.name === 'AbortError' || code === 'REQUEST_TIMEOUT') {
+    message = 'The request took too long. Please try again.';
+  } else if (status >= 500) {
+    message = 'Something went wrong while processing your request. Please try again.';
+  }
+  const usage = structured.usage || payload.usage || {};
+  if (code === 'feature_limit_exceeded' && usage.limit != null) {
+    message = `You've used ${usage.used ?? usage.limit} of ${usage.limit} for this billing cycle.`;
+  }
+  return {
+    __normalizedApiError: true,
+    status,
+    code,
+    message: message || fallback,
+    data: structured,
+    fieldErrors: validation.fieldErrors,
+    action: structured.action || payload.action || null,
+    upgradeRequired: Boolean(structured.upgrade_required || code === 'upgrade_required'),
+    resetAt: usage.resetAt || structured.resetAt || null,
+    remaining: usage.remaining ?? structured.remaining ?? null,
+  };
+}
+
+export function toRejectedValue(error, fallback, context = {}) {
+  return { ...normalizeApiError(error, fallback), ...context };
+}
+
 export async function verifyEmailApi(token) {
-  const response = await fetch(`${API_BASE_URL}/auth/verify-email`, {
+  return apiRequest('/auth/verify-email', {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
     body: JSON.stringify({ token }),
   });
-
-  const result = await parseJsonSafe(response);
-
-  if (!response.ok || !result?.success) {
-    throw new Error(result?.message || "Email verification failed");
-  }
-
-  return result;
 }
 
 export async function resendVerificationApi(email) {
-  const response = await fetch(`${API_BASE_URL}/auth/resend-verification`, {
+  return apiRequest('/auth/resend-verification', {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -47,35 +187,21 @@ export async function resendVerificationApi(email) {
     body: JSON.stringify({ email }),
   });
 
-  const result = await parseJsonSafe(response);
-
-  if (!response.ok || !result?.success) {
-    throw new Error(result?.message || "Failed to resend verification email");
-  }
-
-  return result;
 }
 
-export async function forgotPasswordApi(email) {
-  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+export async function forgotPasswordApi(email, turnstileToken = null) {
+  return apiRequest('/auth/forgot-password', {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, turnstileToken }),
   });
 
-  const result = await parseJsonSafe(response);
-
-  if (!response.ok || !result?.success) {
-    throw new Error(result?.message || "Failed to send password reset email");
-  }
-
-  return result;
 }
 
 export async function resetPasswordApi(token, newPassword) {
-  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+  return apiRequest('/auth/reset-password', {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -83,13 +209,34 @@ export async function resetPasswordApi(token, newPassword) {
     body: JSON.stringify({ token, newPassword }),
   });
 
-  const result = await parseJsonSafe(response);
+}
 
-  if (!response.ok || !result?.success) {
-    throw new Error(result?.message || "Failed to reset password");
-  }
+export async function sendMobileOtpApi(verificationToken, mobile, turnstileToken = null) {
+  return apiRequest('/auth/send-otp', {
+    method: 'POST',
+    body: JSON.stringify({ verificationToken, mobile, turnstileToken }),
+  });
+}
 
-  return result;
+export async function verifyMobileOtpApi(verificationToken, otp) {
+  return apiRequest('/auth/verify-otp', {
+    method: 'POST',
+    body: JSON.stringify({ verificationToken, otp }),
+  });
+}
+
+export async function resendMobileOtpApi(verificationToken, turnstileToken = null) {
+  return apiRequest('/auth/resend-otp', {
+    method: 'POST',
+    body: JSON.stringify({ verificationToken, turnstileToken }),
+  });
+}
+
+export async function createMobileVerificationSessionApi(email, password) {
+  return apiRequest('/auth/mobile-verification-session', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 export async function researchKeywordApi(keyword, locationCode = 2840, location = "India") {
@@ -214,44 +361,33 @@ export async function getRoiMetricsApi() {
 
 function handleUnauthenticated() {
   try {
-    localStorage.removeItem('accessToken');
     localStorage.removeItem('user');
-    localStorage.removeItem('sessionToken');
   } catch {
     // ignore storage errors
   }
-  if (typeof window !== 'undefined') {
-    window.location.href = '/login';
+  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    window.location.assign(`/login?sessionExpired=true&returnTo=${encodeURIComponent(returnTo)}`);
   }
 }
 
 export const apiRequest = async (endpoint, options = {}) => {
-  let token = null;
-  let sessionToken = null;
-
-  try {
-    token = localStorage.getItem('accessToken');
-    sessionToken = localStorage.getItem('sessionToken');
-  } catch {
-    token = null;
-    sessionToken = null;
-  }
+  const method = String(options.method || 'GET').toUpperCase();
+  const csrfToken = typeof document !== 'undefined'
+    ? document.cookie.split('; ').find((entry) => entry.startsWith('rankcare_csrf='))?.split('=').slice(1).join('=')
+    : null;
 
   const headers = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(sessionToken ? { 'X-Session-Token': sessionToken } : {}),
+    ...(!['GET', 'HEAD', 'OPTIONS'].includes(method) && csrfToken ? { 'X-CSRF-Token': decodeURIComponent(csrfToken) } : {}),
     ...(options.headers || {}),
   };
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  });
-
-  if (response.status === 401) {
-    handleUnauthenticated();
-    throw new Error('Session expired. Please log in again.');
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers, credentials: 'include' });
+  } catch (error) {
+    throw new ApiRequestError(normalizeApiError(error).message, normalizeApiError(error));
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -260,44 +396,43 @@ export const apiRequest = async (endpoint, options = {}) => {
   let data;
 
   if (isJson) {
-    data = await response.json();
+    data = await parseJsonSafe(response);
   } else {
-    const text = await response.text();
-    throw new Error(
-      `API did not return JSON. Status: ${response.status}. Response: ${text.slice(0, 120)}`
-    );
+    data = null;
   }
 
   if (!response.ok) {
-    const errorMessage = data.message || (typeof data.detail === 'string' ? data.detail : null) || 'Request failed';
-    throw new Error(errorMessage);
+    const errorData = data?.data || null;
+    const code = errorData?.error || data?.error || null;
+    const normalized = normalizeApiError({
+      status: response.status,
+      responseData: data,
+      code,
+      message: getApiErrorMessage(data, response.status >= 500 ? 'Server error' : 'Request failed'),
+    });
+    const publicAuthRoute = endpoint.startsWith('/auth/') && endpoint !== '/auth/logout';
+    if (response.status === 401 && !publicAuthRoute) {
+      normalized.code = normalized.code || 'SESSION_EXPIRED';
+      normalized.message = CODE_MESSAGES.SESSION_EXPIRED;
+      handleUnauthenticated();
+    }
+    throw new ApiRequestError(normalized.message, normalized);
   }
 
   return data;
 };
 
 export async function logoutApi() {
-  const sessionToken = localStorage.getItem('sessionToken');
-  const url = `${API_BASE_URL}/auth/logout`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      'Content-Type': 'application/json',
-      ...(sessionToken ? { 'X-Session-Token': sessionToken } : {}),
-    },
-  });
-
-  if (response.ok) {
-    localStorage.removeItem('accessToken');
+  try {
+    await apiRequest('/auth/logout', { method: 'POST' });
+    return true;
+  } finally {
     localStorage.removeItem('user');
-    localStorage.removeItem('sessionToken');
   }
-
-  return response.ok;
 }
 
 export async function registerApi(payload) {
-  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+  return apiRequest('/auth/register', {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -305,13 +440,6 @@ export async function registerApi(payload) {
     body: JSON.stringify(payload),
   });
 
-  const result = await parseJsonSafe(response);
-
-  if (!response.ok || !result?.success) {
-    throw new Error(result?.message || "Registration failed");
-  }
-
-  return result;
 }
 
 /**

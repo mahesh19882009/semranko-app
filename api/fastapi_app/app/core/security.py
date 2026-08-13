@@ -6,13 +6,14 @@ import bcrypt
 import jwt
 import secrets
 from hashlib import sha256
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.db.models import User
+from app.core.auth_cookies import read_auth_cookies
+from app.core.session import validate_session
 
 
 def hash_password(password: str) -> str:
@@ -34,6 +35,25 @@ def decode_access_token(token: str) -> dict:
     settings = get_settings()
     return jwt.decode(token, settings.JWT_ACCESS_SECRET, algorithms=["HS256"])
 
+
+def create_mobile_verification_token(user_id: str) -> str:
+    settings = get_settings()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    payload = {
+        "userId": user_id,
+        "purpose": "mobile_verification",
+        "exp": expires_at,
+        "jti": secrets.token_hex(16),
+    }
+    return jwt.encode(payload, settings.JWT_ACCESS_SECRET, algorithm="HS256")
+
+
+def decode_mobile_verification_token(token: str) -> str:
+    payload = decode_access_token(token)
+    if payload.get("purpose") != "mobile_verification" or not payload.get("userId"):
+        raise ValueError("Invalid mobile verification token")
+    return str(payload["userId"])
+
 def generate_email_verification_token() -> tuple[str, str]:
     raw_token = secrets.token_urlsafe(32)
     token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
@@ -44,20 +64,21 @@ def hash_token(token: str) -> str:
     return sha256(token.encode("utf-8")).hexdigest()
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-
-
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
     )
+    token, session_token = read_auth_cookies(request)
+    if not token or not session_token:
+        raise credentials_exception
     try:
         payload = decode_access_token(token)
+        if payload.get("purpose"):
+            raise credentials_exception
         user_id: str = payload.get("userId")
         if user_id is None:
             raise credentials_exception
@@ -67,6 +88,13 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    try:
+        if not validate_session(user_id, session_token):
+            raise credentials_exception
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise credentials_exception from exc
     return user
 
 
@@ -88,10 +116,8 @@ def enforce_limits(resource_type: str = None):
     Args:
         resource_type: Type of resource being created (e.g., 'project', 'keyword', 'competitor', 'report')
     
-    This decorator checks:
-    1. Subscription is active or in trial
-    2. Trial has not expired
-    3. User has not exceeded plan limits for the resource type
+    This decorator checks that the account has access to the selected plan and
+    has not exceeded the relevant plan limit.
     """
     def decorator(func):
         @wraps(func)

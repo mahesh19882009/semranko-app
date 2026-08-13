@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "../lib/navigation";
 import { useEffect, useState } from "react";
 import { isAuthenticated, logoutUser } from "../utils/auth";
 import Button from "./ui/Button";
+import { logoutApi } from '../lib/api';
 
 function PublicLayout({ children }) {
   const navigate = useNavigate();
@@ -25,10 +26,10 @@ function PublicLayout({ children }) {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
-  const handleLogout = () => {
-    logoutUser();
+  const handleLogout = async () => {
+    try { await logoutApi(); } finally { logoutUser(); }
     setAuthenticated(false);
-    navigate("/", { replace: true });
+    navigate("/login", { replace: true });
   };
 
   const navigateToDashboard = () => {

@@ -10,6 +10,8 @@ from app.core.errors import register_exception_handlers
 from app.db.models import Base
 from app.db.session import engine
 from app.jobs.rank_scheduler import start_scheduler, stop_scheduler
+from app.core.auth_cookies import csrf_is_valid, clear_auth_cookies
+from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +24,9 @@ logger.info("DataForSEO credentials configured: %s", bool(login and key))
 if settings.ENV == "production" and not settings.FRONTEND_URL:
     raise RuntimeError("FRONTEND_URL must be configured in production")
 
-if not settings.FRONTEND_URL:
-    origins = ["*"]
-else:
-    origins = [settings.FRONTEND_URL]
+origins = [origin.strip() for origin in (settings.CORS_ORIGINS or settings.FRONTEND_URL or "").split(",") if origin.strip()]
+if settings.ENV == "production" and (not origins or "*" in origins):
+    raise RuntimeError("Production CORS origins must be explicit")
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -44,6 +45,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    settings = get_settings()
+    auth_cookie_present = bool(request.cookies.get(settings.AUTH_COOKIE_NAME))
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and auth_cookie_present and not csrf_is_valid(request):
+        response = JSONResponse(
+            status_code=403,
+            content={"success": False, "message": "CSRF validation failed", "data": {"error": "CSRF_INVALID"}},
+        )
+        origin = request.headers.get("origin")
+        if origin in origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if settings.ENV == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if response.status_code == 401 and auth_cookie_present:
+        clear_auth_cookies(response)
+    return response
 
 @app.on_event("startup")
 def on_startup() -> None:

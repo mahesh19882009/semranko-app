@@ -2,7 +2,7 @@
 Phase 13 — Profitability, Abuse Protection & Financial Safety Tests
 
 Tests for:
-- Bulk keyword billing (25 credits)
+- Bulk keyword billing (20 credits)
 - Monthly refresh multi-user billing
 - Manual refresh rate limiting
 - Manual refresh cooldown
@@ -29,7 +29,7 @@ from app.db.models import Base, Keyword, Project, User, RefreshJob, CreditLedger
 from app.services.keyword_service import add_keyword, add_keywords_bulk, delete_keyword, count_user_keywords
 from app.services.plan_service import count_user_active_keywords
 from app.services.keyword_update_service import refresh_keyword_data
-from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
+from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved, reserve_automatic_credits
 from app.services.otp_service import send_otp, verify_otp, _normalize_mobile
 from app.services.dataforseo_client import check_dfs_cost_ceiling
 from app.services.plan_service import ensure_keyword_limit
@@ -47,6 +47,7 @@ def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=1
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -103,7 +104,7 @@ class TestBulkKeywordBilling:
             assert result["added"] == 2
 
         db.refresh(user)
-        assert user.creditBalance == 1000.0 - (2 * 25)
+        assert user.creditBalance == 1000.0 - (2 * 20)
 
     def test_single_add_charges_single_cost(self):
         engine = create_engine("sqlite:///:memory:")
@@ -148,12 +149,17 @@ class TestMonthlyRefreshMultiUserBilling:
         db.add(job)
         db.commit()
 
+        reserve_automatic_credits(db, user1.id, 10, "monthly test reservation", f"auto:monthly:{job.id}:{user1.id}")
+        reserve_automatic_credits(db, user2.id, 10, "monthly test reservation", f"auto:monthly:{job.id}:{user2.id}")
+
         _apply_monthly_refresh_results(db, job)
 
         db.refresh(user1)
         db.refresh(user2)
-        assert user1.creditBalance == 90.0
-        assert user2.creditBalance == 90.0
+        assert user1.creditBalance == 100.0
+        assert user2.creditBalance == 100.0
+        assert user1.automaticCreditBalance == 90.0
+        assert user2.automaticCreditBalance == 90.0
 
 
 class TestManualRefreshAbuse:
@@ -173,7 +179,7 @@ class TestManualRefreshAbuse:
         assert result["success"] is True
         assert result["skipped"] == 1
 
-    def test_manual_refresh_daily_limit(self):
+    def test_legacy_daily_ledger_rows_do_not_define_billing_cycle_allowance(self):
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
         db = Session(engine)
@@ -194,9 +200,12 @@ class TestManualRefreshAbuse:
             db.add(ledger)
         db.commit()
 
-        result = refresh_keyword_data(db, user.id, project.id, keyword_ids=[kw.id])
-        assert result["success"] is False
-        assert result["error"] == "DAILY_LIMIT_EXCEEDED"
+        with patch("app.services.keyword_update_service.DataForSEOClient.fetch_dashboard_data") as fetch:
+            fetch.return_value = [{"keyword": kw.keyword, "position": 5, "volume": 100}]
+            result = refresh_keyword_data(db, user.id, project.id, keyword_ids=[kw.id])
+        assert result["success"] is True
+        assert result["updated"] == 1
+        assert result["usage"]["used"] == 1
 
     def test_manual_refresh_rate_limit(self):
         from app.core.rate_limiter import MemoryRateLimiter

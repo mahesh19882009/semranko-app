@@ -44,6 +44,7 @@ def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=1
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -145,7 +146,8 @@ class TestCacheHitBilling:
                 assert result is True
 
         db.refresh(user)
-        assert user.creditBalance == 90.0
+        assert user.creditBalance == 100.0
+        assert user.automaticCreditBalance == 90.0
 
     def test_weekly_cache_miss_does_not_pre_charge_credits(self):
         engine = create_engine("sqlite:///:memory:")
@@ -183,6 +185,7 @@ class TestCacheHitBilling:
 
         db.refresh(user)
         assert user.creditBalance == 100.0
+        assert user.automaticCreditBalance == 90.0
 
 
 class TestKeywordLimitEnforcement:

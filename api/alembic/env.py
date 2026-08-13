@@ -3,9 +3,11 @@ import sys
 import os
 
 from sqlalchemy import engine_from_config
+from sqlalchemy import inspect, text
 from sqlalchemy import pool
 
 from alembic import context
+from alembic.script import ScriptDirectory
 
 # Add the parent directory to sys.path to import fastapi_app
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -30,6 +32,45 @@ if config.config_file_name is not None:
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
+
+
+def _is_fresh_head_upgrade(connection) -> bool:
+    """Return true only for ``alembic upgrade head`` on an empty database.
+
+    RankCare's first historical Alembic revision was generated as a bridge
+    from an existing Prisma-managed schema.  It cannot bootstrap an empty
+    database.  Existing/versioned databases must continue through that
+    history unchanged; only a genuinely empty database uses the current
+    schema baseline below.
+    """
+    cmd_opts = getattr(config, "cmd_opts", None)
+    command = getattr(cmd_opts, "cmd", None)
+    command_name = getattr(command[0], "__name__", None) if command else None
+    destination = getattr(cmd_opts, "revision", None)
+    if command_name != "upgrade" or destination != "head":
+        return False
+
+    application_tables = set(inspect(connection).get_table_names()) - {"alembic_version"}
+    return not application_tables
+
+
+def _bootstrap_current_head(connection) -> None:
+    """Create the current model baseline and stamp the sole head."""
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    if len(heads) != 1:
+        raise RuntimeError(f"Fresh bootstrap requires exactly one Alembic head; found {heads}")
+
+    target_metadata.create_all(bind=connection)
+    connection.execute(text(
+        "CREATE TABLE IF NOT EXISTS alembic_version "
+        "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+    ))
+    connection.execute(text("DELETE FROM alembic_version"))
+    connection.execute(
+        text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+        {"revision": heads[0]},
+    )
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -75,6 +116,16 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        fresh_head_upgrade = _is_fresh_head_upgrade(connection)
+        if fresh_head_upgrade:
+            _bootstrap_current_head(connection)
+            connection.commit()
+            return
+        if connection.in_transaction():
+            # Inspector calls use SQLAlchemy autobegin.  End that read-only
+            # transaction so Alembic owns and commits the migration transaction.
+            connection.rollback()
+
         context.configure(
             connection=connection, target_metadata=target_metadata
         )

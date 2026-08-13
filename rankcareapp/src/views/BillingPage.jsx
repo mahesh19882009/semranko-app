@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
-import { initRazorpayCheckout } from "../lib/api";
+import { apiRequest, initRazorpayCheckout } from "../lib/api";
 import {
   createCreditPurchaseOrderApi,
   verifyCreditPaymentApi,
@@ -53,7 +53,9 @@ export default function BillingPage() {
   const dispatch = useDispatch();
 
   const pricingCurrent = useSelector((state) => state.pricing.current);
-  const currentCreditBalance = pricingCurrent?.creditBalance ?? null;
+  const spendableCredits = pricingCurrent?.spendableCreditsRemaining ?? null;
+  const automaticCredits = pricingCurrent?.automaticReservedRemaining ?? null;
+  const purchasedCredits = pricingCurrent?.purchasedCreditsRemaining ?? null;
 
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
@@ -81,7 +83,6 @@ export default function BillingPage() {
     try {
       const data = await getBillingHistoryApi();
       setHistory(data?.history || []);
-      console.log(data?.history);
     } catch (err) {
       setHistoryError(err.message || "Failed to load billing history");
     } finally {
@@ -95,8 +96,8 @@ export default function BillingPage() {
       if (data?.balance !== undefined) {
         dispatch(updateCreditBalance(data.balance));
       }
-    } catch (err) {
-      console.error("Failed to load credit balance:", err);
+    } catch {
+      // The primary billing view remains usable; balance fetch has its own retry on revisit.
     }
   };
 
@@ -140,7 +141,6 @@ export default function BillingPage() {
               const added = verifyResult.data?.credits_added || (multiplier * 600);
               const newBalance = verifyResult.data?.new_balance;
               setSuccessMessage(`Successfully topped up ${added.toLocaleString()} credits!`);
-              addToast(`Successfully topped up ${added.toLocaleString()} credits!`, "success");
               setMultiplier(1);
 
               if (newBalance !== undefined) {
@@ -150,18 +150,15 @@ export default function BillingPage() {
               loadHistory();
             } else {
               setPaymentError("Payment verification failed. Please contact support.");
-              addToast("Payment verification failed. Please contact support.", "error");
             }
           } catch (err) {
             setPaymentError(err.message || "Payment verification failed");
-            addToast(err.message || "Payment verification failed", "error");
           } finally {
             setLoadingPack(null);
           }
         },
         onPaymentError: async (error) => {
           setPaymentError(error?.description || "Payment failed. Please try again.");
-          addToast(error?.description || "Payment failed. Please try again.", "error");
           setLoadingPack(null);
 
           try {
@@ -173,14 +170,13 @@ export default function BillingPage() {
               });
               loadHistory();
             }
-          } catch (err) {
-            console.error("Failed to mark payment as failed: %s", err);
+          } catch {
+            // Best-effort provider reconciliation; the original payment error is already visible.
           }
         },
       });
     } catch (err) {
       setPaymentError(err.message || "Failed to initiate payment");
-      addToast(err.message || "Failed to initiate payment", "error");
       setLoadingPack(null);
     }
   };
@@ -215,17 +211,33 @@ export default function BillingPage() {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <div className={`rounded-xl border border-slate-200 px-8 py-5 text-center shadow-sm ${currentCreditBalance !== null && currentCreditBalance !== undefined && currentCreditBalance > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                <p className="text-xs font-medium">Available Credits</p>
+              <div className={`rounded-xl border border-slate-200 px-8 py-5 text-center shadow-sm ${spendableCredits > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+                <p className="text-xs font-medium">Spendable Credits</p>
                 <p className="text-xl font-bold text-slate-900">
-                  {currentCreditBalance !== null && currentCreditBalance !== undefined
-                    ? currentCreditBalance.toLocaleString('en-US')
+                  {spendableCredits !== null && spendableCredits !== undefined
+                    ? spendableCredits.toLocaleString('en-US')
                     : '—'}
                 </p>
+                <p className="mt-1 text-xs text-slate-500">Plan {pricingCurrent?.planSpendableCreditsRemaining?.toLocaleString('en-US') || 0} + top-up {purchasedCredits?.toLocaleString('en-US') || 0}</p>
+              </div>
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-8 py-5 text-center shadow-sm">
+                <p className="text-xs font-medium text-blue-800">Automatic Tracking</p>
+                <p className="text-xl font-bold text-slate-900">{automaticCredits?.toLocaleString('en-US') || 0}</p>
+                <p className="mt-1 text-xs text-blue-700">Reserved; not spendable on optional actions</p>
               </div>
             </div>
           </div>
         </div>
+
+        <Card>
+          <div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-5">
+            <div><p className="text-slate-500">Current plan</p><p className="font-semibold capitalize text-slate-900">{pricingCurrent?.effectivePlan === 'free_trial' ? 'Free' : (pricingCurrent?.effectivePlan || '—')}</p></div>
+            <div><p className="text-slate-500">Status</p><p className="font-semibold capitalize text-slate-900">{pricingCurrent?.subscriptionStatus || '—'}</p></div>
+            <div><p className="text-slate-500">Next renewal</p><p className="font-semibold text-slate-900">{pricingCurrent?.subscriptionEndDate ? formatDate(pricingCurrent.subscriptionEndDate) : '—'}</p></div>
+            <div><p className="text-slate-500">Credit reset</p><p className="font-semibold text-slate-900">{pricingCurrent?.nextCreditResetAt ? formatDate(pricingCurrent.nextCreditResetAt) : '—'}</p></div>
+            <div><p className="text-slate-500">Pending plan change</p><p className="font-semibold capitalize text-slate-900">{pricingCurrent?.pendingPlanChange || 'None'}</p></div>
+          </div>
+        </Card>
 
         {/* Transaction History */}
         <Card padding="p-0">

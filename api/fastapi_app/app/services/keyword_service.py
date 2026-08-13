@@ -295,7 +295,7 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
             keywords_to_fetch.append(kw_text)
 
         if keywords_to_fetch:
-            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
             total_reserve = float(len(keywords_to_fetch) * bulk_cost)
             bulk_reference = f"bulkdayone:{project_id}:{datetime.utcnow().timestamp()}"
             try:

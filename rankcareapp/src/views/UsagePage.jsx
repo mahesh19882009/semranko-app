@@ -41,7 +41,7 @@ export default function UsagePage() {
   const { addToast } = useToast();
 
   const pricingCurrent = useSelector((state) => state.pricing.current);
-  const creditBalance = pricingCurrent?.creditBalance ?? null;
+  const spendableCredits = pricingCurrent?.spendableCreditsRemaining ?? null;
   const lastCreditResetAt = pricingCurrent?.lastCreditResetAt ?? null;
   const nextCreditResetAt = pricingCurrent?.nextCreditResetAt ?? null;
 
@@ -175,12 +175,13 @@ export default function UsagePage() {
               </svg>
             </div>
             <div>
-              <p className="text-xs font-medium text-slate-500">Current Balance</p>
+              <p className="text-xs font-medium text-slate-500">Spendable Credits</p>
               <p className="text-2xl font-bold text-slate-900">
-                {creditBalance !== null && creditBalance !== undefined
-                  ? creditBalance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                {spendableCredits !== null && spendableCredits !== undefined
+                  ? spendableCredits.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                   : "—"}
               </p>
+              <p className="text-xs text-slate-500">Top-up: {(pricingCurrent?.purchasedCreditsRemaining || 0).toLocaleString('en-US')}</p>
             </div>
           </div>
         </Card>
@@ -210,11 +211,11 @@ export default function UsagePage() {
               </svg>
             </div>
             <div>
-              <p className="text-xs font-medium text-slate-500">Pure Token Model</p>
+              <p className="text-xs font-medium text-slate-500">Automatic Tracking</p>
               <p className="text-2xl font-bold text-emerald-700">
-                Active
+                {(pricingCurrent?.automaticReservedRemaining || 0).toLocaleString('en-US')}
               </p>
-              <p className="text-xs text-emerald-600">Credits control credit-consuming actions. Plan limits control active resource capacity like keywords.</p>
+              <p className="text-xs text-emerald-600">Reserved from {(pricingCurrent?.automaticReservedAllocation || 0).toLocaleString('en-US')}; unavailable for optional actions.</p>
             </div>
           </div>
         </Card>

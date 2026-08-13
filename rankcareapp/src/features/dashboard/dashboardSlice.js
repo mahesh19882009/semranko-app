@@ -1,6 +1,6 @@
 'use client'
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
-import { apiRequest } from '../../lib/api';
+import { apiRequest, toRejectedValue } from '../../lib/api';
 
 export const fetchDashboardByProject = createAsyncThunk(
   'dashboard/fetchByProject',
@@ -9,7 +9,7 @@ export const fetchDashboardByProject = createAsyncThunk(
       const response = await apiRequest(`/dashboard/${projectId}`);
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.message || 'Failed to fetch dashboard');
+      return rejectWithValue(toRejectedValue(error, 'Failed to fetch dashboard.'));
     }
   }
 );

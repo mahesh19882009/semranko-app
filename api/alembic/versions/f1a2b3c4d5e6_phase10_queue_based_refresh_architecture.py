@@ -1,7 +1,7 @@
 """phase10_queue_based_refresh_architecture
 
-Revision ID: f1a2b3c4d5e6
-Revises: e5f6a7b8c9d0
+Revision ID: phase10_queue_refresh
+Revises: e5f6a7b8c9d0, drop_unused_tables_phase7e
 Create Date: 2026-08-12
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f1a2b3c4d5e6'
-down_revision: Union[str, Sequence[str], None] = 'e5f6a7b8c9d0'
+revision: str = 'phase10_queue_refresh'
+down_revision: Union[str, Sequence[str], None] = ('e5f6a7b8c9d0', 'drop_unused_tables_phase7e')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -15,6 +15,48 @@ def _to_float(value) -> float:
     return float(Decimal(str(value or 0)))
 
 
+def _normalize_spendable_pools(user: User) -> tuple[float, float]:
+    """Keep legacy creditBalance compatible with the separated spendable pools."""
+    current = _to_float(getattr(user, "creditBalance", 0.0))
+    plan = _to_float(getattr(user, "planCreditBalance", 0.0))
+    purchased = _to_float(getattr(user, "purchasedCreditBalance", 0.0))
+    if round(plan + purchased, 2) != round(current, 2):
+        # Rows created by older code/tests have no pool attribution. Preserve the
+        # value as plan spendable credits; migrated production rows are explicitly
+        # grandfathered as purchased credits by Alembic.
+        plan = current
+        purchased = 0.0
+        user.planCreditBalance = plan
+        user.purchasedCreditBalance = purchased
+    return plan, purchased
+
+
+def _debit_spendable(user: User, amount: float) -> tuple[float, float, float, float]:
+    plan, purchased = _normalize_spendable_pools(user)
+    current = round(plan + purchased, 2)
+    if current < amount:
+        raise HTTPException(status_code=402, detail=f"Insufficient credits. Required: {amount}, Available: {current}")
+    plan_used = min(plan, amount)
+    purchased_used = amount - plan_used
+    user.planCreditBalance = round(plan - plan_used, 2)
+    user.purchasedCreditBalance = round(purchased - purchased_used, 2)
+    user.creditBalance = round(user.planCreditBalance + user.purchasedCreditBalance, 2)
+    return current, user.creditBalance, plan_used, purchased_used
+
+
+def get_credit_balances(db: Session, user_id: str) -> dict:
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    plan, purchased = _normalize_spendable_pools(user)
+    return {
+        "spendable": round(plan + purchased, 2),
+        "planSpendable": round(plan, 2),
+        "purchased": round(purchased, 2),
+        "automaticRemaining": round(_to_float(getattr(user, "automaticCreditBalance", 0.0)), 2),
+    }
+
+
 def get_credit_balance(db: Session, user_id: str) -> float:
     user = db.scalar(select(User).where(User.id == user_id))
     if not user:
@@ -42,13 +84,6 @@ def deduct_credits(db: Session, user_id: str, amount: float, action_type: str, d
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current = _to_float(getattr(user, "creditBalance", 0.0))
-    if current < amount:
-        raise HTTPException(
-            status_code=402,
-            detail=f"Insufficient credits. Required: {amount}, Available: {current}",
-        )
-
     if task_id:
         existing = db.scalar(
             select(CreditLedger).where(
@@ -61,9 +96,7 @@ def deduct_credits(db: Session, user_id: str, amount: float, action_type: str, d
         if existing:
             return round(_to_float(getattr(user, "creditBalance", 0.0)), 2)
 
-    balance_before = round(current, 2)
-    balance_after = round(current - amount, 2)
-    user.creditBalance = balance_after
+    balance_before, balance_after, plan_used, purchased_used = _debit_spendable(user, float(amount))
     db.add(user)
 
     ledger = CreditLedger(
@@ -87,6 +120,9 @@ def deduct_credits(db: Session, user_id: str, amount: float, action_type: str, d
         balanceAfter=balance_after,
         taskId=task_id,
         requestId=request_id,
+        creditPool="spendable",
+        planCreditsChange=-plan_used,
+        purchasedCreditsChange=-purchased_used,
     )
     db.add(ledger)
     db.flush()
@@ -104,10 +140,12 @@ def refund_credits(db: Session, user_id: str, amount: float, description: str, r
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current = _to_float(getattr(user, "creditBalance", 0.0))
+    plan, purchased = _normalize_spendable_pools(user)
+    current = plan + purchased
     balance_before = round(current, 2)
     balance_after = round(current + amount, 2)
-    user.creditBalance = balance_after
+    user.planCreditBalance = round(plan + amount, 2)
+    user.creditBalance = round(user.planCreditBalance + purchased, 2)
     db.add(user)
 
     ledger = CreditLedger(
@@ -130,6 +168,8 @@ def refund_credits(db: Session, user_id: str, amount: float, description: str, r
         balanceAfter=balance_after,
         taskId=task_id,
         requestId=request_id,
+        creditPool="spendable",
+        planCreditsChange=float(amount),
     )
     db.add(ledger)
     db.flush()
@@ -141,31 +181,41 @@ def add_purchased_credits(db: Session, user_id: str, amount: float, description:
     if amount <= 0:
         return get_credit_balance(db, user_id)
 
-    user = db.scalar(select(User).where(User.id == user_id))
+    user = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current = _to_float(getattr(user, "creditBalance", 0.0))
+    existing_purchase = db.scalar(select(CreditLedger).where(
+        CreditLedger.relatedOrderId == related_order_id,
+        CreditLedger.creditPool == "purchased",
+        CreditLedger.status == "completed",
+    ))
+    if existing_purchase:
+        return round(_to_float(user.creditBalance), 2)
+
+    plan, purchased = _normalize_spendable_pools(user)
+    current = plan + purchased
     balance_before = round(current, 2)
     balance_after = round(current + amount, 2)
-    user.creditBalance = balance_after
+    user.purchasedCreditBalance = round(purchased + amount, 2)
+    user.creditBalance = round(plan + user.purchasedCreditBalance, 2)
     db.add(user)
 
-    ledger = CreditLedger(
-        userId=user_id,
-        ownerId=user_id,
-        amount=amount,
-        actionType="purchase",
-        description=description,
-        relatedOrderId=related_order_id,
-        status="completed",
-        creditsReserved=0.0,
-        creditsConsumed=float(amount),
-        creditsRefunded=0.0,
-        netCreditChange=float(amount),
-        balanceBefore=balance_before,
-        balanceAfter=balance_after,
-    )
+    ledger = db.scalar(select(CreditLedger).where(CreditLedger.relatedOrderId == related_order_id))
+    if ledger is None:
+        ledger = CreditLedger(userId=user_id, ownerId=user_id, relatedOrderId=related_order_id)
+    ledger.amount = amount
+    ledger.actionType = "purchase"
+    ledger.description = description
+    ledger.status = "completed"
+    ledger.creditsReserved = 0.0
+    ledger.creditsConsumed = float(amount)
+    ledger.creditsRefunded = 0.0
+    ledger.netCreditChange = float(amount)
+    ledger.balanceBefore = balance_before
+    ledger.balanceAfter = balance_after
+    ledger.creditPool = "purchased"
+    ledger.purchasedCreditsChange = float(amount)
     db.add(ledger)
     db.flush()
     db.commit()
@@ -194,13 +244,6 @@ def reserve_credits(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current = _to_float(getattr(user, "creditBalance", 0.0))
-    if current < amount:
-        raise HTTPException(
-            status_code=402,
-            detail=f"Insufficient credits to reserve. Required: {amount}, Available: {current}",
-        )
-
     if reference:
         existing = db.scalar(
             select(CreditLedger).where(
@@ -213,9 +256,7 @@ def reserve_credits(
         if existing:
             return round(_to_float(getattr(user, "creditBalance", 0.0)), 2)
 
-    balance_before = round(current, 2)
-    balance_after = round(current - amount, 2)
-    user.creditBalance = balance_after
+    balance_before, balance_after, plan_used, purchased_used = _debit_spendable(user, float(amount))
     db.add(user)
 
     ref_description = f"{description} [ref:{reference}]" if reference else description
@@ -241,6 +282,9 @@ def reserve_credits(
         balanceAfter=balance_after,
         taskId=task_id,
         requestId=request_id,
+        creditPool="spendable",
+        planCreditsChange=-plan_used,
+        purchasedCreditsChange=-purchased_used,
     )
     db.add(ledger)
     db.flush()
@@ -328,10 +372,16 @@ def refund_reserved(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    current = _to_float(getattr(user, "creditBalance", 0.0))
+    plan, purchased = _normalize_spendable_pools(user)
+    current = plan + purchased
     balance_before = round(current, 2)
     balance_after = round(current + actual_refund, 2)
-    user.creditBalance = balance_after
+    reserved_plan = abs(float(getattr(ledger, "planCreditsChange", 0.0) or 0.0))
+    plan_refund = min(actual_refund, reserved_plan)
+    purchased_refund = actual_refund - plan_refund
+    user.planCreditBalance = round(plan + plan_refund, 2)
+    user.purchasedCreditBalance = round(purchased + purchased_refund, 2)
+    user.creditBalance = round(user.planCreditBalance + user.purchasedCreditBalance, 2)
     db.add(user)
 
     ledger.creditsRefunded = float(ledger.creditsRefunded or 0.0) + actual_refund
@@ -339,6 +389,8 @@ def refund_reserved(
     ledger.balanceBefore = balance_before
     ledger.balanceAfter = balance_after
     ledger.status = "refunded"
+    ledger.planCreditsChange = float(ledger.planCreditsChange or 0.0) + plan_refund
+    ledger.purchasedCreditsChange = float(ledger.purchasedCreditsChange or 0.0) + purchased_refund
     ledger.relatedOrderId = related_order_id or ledger.relatedOrderId
     ledger.projectId = project_id or ledger.projectId
     ledger.keywordId = keyword_id or ledger.keywordId
@@ -349,6 +401,163 @@ def refund_reserved(
     db.flush()
     db.commit()
     return user.creditBalance
+
+
+def reserve_automatic_credits(
+    db: Session,
+    user_id: str,
+    amount: float,
+    description: str,
+    reference: str,
+    project_id: str | None = None,
+    keyword_id: str | None = None,
+    task_id: str | None = None,
+) -> float:
+    """Atomically reserve core tracking credits without touching spendable credits."""
+    if amount <= 0:
+        return 0.0
+    user = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = db.scalar(select(CreditLedger).where(
+        CreditLedger.userId == user_id,
+        CreditLedger.creditPool == "automatic",
+        CreditLedger.description == f"{description} [ref:{reference}]",
+        CreditLedger.status.in_(["pending", "completed"]),
+    ))
+    if existing:
+        return round(_to_float(getattr(user, "automaticCreditBalance", 0.0)), 2)
+    current = _to_float(getattr(user, "automaticCreditBalance", 0.0))
+    if current < amount:
+        raise HTTPException(status_code=402, detail=f"Insufficient automatic tracking credits. Required: {amount}, Available: {current}")
+    after = round(current - amount, 2)
+    user.automaticCreditBalance = after
+    ledger = CreditLedger(
+        userId=user_id, ownerId=user_id, amount=-amount, actionType="reservation",
+        description=f"{description} [ref:{reference}]", status="pending",
+        creditsReserved=float(amount), creditsConsumed=0.0, creditsRefunded=0.0,
+        netCreditChange=-float(amount), balanceBefore=current, balanceAfter=after,
+        projectId=project_id, keywordId=keyword_id, taskId=task_id,
+        creditPool="automatic", automaticCreditsChange=-float(amount),
+        timestamp=datetime.utcnow(), triggeredByUserId=user_id,
+    )
+    db.add_all([user, ledger])
+    db.commit()
+    return after
+
+
+def consume_automatic_reserved(
+    db: Session,
+    user_id: str,
+    reference: str,
+    amount: float,
+    description: str,
+    project_id: str | None = None,
+    keyword_id: str | None = None,
+    task_id: str | None = None,
+) -> float:
+    ledger = db.scalar(select(CreditLedger).where(
+        CreditLedger.userId == user_id,
+        CreditLedger.creditPool == "automatic",
+        CreditLedger.description.like(f"%[ref:{reference}]"),
+        CreditLedger.status == "pending",
+    ).with_for_update())
+    if not ledger:
+        # A completed reservation makes retries idempotent.
+        completed = db.scalar(select(CreditLedger).where(
+            CreditLedger.userId == user_id,
+            CreditLedger.creditPool == "automatic",
+            CreditLedger.description.like(f"%[ref:{reference}]"),
+            CreditLedger.status == "completed",
+        ))
+        if completed:
+            return round(_to_float(db.scalar(select(User).where(User.id == user_id)).automaticCreditBalance), 2)
+        raise HTTPException(status_code=404, detail="Automatic credit reservation not found")
+    remaining = float(ledger.creditsReserved or 0) - float(ledger.creditsConsumed or 0) - float(ledger.creditsRefunded or 0)
+    actual = min(float(amount), remaining)
+    if actual <= 0:
+        return round(_to_float(db.scalar(select(User).where(User.id == user_id)).automaticCreditBalance), 2)
+    ledger.creditsConsumed = float(ledger.creditsConsumed or 0) + actual
+    ledger.description = f"{description} [ref:{reference}]"
+    ledger.projectId = project_id or ledger.projectId
+    ledger.keywordId = keyword_id or ledger.keywordId
+    ledger.taskId = task_id or ledger.taskId
+    if ledger.creditsConsumed + float(ledger.creditsRefunded or 0) >= float(ledger.creditsReserved or 0):
+        ledger.status = "completed"
+        ledger.actionType = "charge"
+    db.add(ledger)
+    db.commit()
+    user = db.scalar(select(User).where(User.id == user_id))
+    return round(_to_float(user.automaticCreditBalance), 2)
+
+
+def refund_automatic_reserved(db: Session, user_id: str, reference: str, amount: float, description: str) -> float:
+    ledger = db.scalar(select(CreditLedger).where(
+        CreditLedger.userId == user_id,
+        CreditLedger.creditPool == "automatic",
+        CreditLedger.description.like(f"%[ref:{reference}]"),
+        CreditLedger.status == "pending",
+    ).with_for_update())
+    if not ledger:
+        raise HTTPException(status_code=404, detail="Automatic credit reservation not found")
+    remaining = float(ledger.creditsReserved or 0) - float(ledger.creditsConsumed or 0) - float(ledger.creditsRefunded or 0)
+    actual = min(float(amount), remaining)
+    user = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    before = _to_float(user.automaticCreditBalance)
+    user.automaticCreditBalance = round(before + actual, 2)
+    ledger.creditsRefunded = float(ledger.creditsRefunded or 0) + actual
+    ledger.automaticCreditsChange = float(ledger.automaticCreditsChange or 0) + actual
+    ledger.netCreditChange = float(ledger.netCreditChange or 0) + actual
+    ledger.balanceBefore = before
+    ledger.balanceAfter = user.automaticCreditBalance
+    ledger.description = f"{description} [ref:{reference}]"
+    settled = float(ledger.creditsConsumed or 0) + float(ledger.creditsRefunded or 0)
+    ledger.status = "refunded" if settled >= float(ledger.creditsReserved or 0) else "pending"
+    db.add_all([user, ledger])
+    db.commit()
+    return user.automaticCreditBalance
+
+
+def deduct_automatic_credits(
+    db: Session,
+    user_id: str,
+    amount: float,
+    description: str,
+    project_id: str | None = None,
+    keyword_id: str | None = None,
+    task_id: str | None = None,
+    request_id: str | None = None,
+) -> float:
+    """Direct idempotent automatic-pool charge for cache-hit/synchronous work."""
+    if amount <= 0:
+        return 0.0
+    user = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if task_id:
+        existing = db.scalar(select(CreditLedger).where(
+            CreditLedger.userId == user_id, CreditLedger.taskId == task_id,
+            CreditLedger.creditPool == "automatic", CreditLedger.status == "completed",
+        ))
+        if existing:
+            return round(_to_float(user.automaticCreditBalance), 2)
+    before = _to_float(user.automaticCreditBalance)
+    if before < amount:
+        raise HTTPException(status_code=402, detail=f"Insufficient automatic tracking credits. Required: {amount}, Available: {before}")
+    after = round(before - amount, 2)
+    user.automaticCreditBalance = after
+    ledger = CreditLedger(
+        userId=user_id, ownerId=user_id, amount=-amount, actionType="charge",
+        description=description, status="completed", creditsSpent=int(amount),
+        creditsReserved=0.0, creditsConsumed=float(amount), creditsRefunded=0.0,
+        netCreditChange=-float(amount), balanceBefore=before, balanceAfter=after,
+        projectId=project_id, keywordId=keyword_id, taskId=task_id, requestId=request_id,
+        creditPool="automatic", automaticCreditsChange=-float(amount),
+        timestamp=datetime.utcnow(), triggeredByUserId=user_id,
+    )
+    db.add_all([user, ledger])
+    db.commit()
+    return after
 
 
 def create_pending_ledger_entry(
@@ -439,12 +648,12 @@ def lock_tracked_keyword(db: Session, user_id: str, keyword: str, location: str 
             "keyword": tracked.keyword,
             "lockedAt": tracked.lockedAt.isoformat(),
             "lockedUntil": tracked.lockedUntil.isoformat(),
-            "credits_charged": 20,
+            "credits_charged": cost,
         }
     except Exception as exc:
         db.rollback()
         logger.error(f"Failed to lock tracked keyword {keyword}: {exc}")
-        refund_credits(db, user_id, 20, f"Refund: failed to lock tracked keyword {keyword}")
+        refund_credits(db, user_id, cost, f"Refund: failed to lock tracked keyword {keyword}")
         raise
 
 

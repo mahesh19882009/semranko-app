@@ -1,6 +1,6 @@
 'use client'
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { apiRequest } from "../../lib/api";
+import { apiRequest, toRejectedValue } from "../../lib/api";
 
 export const fetchSubscriptionStatus = createAsyncThunk(
   "subscription/fetchStatus",
@@ -9,7 +9,7 @@ export const fetchSubscriptionStatus = createAsyncThunk(
       const response = await apiRequest("/pricing/subscription-status");
       return response.data;
     } catch (error) {
-      return rejectWithValue(error.message);
+      return rejectWithValue(toRejectedValue(error, "Failed to fetch subscription status."));
     }
   }
 );
@@ -24,11 +24,12 @@ const subscriptionSlice = createSlice({
       plan: null,
       effectivePlan: null,
       subscriptionStatus: null,
+      pendingPlanChange: null,
       trialStartsAt: null,
       trialEndsAt: null,
       gracePeriodEndsAt: null,
       isInGracePeriod: false,
-      trialDays: 10,
+      trialDays: 0,
       usage: {
         projects: 0,
         keywords: 0,
@@ -42,6 +43,14 @@ const subscriptionSlice = createSlice({
         reportsPerMonth: 0,
       },
       creditBalance: 0,
+      totalMonthlyAllocation: 0,
+      spendableCreditsRemaining: 0,
+      planSpendableCreditsRemaining: 0,
+      purchasedCreditsRemaining: 0,
+      automaticReservedAllocation: 0,
+      automaticReservedRemaining: 0,
+      nextCreditResetAt: null,
+      featureUsage: {},
     },
   },
   reducers: {},

@@ -1,43 +1,60 @@
 'use client'
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "../lib/navigation";
-import { registerApi } from "../lib/api";
-import { getAccessToken } from "../utils/auth";
+import { apiRequest, normalizeApiError, registerApi } from "../lib/api";
+import { clearStoredUser } from "../utils/auth";
+import TurnstileWidget from '../components/TurnstileWidget';
 
 function RegisterPage() {
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [mobile, setMobile] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [turnstileToken, setTurnstileToken] = useState(null);
 
   useEffect(() => {
-    if (getAccessToken()) {
-      navigate("/dashboard", { replace: true });
-    }
+    let active = true;
+    apiRequest('/auth/me')
+      .then(() => { if (active) navigate('/dashboard', { replace: true }); })
+      .catch(() => { if (active) clearStoredUser(); });
+    return () => { active = false; };
   }, [navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSuccess("");
+    setFieldErrors({});
     setLoading(true);
 
     try {
-      await registerApi({
+      const result = await registerApi({
         name,
         email,
+        mobile,
         password,
+        turnstileToken,
       });
 
-      setSuccess("Registration successful. Please verify your email before logging in.");
-      navigate("/login?emailVerificationPending=true");
+      const verificationToken = result?.data?.mobileVerificationToken;
+      if (verificationToken) {
+        sessionStorage.setItem('mobileVerificationToken', verificationToken);
+        navigate("/verify-mobile");
+      } else {
+        setSuccess("Registration successful. Verify your email and mobile number before logging in.");
+        navigate("/login?emailVerificationPending=true");
+      }
     } catch (err) {
-      setError(err.message || "Something went wrong");
+      const normalized = normalizeApiError(err, "Registration failed. Please try again.");
+      setFieldErrors(normalized.fieldErrors);
+      setError(normalized.message);
     } finally {
       setLoading(false);
     }
@@ -61,7 +78,7 @@ function RegisterPage() {
       }}>
         <h1 style={{ margin: 0, fontSize: "28px", fontWeight: 700 }}>Register</h1>
         <p style={{ margin: "8px 0 24px", color: "#667085", lineHeight: 1.6 }}>
-          Create your RankCare account and start your free trial with credits to explore RankCare.
+          Create your RankCare account. Email and mobile verification are required before login.
         </p>
 
         <div style={{
@@ -82,10 +99,10 @@ function RegisterPage() {
             padding: "14px"
           }}>
             <p style={{ margin: "0 0 6px", fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>
-              7-Day Free Trial
+              Free plan
             </p>
             <p style={{ margin: 0, color: "#475467", fontSize: "14px", lineHeight: 1.6 }}>
-              You'll get 150 credits to explore all features. After the trial ends, choose a paid plan to continue.
+              Includes 1 project, 5 keywords, and 100 spendable credits. Paid features and automatic tracking are not included.
             </p>
           </div>
         </div>
@@ -107,6 +124,7 @@ function RegisterPage() {
             required
             autoComplete="name"
           />
+          {fieldErrors.name && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.name}</p>}
 
           <input
             style={{
@@ -124,6 +142,25 @@ function RegisterPage() {
             required
             autoComplete="email"
           />
+          {fieldErrors.email && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.email}</p>}
+
+          <input
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: "10px",
+              border: "1px solid #d0d5dd",
+              fontSize: "15px"
+            }}
+            type="tel"
+            name="mobile"
+            placeholder="Mobile number"
+            value={mobile}
+            onChange={(e) => setMobile(e.target.value)}
+            required
+            autoComplete="tel"
+          />
+          {(fieldErrors.mobile || fieldErrors.mobileNumber) && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.mobile || fieldErrors.mobileNumber}</p>}
 
           <div style={{ position: "relative" }}>
             <input
@@ -162,6 +199,9 @@ function RegisterPage() {
               {showPassword ? "🙈" : "👁️"}
             </button>
           </div>
+          {fieldErrors.password && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.password}</p>}
+
+          <TurnstileWidget action="register" onToken={setTurnstileToken} />
 
           {error && (
             <div style={{
@@ -203,7 +243,7 @@ function RegisterPage() {
               cursor: loading ? "not-allowed" : "pointer"
             }}
           >
-            {loading ? "Creating account..." : "Start Free Trial"}
+            {loading ? "Creating account..." : "Create Free Account"}
           </button>
         </form>
 

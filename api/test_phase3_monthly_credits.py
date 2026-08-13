@@ -70,14 +70,15 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
         
         ledgers = self.db.scalars(select(CreditLedger).where(CreditLedger.userId == user.id)).all()
         assert len(ledgers) == 1
         assert ledgers[0].actionType == "monthly_refresh"
-        assert ledgers[0].amount == 6000.0
+        assert ledgers[0].amount == 8000.0
         assert ledgers[0].balanceBefore == 500.0
-        assert ledgers[0].balanceAfter == 6000.0
+        assert ledgers[0].balanceAfter == 3000.0
         assert ledgers[0].planName == "Starter"
 
     def test_refresh_before_due(self):
@@ -114,7 +115,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_refresh_after_due(self):
         user = make_user(
@@ -131,7 +132,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_second_monthly_cycle(self):
         user = make_user(
@@ -148,7 +149,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
         
         ledgers = self.db.scalars(select(CreditLedger).where(CreditLedger.userId == user.id)).all()
         assert len(ledgers) == 1
@@ -172,7 +173,7 @@ class TestMonthlyCreditRefresh:
         
         assert result1["reset"] is True
         assert result2["reset"] is False
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
         
         ledgers = self.db.scalars(select(CreditLedger).where(CreditLedger.userId == user.id)).all()
         assert len(ledgers) == 1
@@ -192,7 +193,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_trial_user_no_refresh(self):
         user = make_user(
@@ -269,7 +270,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_existing_balance_is_replaced(self):
         user = make_user(
@@ -286,7 +287,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_previous_unused_credits_do_not_roll_over(self):
         user = make_user(
@@ -303,8 +304,8 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert result["reset"] is True
-        assert user.creditBalance == 6000.0
-        assert user.creditBalance != 5000.0 + 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.creditBalance != 5000.0 + 3000.0
 
     def test_monthly_refresh_creates_exactly_one_ledger_entry(self):
         user = make_user(
@@ -339,7 +340,7 @@ class TestMonthlyCreditRefresh:
         
         ledger = self.db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
         assert ledger.balanceBefore == 2500.0
-        assert ledger.balanceAfter == 6000.0
+        assert ledger.balanceAfter == 3000.0
 
     def test_ledger_contains_correct_plan_and_amount(self):
         user = make_user(
@@ -357,8 +358,8 @@ class TestMonthlyCreditRefresh:
         
         ledger = self.db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
         assert ledger.planName == "Pro"
-        assert ledger.amount == 30000.0
-        assert ledger.netCreditChange == 30000.0
+        assert ledger.amount == 40000.0
+        assert ledger.netCreditChange == 39900.0
 
     def test_upgrade_then_refresh_uses_new_plan_credits(self):
         user = make_user(
@@ -388,7 +389,7 @@ class TestMonthlyCreditRefresh:
         
         assert user.selectedPlan == "pro"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 30000.0
+        assert user.creditBalance == 15000.0
 
     def test_downgrade_then_refresh_uses_downgraded_plan_credits(self):
         user = make_user(
@@ -425,7 +426,7 @@ class TestMonthlyCreditRefresh:
         
         assert user.selectedPlan == "starter"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
     def test_reactivation_then_refresh_uses_current_plan_credits(self):
         user = make_user(
@@ -442,7 +443,7 @@ class TestMonthlyCreditRefresh:
         self.db.refresh(user)
         
         assert user.subscriptionStatus == "active"
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
         
         user.planAnniversaryAt = self.now - timedelta(days=30)
         user.lastCreditResetAt = self.now - timedelta(days=30)
@@ -452,9 +453,9 @@ class TestMonthlyCreditRefresh:
         reset_monthly_credits(self.db, user)
         self.db.refresh(user)
         
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
 
-    def test_same_plan_renewal_behavior_unchanged(self):
+    def test_same_plan_cycle_replaces_expiring_plan_credits(self):
         user = make_user(
             self.db,
             user_id="user-active",
@@ -464,14 +465,14 @@ class TestMonthlyCreditRefresh:
             plan_anniversary_at=self.now - timedelta(days=60),
         )
         
-        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-        monthly_credits = 6000.0
-        user.creditBalance = round(old_balance + monthly_credits, 2)
+        user.lastCreditResetAt = self.now - timedelta(days=30)
         self.db.add(user)
         self.db.commit()
+        reset_monthly_credits(self.db, user)
         self.db.refresh(user)
         
-        assert user.creditBalance == 6500.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
     def test_credit_deduction_behavior_unchanged(self):
         user = make_user(
@@ -572,12 +573,12 @@ class TestMonthlyCreditRefresh:
         result = reset_due_credits_for_all_users(self.db)
         
         assert result["reset_count"] == 1
-        assert result["skipped_count"] == 0
+        assert result["skipped_count"] == 1
         
         self.db.refresh(user_active)
         self.db.refresh(user_trial)
         self.db.refresh(user_inactive)
         
-        assert user_active.creditBalance == 6000.0
+        assert user_active.creditBalance == 3000.0
         assert user_trial.creditBalance == 50.0
         assert user_inactive.creditBalance == 100.0

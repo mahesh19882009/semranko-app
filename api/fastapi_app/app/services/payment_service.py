@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.core.config import get_settings
-from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary, is_upgrade, is_downgrade, get_plan_key, _record_subscription_ledger, get_user_plan_limits_from_plan
+from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary, is_upgrade, is_downgrade, get_plan_key, _record_subscription_ledger, get_user_plan_limits_from_plan, apply_credit_cycle_allocation
 from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -107,8 +107,8 @@ def create_order(amount: int, currency: str = "INR", force_mock: bool = False) -
             "key": settings.RAZORPAY_KEY_ID
         }
     except razorpay.errors.BadRequestError as e:
-        logger.error(f"Razorpay BadRequest: {str(e)} - Check your Key/Secret or Amount format.")
-        raise HTTPException(status_code=400, detail=f"Invalid Razorpay config: {str(e)}")
+        logger.error("Razorpay rejected order creation: %s", type(e).__name__)
+        raise HTTPException(status_code=400, detail="Payment order could not be created")
     except Exception as e:
         logger.error(f"Razorpay unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail="Payment service unavailable")
@@ -211,6 +211,19 @@ def activate_subscription(
     user = db.scalar(select(User).where(User.id == user_id))
     if not user:
         raise Exception("User not found")
+
+    pending_plan = getattr(user, "pendingPlanChange", None)
+    if pending_plan:
+        pending_plan = pending_plan.strip().lower()
+        if pending_plan not in PLAN_DEFINITIONS:
+            raise Exception(f"Invalid pending plan: {pending_plan}")
+        pending_plan_id = {"starter": 0, "pro": 1, "agency": 2, "enterprise": 3}.get(pending_plan, 0)
+        if pending_plan_id != plan_id:
+            raise Exception(
+                f"Payment plan mismatch: you have a pending plan change to {pending_plan}, "
+                f"but this payment is for {plan['key']}. "
+                f"Please cancel the pending change or pay for {pending_plan}."
+            )
     
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
     if order and order.status == "paid":
@@ -261,14 +274,11 @@ def activate_subscription(
     upgrade = is_upgrade(current_plan_key, effective_plan_key)
     downgrade = is_downgrade(current_plan_key, effective_plan_key)
     
+    old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
     if is_renewal:
-        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-        user.creditBalance = round(old_balance + monthly_credits, 2)
         ledger_action = "renewal"
         ledger_desc = f"Subscription renewal: {plan['name']} (Order {order_id})"
     else:
-        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-        user.creditBalance = float(monthly_credits)
         ledger_action = "purchase"
         ledger_desc = f"Subscription purchase: {plan['name']} (Order {order_id})"
     
@@ -277,7 +287,6 @@ def activate_subscription(
     
     if not is_renewal or upgrade or downgrade:
         user.planAnniversaryAt = now
-        user.lastCreditResetAt = now
     
     db.add(user)
     
@@ -303,23 +312,14 @@ def activate_subscription(
         )
         db.add(subscription)
     
-    db.commit()
+    allocation = apply_credit_cycle_allocation(
+        db, user, effective_plan_key, now=now, action_type="cycle_allocation",
+        description=f"Subscription cycle allocation: {plan['name']} (Order {order_id})",
+        related_order_id=order_id,
+    )
     db.refresh(user)
     
-    pending_plan = getattr(user, "pendingPlanChange", None)
     if pending_plan:
-        pending_plan = pending_plan.strip().lower()
-        if pending_plan not in PLAN_DEFINITIONS:
-            raise Exception(f"Invalid pending plan: {pending_plan}")
-        
-        pending_plan_id = {"starter": 0, "pro": 1, "agency": 2, "enterprise": 3}.get(pending_plan, 0)
-        if pending_plan_id != effective_plan_id:
-            raise Exception(
-                f"Payment plan mismatch: you have a pending plan change to {pending_plan}, "
-                f"but this payment is for {effective_plan_key}. "
-                f"Please cancel the pending change or pay for {pending_plan}."
-            )
-        
         user.pendingPlanChange = None
         db.add(user)
         db.commit()
@@ -328,11 +328,12 @@ def activate_subscription(
     _record_subscription_ledger(
         db=db,
         user_id=user_id,
-        amount=float(monthly_credits),
+        amount=0.0,
         action_type=ledger_action,
         description=ledger_desc,
         related_order_id=order_id,
         balance_before=old_balance,
+        balance_after=allocation["creditBalance"],
     )
     db.commit()
     

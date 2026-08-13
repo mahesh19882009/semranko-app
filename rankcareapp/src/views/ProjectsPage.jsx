@@ -189,6 +189,7 @@ function ProjectsPage() {
               value={form.name}
               onChange={handleChange}
               required
+              error={error?.fieldErrors?.name}
             />
 
             <Input
@@ -198,6 +199,7 @@ function ProjectsPage() {
               value={form.domain}
               onChange={handleChange}
               required
+              error={error?.fieldErrors?.domain}
             />
 
             <Input.Select
@@ -248,6 +250,7 @@ function ProjectsPage() {
           <Alert
             variant="error"
             message={error}
+            action={error?.code === 'PROJECT_LIMIT_REACHED' ? <a href="/pricing" className="font-semibold underline">View upgrade options</a> : null}
           />
         ) : null}
 

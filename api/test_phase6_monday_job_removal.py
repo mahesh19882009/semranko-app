@@ -186,7 +186,10 @@ class TestPhase6MondayCompetitorOnly:
         make_keyword(self.db, project.id, user.id, keyword="kw1", is_active=True)
         make_competitor(self.db, project.id, competitor_id="comp-1", domain="competitor.com")
 
-        result = queue_weekly_tracking_for_all_projects(self.db)
+        queue = MagicMock()
+        queue.enqueue.side_effect = [MagicMock(id="rank-job"), MagicMock(id="competitor-job")]
+        with patch("app.services.ranking_service.get_rank_check_queue", return_value=queue):
+            result = queue_weekly_tracking_for_all_projects(self.db)
 
         assert result["queued"] is True
         rank_jobs = result.get("rankJobIds", [])

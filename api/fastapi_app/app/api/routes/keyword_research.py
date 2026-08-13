@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, Depends, HTTPException, Header
+from fastapi import APIRouter, Query, Depends, HTTPException, Header, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -12,6 +12,8 @@ from app.services.project_onboarding_service import create_project_with_keywords
 from app.services.credit_service import check_credits, deduct_credits, refund_credits
 from app.services.dataforseo_client import LOCATION_MAP
 from app.core.config import get_settings
+from app.core.errors import ApiError
+from app.core.rate_limiter import rate_limit
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -20,7 +22,9 @@ router = APIRouter(prefix="/keyword-research", tags=["keyword-research"])
 
 
 @router.get("/research")
+@rate_limit(max_requests=10, window_seconds=60)
 async def research_keyword_endpoint(
+    request: Request = None,
     keyword: str = Query(..., description="Keyword to research"),
     location_code: int = Query(2840, description="DataForSEO location code"),
     location: str = Query("India", description="Location display name"),
@@ -31,7 +35,7 @@ async def research_keyword_endpoint(
     verify_user_access_privileges(db, current_user)
     
     # Test mode safeguard
-    if x_test_mode == "true":
+    if x_test_mode == "true" and settings.ENV == "test":
         # Return mock data without calling external API
         return ok("Keyword research completed (test mode)", {
             "keyword": keyword,
@@ -45,22 +49,19 @@ async def research_keyword_endpoint(
         })
     
     try:
-        cost = settings.plan_config.credit_costs.get("keyword_research", 20)
-        check_credits(db, current_user["userId"], cost)
         result = research_keyword(db, current_user["userId"], keyword, location_code)
-        if result.get("credits_charged"):
-            deduct_credits(db, current_user["userId"], cost, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
-        else:
-            logger.info("Keyword research served from cache for '%s', no credits deducted", keyword)
-        db.commit()
         return ok("Keyword research completed", result)
+    except ApiError:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/competitor-spy")
+@rate_limit(max_requests=5, window_seconds=60)
 async def competitor_spy_endpoint(
+    request: Request = None,
     domain: str = Query(..., description="Competitor domain to spy on"),
     location_code: int = Query(2840, description="DataForSEO location code"),
     location: str = Query("India", description="Location display name"),
@@ -72,7 +73,7 @@ async def competitor_spy_endpoint(
     verify_user_access_privileges(db, current_user)
     
     # Test mode safeguard
-    if x_test_mode == "true":
+    if x_test_mode == "true" and settings.ENV == "test":
         # Return mock data without calling external API
         mock_keywords = [
             {
@@ -91,19 +92,19 @@ async def competitor_spy_endpoint(
         })
     
     try:
-        cost = settings.plan_config.credit_costs.get("competitor_spy", 20)
-        check_credits(db, current_user["userId"], cost)
-        results = spy_competitor_keywords(db, current_user["userId"], domain, location_code, limit)
-        deduct_credits(db, current_user["userId"], cost, "COMPETITOR_SPY", f"Competitor spy: {domain}")
-        db.commit()
-        return ok("Competitor keywords retrieved", {"keywords": results, "domain": domain})
+        result = spy_competitor_keywords(db, current_user["userId"], domain, location_code, limit)
+        return ok("Competitor keywords retrieved", {**result, "domain": domain})
+    except ApiError:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/project/onboard")
+@rate_limit(max_requests=5, window_seconds=60)
 async def onboard_project_endpoint(
+    request: Request = None,
     name: str = Query(..., description="Project name"),
     domain: str = Query(..., description="Project domain"),
     location_code: int = Query(2840, description="DataForSEO location code"),
@@ -116,7 +117,7 @@ async def onboard_project_endpoint(
     verify_user_access_privileges(db, current_user)
     
     # Test mode safeguard
-    if x_test_mode == "true":
+    if x_test_mode == "true" and settings.ENV == "test":
         # Return mock project ID without creating actual project
         return ok("Project created (test mode)", {
             "projectId": "test-project-id",

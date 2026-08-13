@@ -47,6 +47,7 @@ from app.services.monthly_metrics_service import (
 )
 from app.api.routes.webhooks import dataforseo_webhook
 from app.workers.refresh_worker import claim_processing_jobs, process_pending_processing_jobs
+from app.services.credit_service import reserve_automatic_credits
 
 
 def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=100.0,
@@ -60,6 +61,7 @@ def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=1
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -283,6 +285,11 @@ class TestDuplicateRankResult:
         )
         self.db.add(pj)
         self.db.commit()
+
+        reserve_automatic_credits(
+            self.db, user.id, 10, "test weekly reservation",
+            f"auto:weekly:rj1:{user.id}",
+        )
 
         process_pending_processing_jobs(self.db)
         process_pending_processing_jobs(self.db)

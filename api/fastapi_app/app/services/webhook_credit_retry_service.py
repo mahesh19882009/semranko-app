@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.db.models import PendingWebhookCredit, User
 from app.services.credit_service import deduct_credits
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

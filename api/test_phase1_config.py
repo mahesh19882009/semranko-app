@@ -25,6 +25,7 @@ from app.services.credit_service import (
     consume_reserved,
     refund_reserved,
 )
+from app.api.routes.marketing import MARKETING_FAQS
 
 
 def make_user(db: Session, plan="pro", credit_balance=0.0):
@@ -68,9 +69,21 @@ class TestPlanConfig:
         assert "agency" in settings.plan_config.plans
         assert "enterprise" in settings.plan_config.plans
 
-    def test_refresh_frequency_is_monthly(self):
-        for key, plan in settings.plan_config.plans.items():
-            assert plan.refresh_frequency == "monthly", f"Plan {key} has refresh_frequency={plan.refresh_frequency}"
+    def test_new_user_model_defaults_to_permanent_free(self):
+        user = User(
+            id="default-free-user", name="Free", email="default-free@example.com",
+            passwordHash="hash",
+        )
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+        assert user.selectedPlan == "free_trial"
+        assert user.subscriptionStatus == "free"
+
+    def test_refresh_frequency_is_paid_monthly_and_disabled_for_free(self):
+        assert settings.plan_config.plans["free_trial"].refresh_frequency == "none"
+        for key in ("starter", "pro", "agency", "enterprise"):
+            assert settings.plan_config.plans[key].refresh_frequency == "monthly"
 
     def test_existing_values_preserved(self):
         starter = settings.plan_config.plans["starter"]
@@ -78,13 +91,15 @@ class TestPlanConfig:
         assert starter.yearly_price_inr == 10789
         assert starter.domain_limit == 1
         assert starter.keyword_limit == 100
-        assert starter.monthly_credits == 6000
+        assert starter.monthly_credits == 8000
+        assert starter.automatic_credits == 5000
         assert starter.competitors_per_project == 3
         assert starter.reports_per_month == 5
 
         pro = settings.plan_config.plans["pro"]
         assert pro.monthly_price_inr == 3999
-        assert pro.monthly_credits == 30000
+        assert pro.monthly_credits == 40000
+        assert pro.automatic_credits == 25000
         assert pro.keyword_limit == 500
 
     def test_credit_costs_centralized(self):
@@ -92,11 +107,12 @@ class TestPlanConfig:
         assert settings.plan_config.credit_costs["weekly_refresh_per_keyword"] == 10
         assert settings.plan_config.credit_costs["monthly_refresh_per_keyword"] == 10
         assert settings.plan_config.credit_costs["keyword_research"] == 20
-        assert settings.plan_config.credit_costs["competitor_spy"] == 20
+        assert settings.plan_config.credit_costs["manual_refresh_per_keyword"] == 20
+        assert settings.plan_config.credit_costs["competitor_spy"] == 30
         assert settings.plan_config.credit_costs["extra_project"] == 10
         assert settings.plan_config.credit_costs["tracked_keyword"] == 20
         assert settings.plan_config.credit_costs["download_report"] == 10
-        assert settings.plan_config.credit_costs["bulk_add_keyword"] == 25
+        assert settings.plan_config.credit_costs["bulk_add_keyword"] == 20
 
     def test_dataforseo_costs_separate(self):
         assert settings.plan_config.dataforseo_costs["serp_live_advanced"] == 0.024
@@ -127,16 +143,22 @@ class TestPlanConfig:
         assert USER_CREDIT_COSTS["add_keyword"] == 20
         assert DATAFORSEO_CREDIT_COSTS["serp_live_advanced"] == 0.024
         assert PLAN_KEYWORD_LIMITS["starter"] == 100
-        assert PLAN_MONTHLY_CREDITS["pro"] == 30000
-        assert PLAN_COMPETITOR_SPY_LIMITS["agency"] == 500
+        assert PLAN_MONTHLY_CREDITS["pro"] == 40000
+        assert PLAN_COMPETITOR_SPY_LIMITS["agency"] == 25
         assert CREDIT_TOP_UP_CONFIG["credits_per_100_inr"] == 600
         assert CONVERSION_RATE_USD_TO_INR == 95.23
         assert CONVERSION_FEE_PCT == 3.0
         assert GST_RATE == 0.18
-        assert TRIAL_DAYS == 10
+        assert TRIAL_DAYS == 0
 
     def test_plan_definitions_backward_compatible(self):
-        assert PLAN_DEFINITIONS["starter"]["monthlyCredits"] == 6000
+        assert PLAN_DEFINITIONS["free_trial"]["name"] == "Free"
+        assert PLAN_DEFINITIONS["free_trial"]["refreshFrequency"] == "none"
+        assert PLAN_DEFINITIONS["free_trial"]["limits"]["weeklyTrackingEnabled"] is False
+        assert PLAN_DEFINITIONS["free_trial"]["limits"]["automaticCredits"] == 0
+        assert PLAN_DEFINITIONS["starter"]["monthlyCredits"] == 8000
+        assert PLAN_DEFINITIONS["starter"]["automaticCredits"] == 5000
+        assert PLAN_DEFINITIONS["starter"]["spendableCredits"] == 3000
         assert PLAN_DEFINITIONS["starter"]["keywordLimit"] == 100
         assert PLAN_DEFINITIONS["pro"]["refreshFrequency"] == "monthly"
         assert "limits" in PLAN_DEFINITIONS["pro"]
@@ -146,7 +168,20 @@ class TestPlanConfig:
         assert len(plans) == 5
         starter = next(p for p in plans if p["key"] == "starter")
         assert starter["refreshFrequency"] == "monthly"
-        assert starter["limits"]["monthlyCredits"] == 6000
+        assert starter["limits"]["monthlyCredits"] == 8000
+        assert starter["limits"]["automaticCredits"] == 5000
+        assert starter["limits"]["spendableCredits"] == 3000
+        free = next(p for p in plans if p["key"] == "free_trial")
+        assert free["refreshFrequency"] == "none"
+        assert free["limits"]["manualRefreshLimit"] == 0
+        assert free["limits"]["keywordResearchLimit"] == 0
+        assert free["limits"]["competitorSpyLimit"] == 0
+
+    def test_pricing_faqs_match_credit_and_permanent_free_policy(self):
+        answers = " ".join(item["a"] for item in MARKETING_FAQS).lower()
+        assert "no hidden keyword limits" not in answers
+        assert "free trial" not in answers
+        assert "purchased top-up credits remain separate" in answers
 
 
 class TestCreditReservation:

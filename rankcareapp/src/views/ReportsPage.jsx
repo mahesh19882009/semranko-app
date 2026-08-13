@@ -277,8 +277,7 @@ function ReportsPage() {
       });
 
       doc.save(`keyword-report-${projectName.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.pdf`);
-    } catch (err) {
-      console.error('PDF generation failed:', err);
+    } catch {
       setError('Failed to generate PDF. Please try again.');
     } finally {
       setGenerating(false);

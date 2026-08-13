@@ -1,6 +1,6 @@
 'use client'
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
-import { apiRequest } from '../../lib/api';
+import { apiRequest, toRejectedValue } from '../../lib/api';
 
 const STORAGE_KEY = 'selectedProjectId';
 
@@ -58,7 +58,7 @@ export const fetchProjects = createAsyncThunk(
       const response = await apiRequest('/projects');
       return response.data || [];
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || 'Failed to fetch projects');
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to fetch projects.'));
     }
   }
 );
@@ -78,7 +78,7 @@ export const createProject = createAsyncThunk(
 
       return createdProject;
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || 'Failed to create project');
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to create project.'));
     }
   }
 );
@@ -96,7 +96,7 @@ export const deleteProjectById = createAsyncThunk(
         message: response.message || 'Project deleted successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || 'Failed to delete project');
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to delete project.'));
     }
   }
 );
@@ -115,7 +115,7 @@ export const updateProject = createAsyncThunk(
         message: response.message || 'Project updated successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || 'Failed to update project');
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to update project.'));
     }
   }
 );
@@ -159,7 +159,7 @@ const projectsSlice = createSlice({
       })
       .addCase(fetchProjects.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || 'Failed to fetch projects';
+        state.error = action.payload || { message: 'Failed to fetch projects.' };
       })
 
       .addCase(createProject.pending, (state) => {

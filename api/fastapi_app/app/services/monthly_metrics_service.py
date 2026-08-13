@@ -23,8 +23,11 @@ from sqlalchemy import select, func, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.models import Keyword, Project, User, DataForSEOCost, KeywordMetricsHistory, RefreshJob
-from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
+from app.db.models import Keyword, Project, User, DataForSEOCost, KeywordMetricsHistory, RefreshJob, CreditLedger
+from app.services.credit_service import (
+    deduct_credits, reserve_credits, consume_reserved, refund_reserved,
+    consume_automatic_reserved, refund_automatic_reserved,
+)
 from app.services.async_bulk_service import submit_refresh_job_to_dataforseo
 from app.services.dataforseo_client import _build_kw_metrics_cache_key, _get_cached_kw_metrics, _set_cached_kw_metrics, _log_dataforseo_cost
 
@@ -58,6 +61,7 @@ def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000)
             .where(
                 Keyword.isActive == True,
                 User.subscriptionStatus == "active",
+                User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
                 User.refreshFrequency.in_(["monthly", None, ""]),
                 (Keyword.lastMonthlyMetricsRefreshAt == None) | (Keyword.lastMonthlyMetricsRefreshAt < now - timedelta(days=14)),
             )
@@ -199,7 +203,8 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
                     keyword_count=1,
                     priority=1,
                     depth=100,
-                    expand_ai_overview=True,
+                    # Labs keyword metrics neither request nor mutate AIO data.
+                    expand_ai_overview=False,
                     cache_hit=False,
                     success=True,
                 )
@@ -214,7 +219,7 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
             keyword_count=len(missing_keywords),
             priority=1,
             depth=100,
-            expand_ai_overview=True,
+            expand_ai_overview=False,
             cache_hit=False,
             success=False,
             error=str(exc),
@@ -358,45 +363,46 @@ def run_monthly_refresh_worker(db: Session) -> dict:
     Worker that processes queued monthly RefreshJobs.
     Uses atomic claim to prevent duplicate processing.
     """
-    job = db.scalar(
-        select(RefreshJob)
-        .where(RefreshJob.jobType == "monthly_metrics")
-        .where(RefreshJob.status.in_(["queued", "retry"]))
-        .order_by(RefreshJob.createdAt.asc())
-        .limit(1)
-    )
-    
-    if not job:
-        return {"status": "completed", "processed": 0}
-    
-    result = db.execute(
-        update(RefreshJob)
-        .where(RefreshJob.id == job.id)
-        .where(RefreshJob.status.in_(["queued", "retry"]))
-        .values(status="processing", updatedAt=datetime.utcnow())
-    ).rowcount
-    
-    if result == 0:
-        db.rollback()
-        return {"status": "completed", "processed": 0}
-    
-    db.commit()
-    
-    try:
-        keywords = json.loads(job.keywordsJson or "[]")
-        keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
-        if keyword_texts:
-            from app.services.async_bulk_service import mark_keywords_processing_atomic
-            location = keywords[0].get("location", "India") if keywords else "India"
-            mark_keywords_processing_atomic(db, keyword_texts, location)
-        
-        success = submit_refresh_job_to_dataforseo(db, job)
-        if success:
-            _apply_monthly_refresh_results(db, job)
-        return {"status": "completed", "processed": 1 if success else 0}
-    except Exception as exc:
-        logger.error(f"Failed to process monthly RefreshJob {job.id}: {exc}")
-        return {"status": "failed", "error": str(exc)}
+    processed = 0
+    failed = 0
+    while True:
+        job = db.scalar(
+            select(RefreshJob)
+            .where(RefreshJob.jobType == "monthly_metrics")
+            .where(RefreshJob.status.in_(["queued", "retry"]))
+            .order_by(RefreshJob.createdAt.asc())
+            .limit(1)
+        )
+        if not job:
+            return {"status": "completed", "processed": processed, "failed": failed}
+
+        claimed = db.execute(
+            update(RefreshJob)
+            .where(RefreshJob.id == job.id)
+            .where(RefreshJob.status.in_(["queued", "retry"]))
+            .values(status="processing", updatedAt=datetime.utcnow())
+        ).rowcount
+        if claimed == 0:
+            db.rollback()
+            continue
+        db.commit()
+
+        try:
+            keywords = json.loads(job.keywordsJson or "[]")
+            keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
+            if keyword_texts:
+                from app.services.async_bulk_service import mark_keywords_processing_atomic
+                location = keywords[0].get("location", "India") if keywords else "India"
+                mark_keywords_processing_atomic(db, keyword_texts, location)
+            success = submit_refresh_job_to_dataforseo(db, job)
+            if success:
+                _apply_monthly_refresh_results(db, job)
+                processed += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            failed += 1
+            logger.error(f"Failed to process monthly RefreshJob {job.id}: {exc}")
 
 
 def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
@@ -415,8 +421,6 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
         
         now = datetime.utcnow()
         updated_count = 0
-        user_keyword_counts = {}
-        
         for kw_entry in keywords:
             kw_text = kw_entry.get("keyword", "").lower().strip()
             location = kw_entry.get("location", "India")
@@ -438,14 +442,20 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
             
             for db_keyword in db_keywords:
                 user_id = db_keyword.userId
-                if user_id not in user_keyword_counts:
-                    user_keyword_counts[user_id] = 0
-                user_keyword_counts[user_id] += 1
-                
                 if not metrics:
                     continue
                 
                 try:
+                    consume_automatic_reserved(
+                        db=db,
+                        user_id=user_id,
+                        reference=f"auto:monthly:{job.id}:{user_id}",
+                        amount=settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10),
+                        description=f"Monthly keyword metrics refresh: {kw_text}",
+                        project_id=db_keyword.projectId,
+                        keyword_id=db_keyword.id,
+                        task_id=job.id,
+                    )
                     history = KeywordMetricsHistory(
                         keywordId=db_keyword.id,
                         projectId=db_keyword.projectId,
@@ -476,33 +486,20 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
                     logger.error(f"Failed to apply monthly metrics for keyword {kw_text}: {exc}")
         
         db.commit()
-        
-        monthly_cost = settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10)
-        total_deducted = 0
-        
-        for user_id, count in user_keyword_counts.items():
-            user = db.scalar(select(User).where(User.id == user_id))
-            if not user:
-                continue
-            current_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-            required = count * monthly_cost
-            if current_balance >= required:
-                try:
-                    deduct_credits(
-                        db,
-                        user_id,
-                        float(required),
-                        "charge",
-                        f"Monthly keyword metrics refresh: {count} keyword(s)",
-                    )
-                    total_deducted += required
-                except Exception as exc:
-                    logger.error(f"Failed to deduct monthly metrics credits for user {user_id}: {exc}")
-            else:
-                logger.warning(f"Monthly metrics: user {user_id} has insufficient credits ({current_balance} < {required})")
-        
-        db.commit()
-        logger.info(f"Applied monthly metrics for RefreshJob {job.id}: updated {updated_count} keywords, deducted {total_deducted} credits")
+
+        pending_user_ids = db.scalars(
+            select(CreditLedger.userId).where(
+                CreditLedger.creditPool == "automatic",
+                CreditLedger.status == "pending",
+                CreditLedger.description.like(f"%[ref:auto:monthly:{job.id}:%"),
+            ).distinct()
+        ).all()
+        for user_id in pending_user_ids:
+            refund_automatic_reserved(
+                db, user_id, f"auto:monthly:{job.id}:{user_id}", 10**12,
+                "Unused monthly automatic tracking reservation refunded",
+            )
+        logger.info(f"Applied monthly metrics for RefreshJob {job.id}: updated {updated_count} keywords from automatic reservations")
         
     except Exception as exc:
         db.rollback()

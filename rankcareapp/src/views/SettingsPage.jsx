@@ -96,7 +96,7 @@ function SettingsContent() {
       setProfileSaved(true);
       addToast("Profile updated successfully", "success");
     } catch (err) {
-      setNameError(err || "Failed to update profile");
+      setNameError(err?.message || "Failed to update profile");
     }
   };
 
@@ -135,7 +135,7 @@ function SettingsContent() {
       setNewPassword("");
       setConfirmPassword("");
     } catch (err) {
-      setPasswordError(err || "Failed to change password");
+      setPasswordError(err?.message || "Failed to change password");
     }
   };
 
@@ -163,11 +163,11 @@ function SettingsContent() {
       setGstSaved(true);
       addToast("GST information updated successfully", "success");
     } catch (err) {
-      setGstError(err || "Failed to update GST information");
+      setGstError(err?.message || "Failed to update GST information");
     }
   };
 
-  const planLabel = profile?.selectedPlan || "—";
+  const planLabel = profile?.selectedPlan === 'free_trial' ? 'Free Plan' : (profile?.selectedPlan || "—");
   const planStatus = profile?.subscriptionStatus || "—";
 
   if (!authenticated) {
@@ -231,10 +231,6 @@ function SettingsContent() {
               {profile?.subscriptionStatus === "active" && profile?.subscriptionEndDate ? (
                 <p className="text-xs text-slate-500">
                   Plan ends: {formatDate(profile.subscriptionEndDate)}
-                </p>
-              ) : profile?.trialEndsAt ? (
-                <p className="text-xs text-slate-500">
-                  Trial ends: {formatDate(profile.trialEndsAt)}
                 </p>
               ) : null}
               <div className="flex items-center gap-3">

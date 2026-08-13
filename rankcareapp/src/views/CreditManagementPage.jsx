@@ -40,8 +40,8 @@ export default function CreditManagementPage() {
     setError(null);
     try {
       const data = await fetchCreditBalanceApi();
-      if (data?.success) {
-        setBalance(data.data.balance);
+      if (data?.balance !== undefined) {
+        setBalance(data.balance);
       }
     } catch (err) {
       setError(err.message || "Failed to load credit balance");
@@ -119,7 +119,7 @@ export default function CreditManagementPage() {
         {/* Balance Card */}
         <div className="mx-auto mt-10 max-w-2xl rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
           <div className="text-center">
-            <p className="text-sm font-medium text-slate-500">Available Credits</p>
+            <p className="text-sm font-medium text-slate-500">Spendable Credits</p>
             {loadingBalance ? (
               <div className="mt-2 h-10 w-32 animate-pulse rounded bg-slate-200 mx-auto" />
             ) : (

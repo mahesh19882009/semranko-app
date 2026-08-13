@@ -187,14 +187,15 @@ async def verify_credit_payment(
         db.add(pending_ledger)
         db.flush()
 
-        user = db.scalar(select(User).where(User.id == pending_ledger.userId))
-        if user:
-            current = float(getattr(user, "creditBalance", 0.0) or 0.0)
-            user.creditBalance = round(current + credits_to_add, 2)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            logger.info(f"[verify-credit-payment] Finalized pending ledger and added {credits_to_add} credits. New balance: {user.creditBalance}")
+        db.commit()
+        new_balance = add_purchased_credits(
+            db=db,
+            user_id=pending_ledger.userId,
+            amount=credits_to_add,
+            description=f"Credit purchase via Razorpay order {order_id}",
+            related_order_id=order_id,
+        )
+        logger.info(f"[verify-credit-payment] Finalized pending ledger and added {credits_to_add} credits. New balance: {new_balance}")
     elif credits_to_add > 0:
         new_balance = add_purchased_credits(
             db=db,

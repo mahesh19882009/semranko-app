@@ -1,6 +1,6 @@
 'use client'
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
-import { apiRequest } from '../../lib/api';
+import { apiRequest, toRejectedValue } from '../../lib/api';
 import { fetchDashboardByProject } from '../dashboard/dashboardSlice';
 import { fetchCurrentPricing } from '../pricing/pricingSlice';
 
@@ -22,6 +22,7 @@ const initialState = {
   clearingRankings: false,
   deletingBulkKeywords: false,
   deletingBulkRankings: false,
+  updatingKeywordStatus: false,
 
   error: null,
   actionMessage: null,
@@ -39,10 +40,7 @@ export const fetchKeywordsByProject = createAsyncThunk(
         rows: response.data || [],
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to fetch keywords',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to fetch keywords.', { projectId }));
     }
   }
 );
@@ -57,10 +55,7 @@ export const fetchRankingsByProject = createAsyncThunk(
         rows: response.data || [],
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to fetch rankings',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to fetch rankings.', { projectId }));
     }
   }
 );
@@ -90,10 +85,7 @@ export const addKeywordToProject = createAsyncThunk(
         message: response.message || 'Keyword added successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to add keyword',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to add keyword.', { projectId }));
     }
   }
 );
@@ -131,10 +123,7 @@ export const deleteKeywordById = createAsyncThunk(
         message: response.message || 'Keyword deleted successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to delete keyword',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to delete keyword.', { projectId }));
     }
   }
 );
@@ -165,10 +154,7 @@ export const deleteRankingById = createAsyncThunk(
         message: response.message || 'Ranking deleted successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to delete ranking',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to delete ranking.', { projectId }));
     }
   }
 );
@@ -199,10 +185,7 @@ export const clearProjectRankings = createAsyncThunk(
         message: response.message || 'Rankings cleared successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to clear rankings',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to clear rankings.', { projectId }));
     }
   }
 );
@@ -232,10 +215,7 @@ export const bulkAddKeywords = createAsyncThunk(
         message: response.message || 'Keywords added successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to add keywords',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to add keywords.', { projectId }));
     }
   }
 );
@@ -274,10 +254,61 @@ export const bulkDeleteKeywords = createAsyncThunk(
         message: response.message || 'Keywords deleted successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to delete keywords',
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to delete keywords.', { projectId }));
+    }
+  }
+);
+
+export const setKeywordActiveState = createAsyncThunk(
+  'keywords/setKeywordActiveState',
+  async ({ keywordId, projectId, active }, thunkAPI) => {
+    try {
+      const response = await apiRequest(`/keywords/${keywordId}/${active ? 'activate' : 'deactivate'}`, {
+        method: 'POST',
       });
+
+      if (isSameProject(thunkAPI.getState().projects.selectedProjectId, projectId)) {
+        await Promise.all([
+          thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
+          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+        ]);
+      }
+
+      return {
+        projectId,
+        message: response.message || `Keyword ${active ? 'activated' : 'deactivated'} successfully`,
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue(toRejectedValue(error, `Failed to ${active ? 'activate' : 'deactivate'} keyword.`, { projectId }));
+    }
+  }
+);
+
+export const bulkSetKeywordActiveState = createAsyncThunk(
+  'keywords/bulkSetKeywordActiveState',
+  async ({ projectId, keywordIds, active }, thunkAPI) => {
+    try {
+      const response = await apiRequest('/keywords/bulk/status', {
+        method: 'POST',
+        body: JSON.stringify({ keyword_ids: keywordIds, active }),
+      });
+
+      if (isSameProject(thunkAPI.getState().projects.selectedProjectId, projectId)) {
+        await Promise.all([
+          thunkAPI.dispatch(fetchKeywordsByProject(projectId)),
+          thunkAPI.dispatch(fetchDashboardByProject(projectId)),
+        ]);
+      }
+
+      const invalidCount = response.data?.invalid?.length || 0;
+      return {
+        projectId,
+        message: invalidCount
+          ? `${response.data.updatedCount} keyword(s) updated; ${invalidCount} invalid selection(s) skipped`
+          : `${response.data?.updatedCount || 0} keyword(s) ${active ? 'activated' : 'deactivated'}`,
+      };
+    } catch (error) {
+      return thunkAPI.rejectWithValue(toRejectedValue(error, `Failed to ${active ? 'activate' : 'deactivate'} keywords.`, { projectId }));
     }
   }
 );
@@ -309,10 +340,7 @@ export const bulkDeleteRankings = createAsyncThunk(
         message: response.message || 'Rankings deleted successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to delete rankings',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to delete rankings.', { projectId }));
     }
   }
 );
@@ -361,10 +389,7 @@ export const pollRankingsByProject = createAsyncThunk(
         rows: [],
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed while polling rankings',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed while polling rankings.', { projectId }));
     }
   }
 );
@@ -413,10 +438,7 @@ export const runRankCheck = createAsyncThunk(
         message: response.message || 'Rank check queued successfully',
       };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        projectId,
-        message: error.message || 'Failed to run rank check',
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to run rank check.', { projectId }));
     }
   }
 );
@@ -447,6 +469,7 @@ const keywordsSlice = createSlice({
       state.deletingKeyword = false;
       state.deletingRanking = false;
       state.clearingRankings = false;
+      state.updatingKeywordStatus = false;
       state.error = null;
       state.actionMessage = null;
       state.search = '';
@@ -553,6 +576,42 @@ const keywordsSlice = createSlice({
         }
 
         state.error = action.payload?.message || 'Failed to delete keywords';
+      })
+
+      .addCase(setKeywordActiveState.pending, (state) => {
+        state.updatingKeywordStatus = true;
+        state.error = null;
+        state.actionMessage = null;
+      })
+      .addCase(setKeywordActiveState.fulfilled, (state, action) => {
+        state.updatingKeywordStatus = false;
+        if (isSameProject(state.currentProjectId, action.payload.projectId)) {
+          state.actionMessage = action.payload.message;
+        }
+      })
+      .addCase(setKeywordActiveState.rejected, (state, action) => {
+        state.updatingKeywordStatus = false;
+        if (!action.payload?.projectId || isSameProject(state.currentProjectId, action.payload.projectId)) {
+          state.error = action.payload?.message || 'Failed to update keyword status';
+        }
+      })
+
+      .addCase(bulkSetKeywordActiveState.pending, (state) => {
+        state.updatingKeywordStatus = true;
+        state.error = null;
+        state.actionMessage = null;
+      })
+      .addCase(bulkSetKeywordActiveState.fulfilled, (state, action) => {
+        state.updatingKeywordStatus = false;
+        if (isSameProject(state.currentProjectId, action.payload.projectId)) {
+          state.actionMessage = action.payload.message;
+        }
+      })
+      .addCase(bulkSetKeywordActiveState.rejected, (state, action) => {
+        state.updatingKeywordStatus = false;
+        if (!action.payload?.projectId || isSameProject(state.currentProjectId, action.payload.projectId)) {
+          state.error = action.payload?.message || 'Failed to update keyword statuses';
+        }
       })
 
       .addCase(deleteKeywordById.pending, (state) => {

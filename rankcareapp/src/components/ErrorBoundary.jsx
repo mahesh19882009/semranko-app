@@ -11,7 +11,9 @@ function ErrorBoundary({ children, fallback }) {
     }
 
     componentDidCatch(error, errorInfo) {
-      console.error('UI error caught by boundary:', error, errorInfo);
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('UI error caught by boundary:', error, errorInfo);
+      }
     }
 
     render() {
@@ -28,17 +30,16 @@ function ErrorBoundary({ children, fallback }) {
               </div>
               <h2 className="text-lg font-semibold text-slate-900">Something went wrong</h2>
               <p className="mt-2 text-sm text-slate-600">
-                {this.state.error?.message || 'An unexpected error occurred. Please try refreshing the page.'}
+                An unexpected error occurred. Your data is safe; please try again.
               </p>
-              <Button
-                type="button"
-                onClick={() => {
-                  this.setState({ hasError: false, error: null });
-                }}
-                variant="primary"
-              >
-                Try again
-              </Button>
+              <div className="mt-5 flex justify-center gap-3">
+                <Button type="button" onClick={() => this.setState({ hasError: false, error: null })} variant="primary">
+                  Try again
+                </Button>
+                <Button type="button" onClick={() => { window.location.href = '/dashboard'; }} variant="secondary">
+                  Return to Dashboard
+                </Button>
+              </div>
             </div>
           </div>
         );

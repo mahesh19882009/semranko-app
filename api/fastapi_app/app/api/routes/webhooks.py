@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ID_TO_KEY
 from app.services import email_service
 from app.services.credit_service import deduct_credits
+from app.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -106,10 +107,18 @@ async def razorpay_webhook(request: Request):
         if not payment_id:
             return {"status": "ok"}
 
+        is_credit_top_up = getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP"
         existing_ledger = db.scalar(
             select(CreditLedger).where(CreditLedger.relatedOrderId == order_id)
         )
-        if existing_ledger:
+        if existing_ledger and not is_credit_top_up:
+            return {"status": "duplicate_ignored"}
+        if (
+            existing_ledger
+            and is_credit_top_up
+            and existing_ledger.creditPool == "purchased"
+            and existing_ledger.status == "completed"
+        ):
             return {"status": "duplicate_ignored"}
 
         user = db.scalar(select(User).where(User.id == payment_order.userId))
@@ -117,30 +126,16 @@ async def razorpay_webhook(request: Request):
             logger.error(f"User not found for payment order: {order_id}")
             return {"status": "ok"}
 
-        if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
+        if is_credit_top_up:
             multiplier = getattr(payment_order, "planId", 0)
             credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
             credits_to_add = int(multiplier) * credits_per_unit
-            user.creditBalance = round(
-                float(getattr(user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2
-            )
-            db.add(user)
-
-            ledger = CreditLedger(
-                userId=user.id,
-                ownerId=user.id,
-                amount=float(credits_to_add),
-                actionType="CREDIT_TOP_UP",
-                description="Credit top-up via Razorpay payment",
-                relatedOrderId=order_id,
-                status="success",
-            )
-            db.add(ledger)
-
             payment_order.status = "paid"
             payment_order.razorpayPaymentId = payment_id
             db.add(payment_order)
             db.commit()
+            from app.services.credit_service import add_purchased_credits
+            add_purchased_credits(db, user.id, credits_to_add, "Credit top-up via Razorpay payment", order_id)
 
             logger.info(f"[webhook] Credit top-up processed: user={user.id} credits_added={credits_to_add}")
 
@@ -361,7 +356,7 @@ async def dataforseo_webhook(request: Request):
 
 
 @router.get("/refresh-status")
-async def get_refresh_status():
+async def get_refresh_status(current_user: dict = Depends(get_current_user)):
     """Get refresh job status for weekly and monthly tracking."""
     db = SessionLocal()
     try:

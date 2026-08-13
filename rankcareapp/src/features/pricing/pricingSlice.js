@@ -7,6 +7,7 @@ import {
   fetchPlansApi,
   fetchCreditBalanceApi,
 } from "./pricingApi";
+import { toRejectedValue } from "../../lib/api";
 
 export const fetchPricingPlans = createAsyncThunk(
   "pricing/fetchPlans",
@@ -14,7 +15,7 @@ export const fetchPricingPlans = createAsyncThunk(
     try {
       return await fetchPlansApi();
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to fetch plans");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to fetch plans."));
     }
   }
 );
@@ -25,7 +26,7 @@ export const fetchCurrentPricing = createAsyncThunk(
     try {
       return await fetchCurrentPricingApi();
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to fetch current pricing");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to fetch current pricing."));
     }
   }
 );
@@ -37,10 +38,7 @@ export const checkPlanChange = createAsyncThunk(
       const result = await checkPlanChangeApi(plan);
       return { plan, result };
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        plan,
-        message: error.message || "Failed to validate plan change",
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to validate plan change.", { plan }));
     }
   }
 );
@@ -51,7 +49,7 @@ export const fetchCreditBalance = createAsyncThunk(
     try {
       return await fetchCreditBalanceApi();
     } catch (error) {
-      return thunkAPI.rejectWithValue(error.message || "Failed to fetch credit balance");
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to fetch credit balance."));
     }
   }
 );
@@ -63,10 +61,7 @@ export const changePlan = createAsyncThunk(
       const result = await changePlanApi(plan);
       return result;
     } catch (error) {
-      return thunkAPI.rejectWithValue({
-        message: error.message || "Failed to change plan",
-        data: error.data || null,
-      });
+      return thunkAPI.rejectWithValue(toRejectedValue(error, "Failed to change plan."));
     }
   }
 );
@@ -118,7 +113,7 @@ const pricingSlice = createSlice({
       .addCase(fetchCurrentPricing.fulfilled, (state, action) => {
         state.loadingCurrent = false;
         state.current = action.payload || null;
-        state.creditBalance = action.payload?.creditBalance || null;
+        state.creditBalance = action.payload?.creditBalance ?? null;
       })
       .addCase(fetchCurrentPricing.rejected, (state, action) => {
         state.loadingCurrent = false;
@@ -128,7 +123,7 @@ const pricingSlice = createSlice({
         state.error = null;
       })
       .addCase(fetchCreditBalance.fulfilled, (state, action) => {
-        state.creditBalance = action.payload?.balance || null;
+        state.creditBalance = action.payload?.balance ?? null;
       })
       .addCase(fetchCreditBalance.rejected, (state, action) => {
         state.error = action.payload || "Failed to fetch credit balance";

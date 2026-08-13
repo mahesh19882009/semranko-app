@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.core.security import (
-    create_access_token,
+    create_mobile_verification_token,
     generate_email_verification_token,
     hash_password,
     hash_token,
@@ -18,6 +18,7 @@ from app.db.models import User
 from app.services import email_service
 from app.services.otp_service import _normalize_mobile
 from app.utils.serializers import model_to_dict
+from app.core.session import invalidate_session
 
 
 def _send_verification_email_background(email, name, verification_url):
@@ -52,8 +53,7 @@ def register_user(db: Session, payload: dict) -> dict:
     raw_token, token_hash = generate_email_verification_token()
     expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
 
-    trial_starts_at = datetime.utcnow()
-    trial_ends_at = trial_starts_at + timedelta(days=settings.TRIAL_DAYS)
+    free_started_at = datetime.utcnow()
 
     user = User(
         name=name.strip(),
@@ -64,10 +64,15 @@ def register_user(db: Session, payload: dict) -> dict:
         emailVerificationExpiresAt=expires_at,
         authProvider="local",
         selectedPlan="free_trial",
-        subscriptionStatus="trialing",
-        trialStartsAt=trial_starts_at,
-        trialEndsAt=trial_ends_at,
-        creditBalance=200.0,
+        subscriptionStatus="free",
+        trialStartsAt=None,
+        trialEndsAt=None,
+        planAnniversaryAt=free_started_at,
+        lastCreditResetAt=free_started_at,
+        creditBalance=100.0,
+        planCreditBalance=100.0,
+        purchasedCreditBalance=0.0,
+        automaticCreditBalance=0.0,
         mobileNumber=normalized_mobile,
     )
 
@@ -91,6 +96,7 @@ def register_user(db: Session, payload: dict) -> dict:
     )
     result["emailSent"] = True
     result["mobileVerificationRequired"] = True
+    result["mobileVerificationToken"] = create_mobile_verification_token(user.id)
     return result
 
 
@@ -132,10 +138,10 @@ def resend_verification_email(db: Session, payload: dict) -> dict:
 
     user = db.scalar(select(User).where(User.email == normalized_email))
     if not user:
-        raise ApiError(404, "User not found")
+        return {"sent": True}
 
     if user.isVerified:
-        return {"sent": False, "alreadyVerified": True}
+        return {"sent": True}
 
     raw_token, token_hash = generate_email_verification_token()
     expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
@@ -165,25 +171,44 @@ def login_user(db: Session, payload: dict) -> dict:
 
     user = db.scalar(select(User).where(User.email == normalized_email))
     if not user:
-        raise ApiError(401, "Invalid email or password")
+        raise ApiError(401, "Invalid email or password", {"error": "INVALID_CREDENTIALS"})
 
     if not user.passwordHash or not verify_password(password, user.passwordHash):
-        raise ApiError(401, "Invalid email or password")
+        raise ApiError(401, "Invalid email or password", {"error": "INVALID_CREDENTIALS"})
 
     if not user.isVerified:
-        raise HTTPException(status_code=403, detail="Please verify your email before logging in")
+        raise ApiError(403, "Please verify your email before logging in", {
+            "error": "EMAIL_VERIFICATION_REQUIRED",
+            "action": "resend_verification",
+        })
 
     if not user.mobileVerified:
-        raise HTTPException(status_code=403, detail="Please verify your mobile number before logging in")
-
-    access_token = create_access_token(str(user.id), user.email)
+        raise ApiError(403, "Please verify your mobile number before logging in", {
+            "error": "MOBILE_VERIFICATION_REQUIRED",
+            "action": "verify_mobile",
+        })
 
     return {
-        "accessToken": access_token,
         "user": model_to_dict(
             user,
             exclude={"passwordHash", "emailVerificationToken"}
         ),
+    }
+
+
+def create_mobile_verification_session(db: Session, payload: dict) -> dict:
+    email = str(payload.get("email") or "").strip().lower()
+    password = payload.get("password")
+    if not email or not password:
+        raise ApiError(400, "Email and password are required")
+    user = db.scalar(select(User).where(User.email == email))
+    if not user or not user.passwordHash or not verify_password(password, user.passwordHash):
+        raise ApiError(401, "Invalid email or password", {"error": "INVALID_CREDENTIALS"})
+    if user.mobileVerified:
+        return {"mobileVerified": True}
+    return {
+        "mobileVerified": False,
+        "mobileVerificationToken": create_mobile_verification_token(user.id),
     }
 
 
@@ -202,7 +227,7 @@ def forgot_password(db: Session, payload: dict) -> dict:
         return {"sent": True}
 
     if user.authProvider != "local":
-        raise ApiError(400, "Password reset is only available for local accounts")
+        return {"sent": True}
 
     raw_token, token_hash = generate_email_verification_token()
     expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
@@ -247,6 +272,11 @@ def reset_password(db: Session, payload: dict) -> dict:
     db.add(user)
     db.commit()
 
+    try:
+        invalidate_session(str(user.id))
+    except Exception:
+        pass
+
     return {"reset": True}
 
 
@@ -267,5 +297,10 @@ def change_user_password(db: Session, user_id: str, current_password: str, new_p
     user.passwordHash = hash_password(new_password)
     db.add(user)
     db.commit()
+
+    try:
+        invalidate_session(str(user.id))
+    except Exception:
+        pass
 
     return {"changed": True}

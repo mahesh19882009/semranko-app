@@ -1,6 +1,6 @@
 'use client'
-import { useState, useMemo } from "react";
-import { useSelector } from "react-redux";
+import { useEffect, useState, useMemo } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import { Chart } from 'primereact/chart';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
@@ -14,6 +14,8 @@ import Alert from "../components/ui/Alert";
 import Input from "../components/ui/Input";
 import CountrySelector from "../components/CountrySelector";
 import { getCountryCode } from "../data/locations";
+import FeatureUsageSummary from "../components/FeatureUsageSummary";
+import { fetchSubscriptionStatus } from "../features/subscription/subscriptionSlice";
 
 const STORAGE_KEY = 'rankcare_keyword_research_cache';
 const SPY_STORAGE_KEY = 'rankcare_competitor_spy_cache';
@@ -59,7 +61,9 @@ function saveCachedSpy(data) {
 }
 
 export default function KeywordResearchPage() {
+  const dispatch = useDispatch();
   const selectedProject = useSelector(selectSelectedProject);
+  const subscription = useSelector((state) => state.subscription.data);
 
   const [keyword, setKeyword] = useState("");
   const [country, setCountry] = useState("India");
@@ -76,6 +80,20 @@ export default function KeywordResearchPage() {
   });
   const [spyLoading, setSpyLoading] = useState(false);
   const [spyError, setSpyError] = useState("");
+  const [researchUsage, setResearchUsage] = useState(null);
+  const [spyUsage, setSpyUsage] = useState(null);
+
+  const effectivePlan = subscription?.effectivePlan || subscription?.plan;
+  const researchAllowance = researchUsage || subscription?.featureUsage?.keywordResearch;
+  const spyAllowance = spyUsage || subscription?.featureUsage?.competitorSpy;
+  const researchLocked = effectivePlan === 'free_trial' || (researchAllowance?.limit ?? subscription?.limits?.keywordResearchLimit ?? 0) <= 0;
+  const spyLocked = effectivePlan === 'free_trial' || (spyAllowance?.limit ?? subscription?.limits?.competitorSpyLimit ?? 0) <= 0;
+  const researchCost = subscription?.creditCosts?.keywordResearch;
+  const spyCost = subscription?.creditCosts?.competitorSpy;
+
+  useEffect(() => {
+    dispatch(fetchSubscriptionStatus());
+  }, [dispatch]);
 
   // Prepare chart data for keyword research - top suggestions by volume
   const keywordChartData = useMemo(() => {
@@ -172,8 +190,11 @@ export default function KeywordResearchPage() {
       const result = await researchKeywordApi(keyword, countryCode, country);
       const data = result.data;
       setResearchData(data);
+      if (data?.usage) setResearchUsage(data.usage);
       saveCachedResearch(data);
+      dispatch(fetchSubscriptionStatus());
     } catch (err) {
+      if (err?.data?.usage) setResearchUsage(err.data.usage);
       setError(err?.message || "Failed to research keyword");
     } finally {
       setLoading(false);
@@ -192,8 +213,11 @@ export default function KeywordResearchPage() {
       const result = await competitorSpyApi(spyDomain, countryCode, country);
       const keywords = result.data?.keywords || [];
       setSpyResults(keywords);
+      if (result.data?.usage) setSpyUsage(result.data.usage);
       saveCachedSpy({ keywords, domain: spyDomain });
+      dispatch(fetchSubscriptionStatus());
     } catch (err) {
+      if (err?.data?.usage) setSpyUsage(err.data.usage);
       setSpyError(err?.message || "Failed to spy competitor");
     } finally {
       setSpyLoading(false);
@@ -235,6 +259,10 @@ export default function KeywordResearchPage() {
         {activeTab === "research" && (
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900 mb-4">Research a Keyword</h2>
+            <div className="mb-4">
+              <FeatureUsageSummary label="Keyword Research" usage={researchAllowance} costLabel={`${researchCost ?? '—'} spendable credits per uncached report`} />
+            </div>
+            {researchLocked && <Alert variant="warning" message="This feature is available on paid plans. Upgrade to continue." />}
 
             <form onSubmit={handleResearch} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -246,7 +274,7 @@ export default function KeywordResearchPage() {
                 />
                 <CountrySelector value={country} onChange={handleCountryChange} />
                 <div className="flex items-end">
-                  <Button type="submit" disabled={loading || !keyword.trim()} loading={loading} fullWidth>
+                  <Button type="submit" disabled={researchLocked || (researchAllowance?.remaining ?? 1) <= 0 || loading || !keyword.trim()} loading={loading} fullWidth>
                     Research
                   </Button>
                 </div>
@@ -304,6 +332,10 @@ export default function KeywordResearchPage() {
         {activeTab === "spy" && (
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
             <h2 className="text-xl font-semibold text-slate-900 mb-4">Competitor Keyword Spy</h2>
+            <div className="mb-4">
+              <FeatureUsageSummary label="Competitor Spy" usage={spyAllowance} costLabel={`${spyCost ?? '—'} spendable credits per uncached report`} />
+            </div>
+            {spyLocked && <Alert variant="warning" message="This feature is available on paid plans. Upgrade to continue." />}
 
             <form onSubmit={handleSpy} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -315,7 +347,7 @@ export default function KeywordResearchPage() {
                 />
                 <CountrySelector value={country} onChange={handleCountryChange} />
                 <div className="flex items-end !mb-[2px]">
-                  <Button className="!h-[45px]" type="submit" disabled={spyLoading || !spyDomain.trim()} loading={spyLoading} fullWidth>
+                  <Button className="!h-[45px]" type="submit" disabled={spyLocked || (spyAllowance?.remaining ?? 1) <= 0 || spyLoading || !spyDomain.trim()} loading={spyLoading} fullWidth>
                     Spy
                   </Button>
                 </div>

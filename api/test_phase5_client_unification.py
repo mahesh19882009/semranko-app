@@ -137,10 +137,15 @@ class TestPhase5ClientUnification:
             "items": [{"type": "organic", "url": "https://example.com/cached", "rank_group": 3, "domain": "example.com"}],
             "item_groups": [],
         }
-        set_cached("serp", cache_key, cached_serp, ttl_seconds=86400)
+        cache_values = {}
+        fake_redis = MagicMock()
+        fake_redis.setex.side_effect = lambda key, ttl, value: cache_values.__setitem__(key, value)
+        fake_redis.get.side_effect = lambda key: cache_values.get(key)
 
-        with patch.object(DataForSEOClient, "_fetch_keyword_data_batch") as mock_labs, \
+        with patch("app.services.cache_service.redis_client", fake_redis), \
+             patch.object(DataForSEOClient, "_fetch_keyword_data_batch") as mock_labs, \
              patch("app.services.dataforseo_client.requests.post") as mock_post:
+            set_cached("serp", cache_key, cached_serp, ttl_seconds=86400)
             mock_labs.return_value = {"test kw": {"volume": 100, "kd": 20, "difficulty": 20, "cpc": 1.0, "competition": 0.5, "intent": "informational", "backlinks": 50, "referring_domains": 10}}
             mock_post.return_value.raise_for_status.return_value = None
             mock_post.return_value.json.return_value = {"tasks": []}

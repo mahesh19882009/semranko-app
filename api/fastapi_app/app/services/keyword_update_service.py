@@ -24,15 +24,20 @@ from app.db.models import Keyword, Project, CreditLedger
 from app.services.credit_service import reserve_credits, consume_reserved, refund_reserved
 from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
 from app.core.config import get_settings
+from app.services.feature_usage_service import (
+    ensure_feature_available,
+    reserve_feature_usage,
+    finalize_feature_usage,
+    release_feature_usage,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-CREDIT_COST_PER_KEYWORD = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
+CREDIT_COST_PER_KEYWORD = settings.plan_config.credit_costs.get("manual_refresh_per_keyword", 20)
 SYNC_BATCH_THRESHOLD = 50
 DATAFORSEO_BATCH_LIMIT = 1000
 MANUAL_REFRESH_COOLDOWN_MINUTES = 60
-MAX_MANUAL_REFRESHES_PER_USER_PER_DAY = 50
 
 
 def refresh_keyword_data(
@@ -60,6 +65,25 @@ def refresh_keyword_data(
     if not project:
         return {"success": False, "error": "PROJECT_NOT_FOUND"}
 
+    if keyword_ids:
+        requested_ids = {str(keyword_id) for keyword_id in keyword_ids}
+        requested_keywords = db.scalars(
+            select(Keyword).where(
+                Keyword.projectId == project_id,
+                Keyword.id.in_(requested_ids),
+            )
+        ).all()
+        inactive = [keyword for keyword in requested_keywords if not keyword.isActive and keyword.deletedAt is None]
+        if inactive:
+            return {
+                "success": False,
+                "error": "KEYWORD_INACTIVE",
+                "message": "Activate this keyword before refreshing it.",
+                "keyword_ids": [keyword.id for keyword in inactive],
+            }
+
+    usage = ensure_feature_available(db, user_id, "manual_refresh")
+
     project_location_code = project.locationCode or LOCATION_MAP.get(project.location or "India", 2840)
 
     from app.db.models import User
@@ -75,14 +99,13 @@ def refresh_keyword_data(
     keywords = db.scalars(query).all()
 
     if not keywords:
-        return {"success": True, "updated": 0, "skipped": 0, "failed": 0, "remaining_credits_needed": 0}
+        return {"success": True, "updated": 0, "skipped": 0, "failed": 0, "remaining_credits_needed": 0, "usage": usage}
 
     needs_refresh = list(keywords)
     skipped = 0
 
     now = datetime.utcnow()
     cooldown_cutoff = now - timedelta(minutes=MANUAL_REFRESH_COOLDOWN_MINUTES)
-    day_cutoff = now - timedelta(days=1)
 
     filtered_keywords = []
     for kw in needs_refresh:
@@ -94,29 +117,7 @@ def refresh_keyword_data(
     needs_refresh = filtered_keywords
 
     if not needs_refresh:
-        return {"success": True, "updated": 0, "skipped": skipped, "failed": 0, "remaining_credits_needed": 0}
-
-    daily_refresh_count = db.scalar(
-        select(func.count())
-        .select_from(CreditLedger)
-        .where(
-            CreditLedger.userId == user_id,
-            CreditLedger.actionType == "charge",
-            CreditLedger.description.like("Keyword refresh:%"),
-            CreditLedger.timestamp >= day_cutoff,
-        )
-    ) or 0
-
-    if daily_refresh_count >= MAX_MANUAL_REFRESHES_PER_USER_PER_DAY:
-        return {
-            "success": False,
-            "error": "DAILY_LIMIT_EXCEEDED",
-            "message": f"Daily manual refresh limit exceeded. Maximum {MAX_MANUAL_REFRESHES_PER_USER_PER_DAY} manual refreshes per day.",
-            "data": {
-                "daily_count": daily_refresh_count,
-                "daily_limit": MAX_MANUAL_REFRESHES_PER_USER_PER_DAY,
-            },
-        }
+        return {"success": True, "updated": 0, "skipped": skipped, "failed": 0, "remaining_credits_needed": 0, "usage": usage}
 
     estimated_dfs_cost = len(needs_refresh) * 0.037
     from app.services.dataforseo_client import check_dfs_cost_ceiling
@@ -151,6 +152,13 @@ def refresh_keyword_data(
     keyword_map = {kw.keyword: kw for kw in batch}
 
     reference = f"refresh:{project_id}:{datetime.utcnow().timestamp()}"
+    usage_reference, usage = reserve_feature_usage(
+        db,
+        user_id,
+        "manual_refresh",
+        affordable_count,
+        reference=f"manual-refresh-usage:{project_id}:{datetime.utcnow().timestamp()}",
+    )
     try:
         reserve_credits(
             db,
@@ -196,6 +204,10 @@ def refresh_keyword_data(
             )
         except Exception as refund_exc:
             logger.error(f"Failed to refund reserved credits for keyword refresh: {refund_exc}")
+        try:
+            release_feature_usage(db, usage_reference)
+        except Exception:
+            db.rollback()
         return {
             "success": False,
             "error": "FETCH_FAILED",
@@ -257,6 +269,7 @@ def refresh_keyword_data(
         except Exception:
             pass
 
+    usage = finalize_feature_usage(db, usage_reference, updated)
     db.commit()
 
     return {
@@ -265,4 +278,5 @@ def refresh_keyword_data(
         "skipped": skipped,
         "failed": failed,
         "remaining_credits_needed": remaining_credits_needed,
+        "usage": usage,
     }

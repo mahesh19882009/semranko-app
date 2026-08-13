@@ -158,7 +158,8 @@ class TestPendingUpgradeActivatesAtBoundary:
         self.db.refresh(user)
         assert user.selectedPlan == "pro"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 30000.0
+        assert user.creditBalance == 15000.0
+        assert user.automaticCreditBalance == 25000.0
 
 
 class TestPendingDowngradeActivatesAtBoundary:
@@ -186,7 +187,8 @@ class TestPendingDowngradeActivatesAtBoundary:
         self.db.refresh(user)
         assert user.selectedPlan == "starter"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
 
 class TestExistingCreditsRetained:
@@ -232,7 +234,8 @@ class TestCreditsResetCorrectly:
         change_user_plan(self.db, user.id, "pro")
         reset_monthly_credits(self.db, user)
         self.db.refresh(user)
-        assert user.creditBalance == 30000.0
+        assert user.creditBalance == 15000.0
+        assert user.automaticCreditBalance == 25000.0
 
     def test_ledger_reflects_actual_balance(self):
         user = make_user(
@@ -248,9 +251,10 @@ class TestCreditsResetCorrectly:
         
         ledgers = self.db.scalars(select(CreditLedger).where(CreditLedger.userId == user.id)).all()
         assert len(ledgers) == 1
-        assert ledgers[0].amount == 30000.0
+        assert ledgers[0].amount == 40000.0
         assert ledgers[0].balanceBefore == 5000.0
-        assert ledgers[0].balanceAfter == 30000.0
+        assert ledgers[0].balanceAfter == 15000.0
+        assert ledgers[0].automaticCreditsChange == 25000.0
 
 
 class TestBatchAndSingleResetConsistent:
@@ -277,7 +281,8 @@ class TestBatchAndSingleResetConsistent:
         self.db.refresh(user)
         assert user.selectedPlan == "starter"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
 
 class TestPaymentPlanValidation:
@@ -414,7 +419,8 @@ class TestInvalidPendingPlan:
         self.db.refresh(user)
         assert user.selectedPlan == "starter"
         assert user.pendingPlanChange is None
-        assert user.creditBalance == 6000.0
+        assert user.creditBalance == 3000.0
+        assert user.automaticCreditBalance == 5000.0
 
 
 class TestIdempotency:

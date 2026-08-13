@@ -1,24 +1,20 @@
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from typing import Optional
 
 from app.core.errors import ApiError
 from app.core.security import decode_access_token
 from app.core.session import validate_session
 from app.db.session import get_db
 from app.db.models import User
+from app.core.auth_cookies import read_auth_cookies
 
 
 def get_current_user(
-    authorization: Optional[str] = Header(default=None),
+    request: Request,
     db: Session = Depends(get_db),
-    session_token: Optional[str] = Header(default=None, alias="X-Session-Token"),
 ) -> dict:
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ", 1)[1]
-
+    token, session_token = read_auth_cookies(request)
     if not token:
         raise ApiError(401, "Unauthorized")
 
@@ -27,6 +23,8 @@ def get_current_user(
     except Exception as exc:  # noqa: BLE001
         raise ApiError(401, "Invalid token") from exc
 
+    if payload.get("purpose"):
+        raise ApiError(401, "Invalid token")
     user_id = payload.get("userId")
     if not user_id:
         raise ApiError(401, "Invalid token")
@@ -43,9 +41,11 @@ def get_current_user(
     user = db.scalar(select(User).where(User.id == user_id))
     if user:
         payload["selectedPlan"] = user.selectedPlan
-        payload["subscriptionStatus"] = user.subscriptionStatus
-        payload["trialEndsAt"] = user.trialEndsAt.isoformat() if user.trialEndsAt else None
+        is_free = (user.selectedPlan or "free_trial").strip().lower() == "free_trial"
+        payload["subscriptionStatus"] = "free" if is_free else user.subscriptionStatus
+        payload["trialEndsAt"] = None if is_free else (user.trialEndsAt.isoformat() if user.trialEndsAt else None)
         payload["creditBalance"] = user.creditBalance
+        payload["automaticCreditBalance"] = user.automaticCreditBalance
 
     payload["id"] = user_id
     return payload
@@ -74,8 +74,10 @@ def verify_user_access_privileges(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Check if user is expired or has insufficient credits
-    if user.subscriptionStatus == "expired" or (user.creditBalance or 0) <= 0:
+    # Free remains accessible even if a historical row has an expired status or
+    # zero credits. Paid plans retain the existing expiry/credit gate.
+    is_free = (user.selectedPlan or "free_trial").strip().lower() == "free_trial"
+    if not is_free and (user.subscriptionStatus == "expired" or (user.creditBalance or 0) <= 0):
         raise HTTPException(
             status_code=402,
             detail="Payment Required: Your subscription has expired or you have insufficient credits. Please upgrade your plan or purchase credits."
@@ -90,4 +92,3 @@ def verify_user_access_privileges_allow_bulk(
 ):
     """Wrapper that allows free_trial users to access bulk operations."""
     return verify_user_access_privileges(db, current_user, allow_free_trial_bulk=True)
-

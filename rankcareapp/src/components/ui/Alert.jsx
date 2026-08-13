@@ -57,6 +57,7 @@ function Alert({
   onDismiss,
   className = '',
 }) {
+  const displayMessage = typeof message === 'string' ? message : message?.message;
   const styles = VARIANT_STYLES[variant] || VARIANT_STYLES.info;
   const Icon = VARIANT_ICONS[variant] || VARIANT_ICONS.info;
 
@@ -75,14 +76,14 @@ function Alert({
             </p>
           ) : null}
 
-          {message ? (
+          {displayMessage ? (
             <p className={title ? 'mt-1' : ''}>
-              {message}
+              {displayMessage}
             </p>
           ) : null}
 
           {children ? (
-            <div className={title || message ? 'mt-1' : ''}>
+            <div className={title || displayMessage ? 'mt-1' : ''}>
               {children}
             </div>
           ) : null}

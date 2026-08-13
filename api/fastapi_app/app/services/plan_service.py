@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import GST_RATE, get_settings
@@ -13,6 +13,19 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def get_credit_costs() -> dict:
+    costs = settings.plan_config.credit_costs
+    return {
+        "addKeyword": costs.get("add_keyword", 20),
+        "bulkAddKeyword": costs.get("bulk_add_keyword", 20),
+        "manualRefresh": costs.get("manual_refresh_per_keyword", 20),
+        "weeklyRefresh": costs.get("weekly_refresh_per_keyword", 10),
+        "monthlyMetrics": costs.get("monthly_refresh_per_keyword", 10),
+        "keywordResearch": costs.get("keyword_research", 20),
+        "competitorSpy": costs.get("competitor_spy", 30),
+    }
+
+
 def _plan_definition_to_dict(pd) -> dict:
     return {
         "key": pd.key,
@@ -21,8 +34,12 @@ def _plan_definition_to_dict(pd) -> dict:
         "yearlyPrice": pd.yearly_price_inr,
         "domain_limit": pd.domain_limit,
         "monthlyCredits": pd.monthly_credits,
+        "automaticCredits": pd.automatic_credits,
+        "spendableCredits": pd.monthly_credits - pd.automatic_credits,
         "keywordLimit": pd.keyword_limit,
         "competitorSpyLimit": pd.competitor_spy_limit,
+        "manualRefreshLimit": pd.manual_refresh_limit,
+        "keywordResearchLimit": pd.keyword_research_limit,
         "competitorsPerProject": pd.competitors_per_project,
         "reportsPerMonth": pd.reports_per_month,
         "weeklyTrackingEnabled": pd.key in {"starter", "pro", "agency", "enterprise"},
@@ -35,7 +52,11 @@ def _plan_definition_to_dict(pd) -> dict:
             "competitorsPerProject": pd.competitors_per_project,
             "reportsPerMonth": pd.reports_per_month,
             "monthlyCredits": pd.monthly_credits,
+            "automaticCredits": pd.automatic_credits,
+            "spendableCredits": pd.monthly_credits - pd.automatic_credits,
             "competitorSpyLimit": pd.competitor_spy_limit,
+            "manualRefreshLimit": pd.manual_refresh_limit,
+            "keywordResearchLimit": pd.keyword_research_limit,
             "weeklyTrackingEnabled": pd.key in {"starter", "pro", "agency", "enterprise"},
             "keywordLimit": pd.keyword_limit,
         },
@@ -74,6 +95,7 @@ def list_available_plans() -> list[dict]:
             "base_price_inr": plan["monthlyPrice"],
             "domain_limit": plan.get("domain_limit", 0),
             "limits": get_user_plan_limits_from_plan(plan),
+            "creditCosts": get_credit_costs(),
         }
         for plan in PLAN_DEFINITIONS.values()
     ]
@@ -91,18 +113,18 @@ def get_user_or_404(db: Session, user_id: str) -> User:
 
 
 def get_subscription_status(user: User) -> str:
+    # ``free_trial`` is retained as the stable internal plan key, but it now
+    # represents the permanent Free plan. Historical trial timestamps/statuses
+    # must never expire or block this entitlement.
+    if get_plan_key(user) == TRIAL_PLAN_KEY:
+        return "free"
+
     raw_status = (getattr(user, "subscriptionStatus", None) or "").strip().lower()
-
-    trial_ends_at = getattr(user, "trialEndsAt", None)
-    now = datetime.utcnow()
-
-    if trial_ends_at and trial_ends_at >= now and raw_status in {"", "trialing"}:
-        return "trialing"
 
     if raw_status:
         return raw_status
 
-    return "trialing"
+    return "inactive"
 
 
 def get_plan_key(user: User) -> str:
@@ -114,7 +136,7 @@ def get_plan_key(user: User) -> str:
 
 def get_effective_plan_key(user: User) -> str:
     status = get_subscription_status(user)
-    if status == "trialing":
+    if status == "free":
         return TRIAL_PLAN_KEY
     selected = get_plan_key(user)
     return selected if selected in PLAN_DEFINITIONS else TRIAL_PLAN_KEY
@@ -131,15 +153,23 @@ def get_user_plan_limits_from_plan(plan: dict) -> dict:
         "competitorsPerProject",
         "reportsPerMonth",
         "monthlyCredits",
+        "automaticCredits",
+        "spendableCredits",
         "competitorSpyLimit",
+        "manualRefreshLimit",
+        "keywordResearchLimit",
         "weeklyTrackingEnabled",
         "keywordLimit",
+        "domain_limit",
     ]
     return {k: plan.get(k) for k in limit_keys if k in plan}
 
 
 def ensure_subscription_active(user: User) -> None:
     status = get_subscription_status(user)
+
+    if status == "free":
+        return
     
     if status == "inactive":
         raise ApiError(403, "Your subscription is inactive. Please upgrade to continue.")
@@ -147,23 +177,13 @@ def ensure_subscription_active(user: User) -> None:
     if status == "past_due":
         raise ApiError(403, "Your subscription payment is past due. Please update your payment details.")
     
-    if status not in {"trialing", "active"}:
+    if status != "active":
         raise ApiError(403, "Your subscription is inactive. Please upgrade to continue.")
-
-    trial_ends_at = getattr(user, "trialEndsAt", None)
-    now = datetime.utcnow()
-    
-    if status == "trialing" and trial_ends_at:
-        grace_period_end = trial_ends_at + timedelta(days=3)
-        
-        if trial_ends_at < now:
-            if now < grace_period_end:
-                pass
-            else:
-                raise ApiError(403, "Your trial has expired. Please upgrade to continue.")
 
 
 def is_in_grace_period(user: User) -> bool:
+    if get_plan_key(user) == TRIAL_PLAN_KEY:
+        return False
     trial_ends_at = getattr(user, "trialEndsAt", None)
     if not trial_ends_at:
         return False
@@ -179,6 +199,8 @@ def is_in_grace_period(user: User) -> bool:
 
 
 def get_grace_period_end(user: User) -> Optional[datetime]:
+    if get_plan_key(user) == TRIAL_PLAN_KEY:
+        return None
     trial_ends_at = getattr(user, "trialEndsAt", None)
     if not trial_ends_at:
         return None
@@ -211,8 +233,87 @@ def should_reset_credits(user: User) -> bool:
     return now >= next_anniversary
 
 
+def apply_credit_cycle_allocation(
+    db: Session,
+    user: User,
+    plan_key: str,
+    *,
+    now: datetime | None = None,
+    action_type: str = "monthly_refresh",
+    description: str | None = None,
+    related_order_id: str | None = None,
+) -> dict:
+    """Replace expiring plan pools while preserving separately purchased credits."""
+    now = now or datetime.utcnow()
+    plan_key = plan_key if plan_key in PLAN_DEFINITIONS else TRIAL_PLAN_KEY
+    plan = PLAN_DEFINITIONS[plan_key]
+    total = float(plan.get("monthlyCredits", 0))
+    automatic = float(plan.get("automaticCredits", 0))
+    spendable = total - automatic
+
+    old_spendable = float(getattr(user, "creditBalance", 0.0) or 0.0)
+    old_plan = float(getattr(user, "planCreditBalance", 0.0) or 0.0)
+    purchased = float(getattr(user, "purchasedCreditBalance", 0.0) or 0.0)
+    old_automatic = float(getattr(user, "automaticCreditBalance", 0.0) or 0.0)
+    if round(old_plan + purchased, 2) != round(old_spendable, 2):
+        # Newly-created legacy-compatible rows have no pool attribution.
+        # Alembic explicitly attributes migrated production balances.
+        old_plan = old_spendable
+        purchased = 0.0
+
+    db.execute(
+        update(CreditLedger)
+        .where(
+            CreditLedger.userId == user.id,
+            CreditLedger.creditPool == "automatic",
+            CreditLedger.status == "pending",
+        )
+        .values(status="expired")
+    )
+
+    user.planCreditBalance = spendable
+    user.purchasedCreditBalance = purchased
+    user.creditBalance = round(spendable + purchased, 2)
+    user.automaticCreditBalance = automatic
+    user.lastCreditResetAt = now
+    db.add(user)
+
+    ledger = CreditLedger(
+        userId=user.id,
+        ownerId=user.id,
+        amount=total,
+        actionType=action_type,
+        description=description or f"Cycle credit allocation: {plan.get('name', plan_key)} ({total} total; {automatic} automatic)",
+        relatedOrderId=related_order_id,
+        status="completed",
+        creditsReserved=automatic,
+        creditsConsumed=0.0,
+        creditsRefunded=0.0,
+        netCreditChange=(user.creditBalance + automatic) - (old_spendable + old_automatic),
+        balanceBefore=old_spendable,
+        balanceAfter=user.creditBalance,
+        planName=plan.get("name", plan_key),
+        creditPool="allocation",
+        planCreditsChange=spendable - old_plan,
+        automaticCreditsChange=automatic - old_automatic,
+        timestamp=now,
+        triggeredByUserId=user.id,
+    )
+    db.add(ledger)
+    db.commit()
+    return {
+        "plan": plan_key,
+        "total": total,
+        "spendable": spendable,
+        "purchased": purchased,
+        "automatic": automatic,
+        "creditBalance": user.creditBalance,
+    }
+
+
 def reset_monthly_credits(db: Session, user: User) -> dict:
-    if not should_reset_credits(user):
+    user = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if not user or not should_reset_credits(user):
         return {"reset": False, "reason": "Not yet due for reset"}
     
     pending_plan = getattr(user, "pendingPlanChange", None)
@@ -225,52 +326,40 @@ def reset_monthly_credits(db: Session, user: User) -> dict:
             pending_plan = None
     
     effective_plan_key = pending_plan if pending_plan else get_effective_plan_key(user)
-    plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
-    monthly_credits = float(plan.get("monthlyCredits", 0))
-    
-    balance_before = round(float(getattr(user, "creditBalance", 0.0) or 0.0), 2)
-    user.creditBalance = monthly_credits
-    user.lastCreditResetAt = datetime.utcnow()
-    
+    now = datetime.utcnow()
     if pending_plan:
         user.selectedPlan = pending_plan
         user.pendingPlanChange = None
-        user.planAnniversaryAt = datetime.utcnow()
-    
-    db.add(user)
-    db.commit()
-    
-    ledger = CreditLedger(
-        userId=user.id,
-        ownerId=user.id,
-        amount=monthly_credits,
-        actionType="monthly_refresh",
-        description=f"Monthly credit refresh: {plan.get('name', effective_plan_key)} ({monthly_credits} credits)",
-        status="completed",
-        creditsReserved=0.0,
-        creditsConsumed=0.0,
-        creditsRefunded=0.0,
-        netCreditChange=monthly_credits,
-        balanceBefore=balance_before,
-        balanceAfter=monthly_credits,
-        planName=plan.get("name", effective_plan_key),
-    )
-    db.add(ledger)
-    db.flush()
-    db.commit()
-    
-    logger.info(f"Reset credits for user {user.id} to {monthly_credits} (plan: {effective_plan_key})")
+        user.planAnniversaryAt = now
+        if pending_plan == TRIAL_PLAN_KEY:
+            user.subscriptionStatus = "free"
+            user.trialStartsAt = None
+            user.trialEndsAt = None
+            subscriptions = db.scalars(select(Subscription).where(
+                Subscription.userId == user.id,
+                Subscription.isActive == True,
+            )).all()
+            for subscription in subscriptions:
+                subscription.isActive = False
+                subscription.status = "cancelled"
+                db.add(subscription)
+    allocation = apply_credit_cycle_allocation(db, user, effective_plan_key, now=now)
+    logger.info("Reset credit pools for user %s to plan %s", user.id, effective_plan_key)
     
     return {
         "reset": True,
-        "new_balance": monthly_credits,
+        "new_balance": allocation["creditBalance"],
+        "automatic_balance": allocation["automatic"],
         "plan": effective_plan_key,
         "reset_at": user.lastCreditResetAt.isoformat(),
     }
 
 
 def reset_due_credits_for_all_users(db: Session) -> dict:
-    users = db.scalars(select(User).where(User.subscriptionStatus == "active")).all()
+    users = db.scalars(select(User).where(or_(
+        User.subscriptionStatus == "active",
+        User.selectedPlan == TRIAL_PLAN_KEY,
+    ))).all()
     
     reset_count = 0
     skipped_count = 0
@@ -296,50 +385,12 @@ def reset_due_credits_for_all_users(db: Session) -> dict:
                 skipped_count += 1
                 continue
             
-            pending_plan = getattr(user, "pendingPlanChange", None)
-            if pending_plan:
-                pending_plan = pending_plan.strip().lower()
-                if pending_plan not in PLAN_DEFINITIONS:
-                    pending_plan = None
-            
-            effective_plan_key = pending_plan if pending_plan else get_effective_plan_key(user)
-            plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
-            monthly_credits = float(plan.get("monthlyCredits", 0))
-            
-            balance_before = round(float(getattr(user, "creditBalance", 0.0) or 0.0), 2)
-            user.creditBalance = monthly_credits
-            user.lastCreditResetAt = now
-            
-            if pending_plan:
-                user.selectedPlan = pending_plan
-                user.pendingPlanChange = None
-                user.planAnniversaryAt = now
-            
-            db.add(user)
-            db.commit()
-            
-            ledger = CreditLedger(
-                userId=user.id,
-                ownerId=user.id,
-                amount=monthly_credits,
-                actionType="monthly_refresh",
-                description=f"Monthly credit refresh: {plan.get('name', effective_plan_key)} ({monthly_credits} credits)",
-                status="completed",
-                creditsReserved=0.0,
-                creditsConsumed=0.0,
-                creditsRefunded=0.0,
-                netCreditChange=monthly_credits,
-                balanceBefore=balance_before,
-                balanceAfter=monthly_credits,
-                planName=plan.get("name", effective_plan_key),
-            )
-            db.add(ledger)
-            db.flush()
-            db.commit()
-            
-            logger.info(f"Reset credits for user {user.id} to {monthly_credits} (plan: {effective_plan_key})")
-            reset_count += 1
-            total_credits_reset += monthly_credits
+            result = reset_monthly_credits(db, user)
+            if result.get("reset"):
+                reset_count += 1
+                total_credits_reset += PLAN_DEFINITIONS[result["plan"]]["monthlyCredits"]
+            else:
+                skipped_count += 1
         except Exception as exc:
             logger.error(f"Monthly credit refresh failed for user {user.id}: {exc}")
             errors.append({"user_id": user.id, "error": str(exc)})
@@ -365,7 +416,7 @@ def count_user_keywords(db: Session, user_id: str) -> int:
         select(func.count())
         .select_from(Keyword)
         .join(Project, Keyword.projectId == Project.id)
-        .where(Project.userId == user_id)
+        .where(Project.userId == user_id, Keyword.deletedAt.is_(None))
     ) or 0
 
 
@@ -400,7 +451,7 @@ def _get_warnings(db: Session, user: User, plan_def: dict) -> list[dict]:
     now = datetime.utcnow()
 
     end_date = None
-    if user.trialEndsAt:
+    if get_plan_key(user) != TRIAL_PLAN_KEY and user.trialEndsAt:
         end_date = user.trialEndsAt
     subscription = db.scalar(
         select(Subscription).where(
@@ -437,6 +488,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
     selected_plan_key = get_plan_key(user)
     limits = get_user_plan_limits(user)
     plan_def = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
+    is_free = effective_plan_key == TRIAL_PLAN_KEY
 
     subscription = db.scalar(
         select(Subscription).where(
@@ -445,22 +497,45 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         )
     )
 
+    automatic_allocation = float(plan_def.get("automaticCredits", 0))
+    plan_spendable = float(getattr(user, "planCreditBalance", 0.0) or 0.0)
+    purchased = float(getattr(user, "purchasedCreditBalance", 0.0) or 0.0)
+    if round(plan_spendable + purchased, 2) != round(float(getattr(user, "creditBalance", 0.0) or 0.0), 2):
+        plan_spendable = float(getattr(user, "creditBalance", 0.0) or 0.0)
+        purchased = 0.0
+    # Imported locally to avoid a module cycle: feature_usage_service uses the
+    # canonical plan helpers above when calculating each billing-cycle limit.
+    from app.services.feature_usage_service import get_feature_usage
+
+    feature_usage = {
+        "manualRefresh": get_feature_usage(db, user.id, "manual_refresh"),
+        "keywordResearch": get_feature_usage(db, user.id, "keyword_research"),
+        "competitorSpy": get_feature_usage(db, user.id, "competitor_spy"),
+    }
     return {
         "plan": selected_plan_key,
         "effectivePlan": effective_plan_key,
         "subscriptionStatus": get_subscription_status(user),
-        "trialStartsAt": user.trialStartsAt.isoformat() if user.trialStartsAt else None,
-        "trialEndsAt": user.trialEndsAt.isoformat() if user.trialEndsAt else None,
+        "pendingPlanChange": getattr(user, "pendingPlanChange", None),
+        "trialStartsAt": None if is_free else (user.trialStartsAt.isoformat() if user.trialStartsAt else None),
+        "trialEndsAt": None if is_free else (user.trialEndsAt.isoformat() if user.trialEndsAt else None),
         "gracePeriodEndsAt": get_grace_period_end(user).isoformat() if get_grace_period_end(user) else None,
         "isInGracePeriod": is_in_grace_period(user),
         "trialDays": get_trial_days(),
         "creditBalance": round(getattr(user, "creditBalance", 0.0) or 0.0, 2),
+        "totalMonthlyAllocation": float(plan_def.get("monthlyCredits", 0)),
+        "spendableCreditsRemaining": round(plan_spendable + purchased, 2),
+        "planSpendableCreditsRemaining": round(plan_spendable, 2),
+        "purchasedCreditsRemaining": round(purchased, 2),
+        "automaticReservedAllocation": automatic_allocation,
+        "automaticReservedRemaining": round(float(getattr(user, "automaticCreditBalance", 0.0) or 0.0), 2),
         "base_price_inr": plan_def.get("monthlyPrice", 0),
         "individual_discount_pct": plan_def.get("individual_discount_pct", 0),
         "subscriptionStartDate": subscription.startDate.isoformat() if subscription and subscription.startDate else None,
         "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate else None,
         "lastCreditResetAt": user.lastCreditResetAt.isoformat() if getattr(user, "lastCreditResetAt", None) else None,
         "nextCreditResetAt": (user.lastCreditResetAt + timedelta(days=30)).isoformat() if getattr(user, "lastCreditResetAt", None) else ((user.planAnniversaryAt + timedelta(days=30)).isoformat() if getattr(user, "planAnniversaryAt", None) else None),
+        "creditCosts": get_credit_costs(),
         "warnings": _get_warnings(db, user, plan_def),
         "usage": {
             "projects": count_user_projects(db, user.id),
@@ -468,6 +543,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
             "activeKeywords": count_user_active_keywords(db, user.id),
             "maxCompetitorsPerProject": get_user_max_competitors_per_project(db, user.id),
         },
+        "featureUsage": feature_usage,
         "limits": {
             "competitorsPerProject": limits["competitorsPerProject"],
             "reportsPerMonth": limits["reportsPerMonth"],
@@ -476,11 +552,16 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
             "keywordLimit": limits.get("keywordLimit"),
             "domain_limit": plan_def.get("domain_limit", 0),
             "competitorSpyLimit": limits.get("competitorSpyLimit", 0),
+            "manualRefreshLimit": limits.get("manualRefreshLimit", 0),
+            "keywordResearchLimit": limits.get("keywordResearchLimit", 0),
+            "weeklyTrackingEnabled": limits.get("weeklyTrackingEnabled", False),
+            "automaticCredits": limits.get("automaticCredits", 0),
+            "spendableCredits": limits.get("spendableCredits", 0),
         },
         "features": {
             "allow_exports": effective_plan_key in {"pro", "agency", "enterprise"},
             "allow_white_label": effective_plan_key in {"agency", "enterprise"},
-            "competitor_spy_min_credits": 20,
+            "competitor_spy_min_credits": settings.plan_config.credit_costs.get("competitor_spy", 30),
         },
     }
 
@@ -604,6 +685,8 @@ def _record_subscription_ledger(
 
 
 def handle_expiration(db: Session, user: User) -> None:
+    if get_plan_key(user) == TRIAL_PLAN_KEY:
+        return
     if getattr(user, "subscriptionStatus", None) == "past_due":
         return
     
@@ -645,12 +728,21 @@ def handle_grace_period_expiry(db: Session, user: User) -> None:
     now = datetime.utcnow()
     
     if now >= grace_period_end:
-        user.subscriptionStatus = "inactive"
+        user.subscriptionStatus = "free"
+        user.selectedPlan = TRIAL_PLAN_KEY
+        user.trialStartsAt = None
+        user.trialEndsAt = None
+        user.pendingPlanChange = None
+        subscription.isActive = False
+        subscription.status = "expired"
         db.add(user)
-        db.commit()
+        db.add(subscription)
+        apply_credit_cycle_allocation(
+            db, user, TRIAL_PLAN_KEY, now=now, action_type="subscription_end",
+            description="Paid subscription ended; Free allocation established",
+        )
         
-        deactivate_user_keywords(db, user.id)
-        logger.info(f"Grace period expired for user {user.id}, status set to inactive, keywords deactivated")
+        logger.info("Paid grace period expired for user %s; permanent Free plan established", user.id)
 
 
 def deactivate_user_keywords(db: Session, user_id: str) -> None:
@@ -683,9 +775,9 @@ def reactivate_subscription(db: Session, user_id: str, plan_key: str, order_id: 
     
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
-    user.creditBalance = float(monthly_credits)
+    user.trialStartsAt = None
+    user.trialEndsAt = None
     user.planAnniversaryAt = now
-    user.lastCreditResetAt = now
     
     existing_subscription = db.scalar(
         select(Subscription).where(
@@ -716,17 +808,22 @@ def reactivate_subscription(db: Session, user_id: str, plan_key: str, order_id: 
         db.add(subscription)
     
     db.add(user)
-    db.commit()
+    allocation = apply_credit_cycle_allocation(
+        db, user, plan, now=now, action_type="cycle_allocation",
+        description=f"Reactivation cycle allocation: {plan} (Order {order_id or 'N/A'})",
+        related_order_id=order_id,
+    )
     db.refresh(user)
     
     _record_subscription_ledger(
         db=db,
         user_id=user_id,
-        amount=float(monthly_credits),
+        amount=0.0,
         action_type="purchase",
         description=f"Reactivation: {plan} (Order {order_id or 'N/A'})",
         related_order_id=order_id,
         balance_before=old_balance,
+        balance_after=allocation["creditBalance"],
     )
     db.commit()
     
@@ -774,9 +871,9 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
 
     user.selectedPlan = plan
     user.subscriptionStatus = "active"
-    user.creditBalance = float(monthly_credits)
+    user.trialStartsAt = None
+    user.trialEndsAt = None
     user.planAnniversaryAt = now
-    user.lastCreditResetAt = now
 
     existing_subscription = db.scalar(
         select(Subscription).where(
@@ -807,18 +904,22 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
         db.add(subscription)
 
     db.add(user)
-    db.commit()
+    allocation = apply_credit_cycle_allocation(
+        db, user, plan, now=now, action_type="cycle_allocation",
+        description=f"Paid plan cycle allocation: {plan}",
+    )
     db.refresh(user)
     
     action_type = "upgrade" if validation["isUpgrade"] else ("downgrade" if validation["isDowngrade"] else "plan_change")
     _record_subscription_ledger(
         db=db,
         user_id=user_id,
-        amount=float(monthly_credits),
+        amount=0.0,
         action_type=action_type,
         description=f"Paid plan activation: {plan} - {PLAN_DEFINITIONS.get(plan, {}).get('name', plan)}",
         related_order_id=None,
         balance_before=old_balance,
+        balance_after=allocation["creditBalance"],
     )
     db.commit()
     
@@ -891,11 +992,17 @@ def activate_keyword(db: Session, user_id: str, keyword_id: str) -> Keyword:
     )
     if not keyword:
         raise ApiError(404, "Keyword not found")
+    if keyword.deletedAt is not None:
+        raise ApiError(409, "Deleted keywords cannot be activated. Re-add after the cooldown period.")
     
     if keyword.isActive:
         return keyword
     
     keyword.isActive = True
+    keyword.lastWeeklyRefreshAt = None
+    keyword.weeklyRefreshStatus = None
+    keyword.processingTimeoutAt = None
+    keyword.updatedAt = datetime.utcnow()
     db.add(keyword)
     db.commit()
     db.refresh(keyword)
@@ -911,12 +1018,58 @@ def deactivate_keyword(db: Session, user_id: str, keyword_id: str) -> Keyword:
     )
     if not keyword:
         raise ApiError(404, "Keyword not found")
+    if keyword.deletedAt is not None:
+        raise ApiError(409, "Deleted keywords cannot be deactivated.")
     
     if not keyword.isActive:
         return keyword
     
     keyword.isActive = False
+    keyword.updatedAt = datetime.utcnow()
     db.add(keyword)
     db.commit()
     db.refresh(keyword)
     return keyword
+
+
+def set_keywords_active_state(db: Session, user_id: str, keyword_ids: list[str], active: bool) -> dict:
+    clean_ids = list(dict.fromkeys(str(keyword_id) for keyword_id in keyword_ids if keyword_id is not None))
+    if not clean_ids:
+        raise ApiError(400, "keyword_ids is required")
+
+    keywords = db.scalars(
+        select(Keyword)
+        .join(Project, Project.id == Keyword.projectId)
+        .where(Keyword.id.in_(clean_ids), Project.userId == user_id)
+    ).all()
+    owned = {keyword.id: keyword for keyword in keywords}
+    updated = []
+    unchanged = []
+    invalid = []
+    now = datetime.utcnow()
+
+    for keyword_id in clean_ids:
+        keyword = owned.get(keyword_id)
+        if keyword is None or keyword.deletedAt is not None:
+            invalid.append(keyword_id)
+            continue
+        if keyword.isActive == active:
+            unchanged.append(keyword_id)
+            continue
+        keyword.isActive = active
+        keyword.updatedAt = now
+        if active:
+            keyword.lastWeeklyRefreshAt = None
+            keyword.weeklyRefreshStatus = None
+            keyword.processingTimeoutAt = None
+        db.add(keyword)
+        updated.append(keyword_id)
+
+    db.commit()
+    return {
+        "active": active,
+        "updated": updated,
+        "unchanged": unchanged,
+        "invalid": invalid,
+        "updatedCount": len(updated),
+    }

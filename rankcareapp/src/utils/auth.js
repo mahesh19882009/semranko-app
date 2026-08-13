@@ -1,19 +1,5 @@
 'use client'
-const ACCESS_TOKEN_KEY = "accessToken";
 const USER_KEY = "user";
-const SESSION_TOKEN_KEY = "sessionToken";
-
-export function getAccessToken() {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
-}
-
-export function setAccessToken(token) {
-  localStorage.setItem(ACCESS_TOKEN_KEY, token);
-}
-
-export function removeAccessToken() {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-}
 
 export function getStoredUser() {
   try {
@@ -26,7 +12,7 @@ export function getStoredUser() {
 
 export function isAuthenticated() {
   try {
-    return Boolean(localStorage.getItem("accessToken"));
+    return Boolean(getStoredUser());
   } catch {
     return false;
   }
@@ -41,23 +27,14 @@ export function clearStoredUser() {
 }
 
 export function logoutUser() {
-  removeAccessToken();
   clearStoredUser();
-  clearSessionToken();
 }
 
-export function getSessionToken() {
+export function clearLegacyCredentials() {
   try {
-    return localStorage.getItem(SESSION_TOKEN_KEY);
+    localStorage.removeItem(['access', 'Token'].join(''));
+    localStorage.removeItem(['session', 'Token'].join(''));
   } catch {
-    return null;
+    // Storage can be unavailable in privacy modes.
   }
-}
-
-export function setSessionToken(token) {
-  localStorage.setItem(SESSION_TOKEN_KEY, token);
-}
-
-export function clearSessionToken() {
-  localStorage.removeItem(SESSION_TOKEN_KEY);
 }

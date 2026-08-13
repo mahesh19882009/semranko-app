@@ -3,7 +3,7 @@ import PublicLayout from '@/src/components/PublicLayout'
 
 export const metadata = {
   title: 'Pricing - RankCare | RankCare',
-  description: 'Choose the perfect SEO plan for your business. Start your free trial today.',
+  description: 'Choose the SEO plan for your business or start with the permanent Free plan.',
   keywords: 'SEO, keyword tracking, rank checking, competitor analysis, search engine optimization',
   openGraph: {
     title: 'RankCare - SEO Rank Tracking & Competitor Analysis',

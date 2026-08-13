@@ -32,7 +32,8 @@ def check_dfs_cost_ceiling(db, user_id: str, estimated_cost_usd: float) -> None:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    plan = user.selectedPlan or "starter"
+    # An incomplete legacy record must never inherit paid-plan DFS allowance.
+    plan = user.selectedPlan or "free_trial"
     plan_def = settings.plan_config.plans.get(plan)
     if not plan_def:
         return
@@ -380,7 +381,7 @@ def _get_cached_serp(cache_key: str) -> Optional[dict]:
 
 def _set_cached_serp(cache_key: str, value: dict, ttl: int = 86400) -> bool:
     try:
-        set_cached("serp", cache_key, value, ttl=ttl)
+        set_cached("serp", cache_key, value, ttl_seconds=ttl)
         return True
     except Exception as exc:
         logger.warning("SERP cache write failed: %s", exc)
@@ -410,7 +411,7 @@ def _get_cached_labs(cache_key: str) -> Optional[dict]:
 
 def _set_cached_labs(cache_key: str, value: dict, ttl: int = 604800) -> bool:
     try:
-        set_cached("labs", cache_key, value, ttl=ttl)
+        set_cached("labs", cache_key, value, ttl_seconds=ttl)
         return True
     except Exception as exc:
         logger.warning("Labs cache write failed: %s", exc)
@@ -419,35 +420,48 @@ def _set_cached_labs(cache_key: str, value: dict, ttl: int = 604800) -> bool:
 
 def _set_cached_kw_metrics(cache_key: str, value: dict, ttl: int = 604800) -> bool:
     try:
-        set_cached("kw_metrics", cache_key, value, ttl=ttl)
+        set_cached("kw_metrics", cache_key, value, ttl_seconds=ttl)
         return True
     except Exception as exc:
         logger.warning("Keyword metrics cache write failed: %s", exc)
         return False
 
 
-def _estimate_dataforseo_cost(endpoint: str, keyword_count: int = 1, depth: int | None = None, cache_hit: bool = False) -> float:
-    """Estimate DataForSEO cost in USD based on endpoint and parameters."""
+def _estimate_dataforseo_cost(
+    endpoint: str,
+    keyword_count: int = 1,
+    depth: int | None = None,
+    cache_hit: bool = False,
+    priority: int | str | None = None,
+    safety_buffer_pct: float = 0.0,
+) -> float:
+    """Estimate official DataForSEO task cost.
+
+    Google Organic SERP is billed per requested SERP (10 results), multiplied
+    by requested depth. Labs "all other endpoints" are billed as a $0.012
+    task plus $0.00012 per returned item. A safety buffer is opt-in only; the
+    default reports the official formula without inventing markup.
+    """
     if cache_hit:
         return 0.0
 
-    cost_map = {
-        "/serp/google/organic/live/advanced": 0.020 if depth and depth >= 100 else 0.010,
-        "/serp/google/organic/task_post": 0.012 if depth and depth >= 100 else 0.006,
-        "/dataforseo_labs/google/keyword_overview/live": 0.013,
-        "/dataforseo_labs/google/keyword_ideas/live": 0.018,
-        "/dataforseo_labs/google/competitors_domain/live": 0.132,
-        "/dataforseo_labs/google/domain_rank_overview/live": 0.013,
-        "/dataforseo_labs/google/bulk_traffic_estimation/live": 0.132,
-        "/dataforseo_labs/google/keyword_suggestions/live": 0.018,
-        "/dataforseo_labs/google/keywords_for_keywords/live": 0.018,
-        "/backlinks/summary/live": 0.040,
-    }
+    count = max(0, int(keyword_count or 0))
+    depth_units = max(1, math.ceil(max(1, int(depth or 10)) / 10))
+    if endpoint == "/serp/google/organic/live/advanced":
+        cost = 0.002 * depth_units * count
+    elif endpoint == "/serp/google/organic/task_post":
+        priority_queue = priority in (1, "1", "priority", "high")
+        cost = (0.0012 if priority_queue else 0.0006) * depth_units * count
+    elif endpoint == "/dataforseo_labs/google/bulk_traffic_estimation/live":
+        cost = 0.12 + (0.0012 * count)
+    elif endpoint.startswith("/dataforseo_labs/google/"):
+        cost = 0.012 + (0.00012 * count)
+    elif endpoint == "/backlinks/summary/live":
+        cost = 0.040
+    else:
+        cost = 0.0
 
-    unit_cost = cost_map.get(endpoint, 0.0)
-    if endpoint in ("/dataforseo_labs/google/bulk_traffic_estimation/live", "/dataforseo_labs/google/competitors_domain/live", "/backlinks/summary/live"):
-        return unit_cost
-    return unit_cost * keyword_count
+    return round(cost * (1 + max(0.0, safety_buffer_pct) / 100.0), 8)
 
 
 def _log_dataforseo_cost(db, user_id, task_type, endpoint, method, keyword_count=1, priority=None, depth=None, expand_ai_overview=None, estimated_cost=None, actual_cost=None, cache_hit=False, success=True, error=None, meta=None, project_id=None, keyword_id=None, task_id=None, request_id=None):
@@ -456,7 +470,9 @@ def _log_dataforseo_cost(db, user_id, task_type, endpoint, method, keyword_count
         from app.services.credit_service import track_dataforseo_cost
 
         if estimated_cost is None:
-            estimated_cost = _estimate_dataforseo_cost(endpoint, keyword_count, depth, cache_hit)
+            estimated_cost = _estimate_dataforseo_cost(
+                endpoint, keyword_count, depth, cache_hit, priority=priority
+            )
 
         cost_meta = {
             "method": method,

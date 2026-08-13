@@ -1,5 +1,5 @@
 'use client'
-import { apiRequest, API_BASE_URL } from "../../lib/api";
+import { apiRequest, API_BASE_URL, ApiRequestError, normalizeApiError } from "../../lib/api";
 
 export const fetchPlansApi = async () => {
   const response = await apiRequest("/pricing/plans");
@@ -102,17 +102,14 @@ export const getBillingHistoryApi = async () => {
 };
 
 export const downloadInvoiceApi = async (invoiceId) => {
-  const token = localStorage.getItem('accessToken');
   const url = `${API_BASE_URL}/billing/invoice/${encodeURIComponent(invoiceId)}/download`;
   const response = await fetch(url, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    credentials: 'include',
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Failed to download invoice (${response.status})`);
+    const normalized = normalizeApiError({ status: response.status, message: 'Invoice download failed' });
+    throw new ApiRequestError(normalized.message, normalized);
   }
 
   return response.blob();

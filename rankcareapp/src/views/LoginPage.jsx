@@ -1,50 +1,81 @@
 'use client'
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "../lib/navigation";
-import { getAccessToken, setAccessToken, setStoredUser, setSessionToken } from "../utils/auth";
-import { apiRequest } from "../lib/api";
+import { clearStoredUser, setStoredUser } from "../utils/auth";
+import { apiRequest, createMobileVerificationSessionApi, normalizeApiError } from "../lib/api";
+import TurnstileWidget from '../components/TurnstileWidget';
 
 function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const from = location.state?.from?.pathname || "/dashboard";
+  const requestedReturnTo = searchParams.get('returnTo');
+  const safeReturnTo = requestedReturnTo?.startsWith('/') && !requestedReturnTo.startsWith('//')
+    ? requestedReturnTo
+    : null;
+  const from = location.state?.from?.pathname || safeReturnTo || "/dashboard";
   const emailVerificationPending = searchParams.get("emailVerificationPending") === "true";
+  const sessionExpired = searchParams.get("sessionExpired") === "true";
   const selectedPlan = searchParams.get("plan");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [clickCount, setClickCount] = useState(0);
+  const [accountIssue, setAccountIssue] = useState(null);
+  const [turnstileToken, setTurnstileToken] = useState(null);
+  const [challengeRequired, setChallengeRequired] = useState(false);
 
   useEffect(() => {
-    if (getAccessToken()) {
-      navigate(from, { replace: true });
-    }
+    let active = true;
+    apiRequest('/auth/me')
+      .then(() => { if (active) navigate(from, { replace: true }); })
+      .catch(() => { if (active) clearStoredUser(); });
+    return () => { active = false; };
   }, [navigate, from]);
 
   const handleLogin = async (event) => {
     event.preventDefault();
-    setClickCount(c => c + 1);
-    console.log('LOGIN CLICKED', { email, password, clickCount: clickCount + 1 });
     setError("");
+    setAccountIssue(null);
     setLoading(true);
 
     try {
       const data = await apiRequest("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, turnstileToken }),
       });
 
-      setAccessToken(data.data.accessToken);
       setStoredUser(data.data.user);
-      setSessionToken(data.data.sessionToken);
 
       navigate(from, { replace: true });
     } catch (err) {
-      console.error('Login error:', err);
-      setError(err.message || "Something went wrong");
+      const normalized = normalizeApiError(err, 'Login failed. Please try again.');
+      if (normalized.code === 'MOBILE_VERIFICATION_REQUIRED') {
+        setAccountIssue({ type: 'mobile', message: normalized.message });
+      } else if (normalized.code === 'EMAIL_VERIFICATION_REQUIRED') {
+        setAccountIssue({ type: 'email', message: normalized.message });
+      } else {
+        if (normalized.code === 'TURNSTILE_REQUIRED' || normalized.code === 'TURNSTILE_REJECTED') setChallengeRequired(true);
+        setError(normalized.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const continueMobileVerification = async () => {
+    if (loading) return;
+    setLoading(true);
+    setError('');
+    try {
+      const session = await createMobileVerificationSessionApi(email, password);
+      const verificationToken = session?.data?.mobileVerificationToken;
+      if (!verificationToken) throw new Error('Mobile verification is already complete. Please log in again.');
+      sessionStorage.setItem('mobileVerificationToken', verificationToken);
+      navigate('/verify-mobile?source=login');
+    } catch (err) {
+      setError(normalizeApiError(err, 'Could not start mobile verification.').message);
     } finally {
       setLoading(false);
     }
@@ -83,6 +114,12 @@ function LoginPage() {
             <Link to="/resend-verification" style={{ color: "#9a6700", fontWeight: 600, textDecoration: "underline" }}>
               Resend email
             </Link>
+          </div>
+        )}
+
+        {sessionExpired && !emailVerificationPending && (
+          <div style={{ marginBottom: "16px", padding: "12px 14px", borderRadius: "10px", border: "1px solid #f5c16c", background: "#fff7e6", color: "#9a6700", fontSize: "14px" }}>
+            Your session expired. Please log in again.
           </div>
         )}
 
@@ -144,6 +181,24 @@ function LoginPage() {
             </Link>
           </div>
 
+          {accountIssue && (
+            <div style={{ padding: "14px", borderRadius: "10px", background: "#fff7e6", color: "#7c4a03", fontSize: "14px", border: "1px solid #f5c16c" }}>
+              <strong style={{ display: 'block', marginBottom: '4px' }}>
+                {accountIssue.type === 'mobile' ? 'Mobile verification required' : 'Email verification required'}
+              </strong>
+              <span>{accountIssue.message}</span>
+              {accountIssue.type === 'mobile' ? (
+                <button type="button" disabled={loading} onClick={continueMobileVerification} style={{ display: 'block', marginTop: '10px', border: 0, background: 'transparent', padding: 0, color: '#7c3aed', fontWeight: 700, cursor: 'pointer' }}>
+                  Verify mobile number
+                </button>
+              ) : (
+                <Link to={`/resend-verification?email=${encodeURIComponent(email)}`} style={{ display: 'block', marginTop: '10px', color: '#7c3aed', fontWeight: 700 }}>
+                  Resend verification email
+                </Link>
+              )}
+            </div>
+          )}
+
           {error && (
             <div style={{
               padding: "10px 14px",
@@ -156,6 +211,8 @@ function LoginPage() {
               {error}
             </div>
           )}
+
+          {challengeRequired && <TurnstileWidget action="login" onToken={setTurnstileToken} />}
 
           <button
             type="submit"

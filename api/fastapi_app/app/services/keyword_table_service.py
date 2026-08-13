@@ -134,6 +134,7 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "ai_description": kw.ai_description,
             "visibility": kw.visibility,
             "is_active": kw.isActive,
+            "deletedAt": kw.deletedAt.isoformat() if kw.deletedAt else None,
             "createdAt": kw.createdAt.isoformat() if getattr(kw, "createdAt", None) else None,
             "changes": changes,
             "positionChange": position_change,

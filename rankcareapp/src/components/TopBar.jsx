@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "../lib/navigation";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { getStoredUser, logoutUser } from "../utils/auth";
+import { logoutApi } from '../lib/api';
 import { formatDate } from "../utils/date";
 import {
   faSearch,
@@ -74,10 +75,10 @@ function Topbar({ onToggleSidebar }) {
     };
   }, [profileOpen]);
 
-  const handleLogout = () => {
-    logoutUser();
+  const handleLogout = async () => {
+    try { await logoutApi(); } finally { logoutUser(); }
     setProfileOpen(false);
-    navigate("/", { replace: true });
+    navigate("/login", { replace: true });
   };
 
   const handleSettingsClick = () => {
@@ -86,24 +87,13 @@ function Topbar({ onToggleSidebar }) {
   };
 
   const showSubscriptionBanner = subscriptionBannerOpen &&
+    subscriptionData?.effectivePlan !== 'free_trial' &&
     (subscriptionData?.isInGracePeriod ||
-      subscriptionData?.subscriptionStatus === 'trialing' ||
       subscriptionData?.subscriptionStatus === 'past_due' ||
       subscriptionData?.subscriptionStatus === 'inactive');
 
   const getBannerMessage = () => {
-    if (subscriptionData?.isInGracePeriod) {
-      const graceEnd = new Date(subscriptionData.gracePeriodEndsAt);
-      const daysLeft = Math.ceil((graceEnd - new Date()) / (1000 * 60 * 60 * 24));
-      return `Your trial has expired. Upgrade within ${daysLeft} day${daysLeft !== 1 ? 's' : ''} to continue using RankCare.`;
-    }
-    if (subscriptionData?.subscriptionStatus === 'trialing' && subscriptionData?.trialEndsAt) {
-      const trialEnd = new Date(subscriptionData.trialEndsAt);
-      const daysLeft = Math.ceil((trialEnd - new Date()) / (1000 * 60 * 60 * 24));
-      if (daysLeft <= 3) {
-        return `Your trial expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Upgrade now to avoid interruption.`;
-      }
-    }
+    if (subscriptionData?.isInGracePeriod) return 'Your paid subscription is in its grace period. Update payment details to avoid interruption.';
     if (subscriptionData?.subscriptionStatus === 'past_due') {
       return 'Your subscription payment is past due. Please update your payment details to avoid service interruption.';
     }

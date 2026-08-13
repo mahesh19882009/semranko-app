@@ -140,7 +140,8 @@ class TestCompetitorTrackingCreditProtection:
         self.db.add_all([user, project, competitor, keyword])
         self.db.commit()
 
-        with patch("app.services.competitor_rank_service.DataForSEOClient.get_serp_data_batch") as mock_fetch:
+        with patch("app.services.competitor_rank_service.get_cached", return_value=None), \
+             patch("app.services.competitor_rank_service.DataForSEOClient.get_serp_data_batch") as mock_fetch:
             from app.services.competitor_rank_service import track_competitor_rankings
             with pytest.raises(ApiError) as exc_info:
                 track_competitor_rankings(self.db, user.id, project.id)
@@ -298,7 +299,7 @@ class TestDFSCostInstrumentation:
 
     def test_estimate_dataforseo_cost_serp_depth_10(self):
         cost = _estimate_dataforseo_cost("/serp/google/organic/live/advanced", keyword_count=1, depth=10, cache_hit=False)
-        assert cost == 0.010
+        assert cost == 0.002
 
     def test_estimate_dataforseo_cost_cache_hit(self):
         cost = _estimate_dataforseo_cost("/serp/google/organic/live/advanced", keyword_count=1, depth=100, cache_hit=True)
@@ -306,11 +307,11 @@ class TestDFSCostInstrumentation:
 
     def test_estimate_dataforseo_cost_labs_keyword_overview(self):
         cost = _estimate_dataforseo_cost("/dataforseo_labs/google/keyword_overview/live", keyword_count=1, cache_hit=False)
-        assert cost == 0.013
+        assert cost == 0.01212
 
     def test_estimate_dataforseo_cost_competitors_domain(self):
         cost = _estimate_dataforseo_cost("/dataforseo_labs/google/competitors_domain/live", keyword_count=1, cache_hit=False)
-        assert cost == 0.132
+        assert cost == 0.01212
 
     def test_log_dataforseo_cost_stores_estimated_cost(self):
         user = make_user(self.db, user_id="user-cost-1", credit_balance=0.0)

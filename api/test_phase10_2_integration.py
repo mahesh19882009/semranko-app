@@ -40,7 +40,7 @@ from app.workers.refresh_worker import (
     process_pending_processing_jobs,
     process_processing_job,
 )
-from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved
+from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, reserve_automatic_credits
 
 
 def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=100.0,
@@ -54,6 +54,7 @@ def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=1
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -245,6 +246,8 @@ class TestDuplicateRankResultProtection:
         db.add(pj)
         db.commit()
 
+        reserve_automatic_credits(db, user.id, 10, "test weekly reservation", f"auto:weekly:rj1:{user.id}")
+
         process_processing_job(db, pj)
         process_processing_job(db, pj)
 
@@ -277,9 +280,11 @@ class TestCreditDeduplication:
         db.add(pj)
         db.commit()
 
+        reserve_automatic_credits(db, user.id, 20, "test weekly reservation", f"auto:weekly:rj1:{user.id}")
+
         process_processing_job(db, pj)
         db.refresh(user)
-        balance_after_first = user.creditBalance
+        balance_after_first = user.automaticCreditBalance
 
         pj2 = ProcessingJob(
             refreshJobId="rj1",
@@ -298,9 +303,15 @@ class TestCreditDeduplication:
 
         process_processing_job(db, pj2)
         db.refresh(user)
-        balance_after_second = user.creditBalance
+        balance_after_second = user.automaticCreditBalance
 
-        assert balance_after_second < balance_after_first
+        assert balance_after_second == balance_after_first
+        reservation = db.scalar(select(CreditLedger).where(
+            CreditLedger.userId == user.id,
+            CreditLedger.creditPool == "automatic",
+        ))
+        assert reservation.creditsConsumed == 20.0
+        assert reservation.status == "completed"
         results = db.scalars(select(RankResult).where(RankResult.keywordId == kw.id)).all()
         assert len(results) == 2
 

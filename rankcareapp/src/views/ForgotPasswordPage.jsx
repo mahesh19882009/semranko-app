@@ -4,6 +4,7 @@ import { Link } from "../lib/navigation";
 import { forgotPasswordApi } from "../lib/api";
 import Button from "../components/ui/Button";
 import Alert from "../components/ui/Alert";
+import TurnstileWidget from '../components/TurnstileWidget';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -11,6 +12,7 @@ export default function ForgotPasswordPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [sent, setSent] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -20,7 +22,7 @@ export default function ForgotPasswordPage() {
     setSent(false);
 
     try {
-      const result = await forgotPasswordApi(email);
+      const result = await forgotPasswordApi(email, turnstileToken);
       setMessage(result?.message || "If your email is registered, you will receive a password reset link.");
       setSent(true);
     } catch (err) {
@@ -65,6 +67,8 @@ export default function ForgotPasswordPage() {
             >
               Send reset link
             </Button>
+
+            <div className="mt-4"><TurnstileWidget action="forgot_password" onToken={setTurnstileToken} /></div>
 
             {error && <Alert variant="error" message={error} />}
 

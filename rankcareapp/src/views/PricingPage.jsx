@@ -6,7 +6,7 @@ import { initRazorpayCheckout, apiRequest } from "../lib/api";
 import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
 import { useSelector, useDispatch } from "react-redux";
 import Alert from "../components/ui/Alert";
-import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
+import { fetchCurrentPricing, fetchPricingPlans } from "../features/pricing/pricingSlice";
 
 const PLAN_ORDER = {
   free_trial: 0,
@@ -28,6 +28,7 @@ export default function PricingPage() {
   const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
+    dispatch(fetchPricingPlans());
     setAuthenticated(isAuthenticated());
     if (isAuthenticated()) {
       dispatch(fetchCurrentPricing());
@@ -46,9 +47,9 @@ export default function PricingPage() {
   const pricingPlans = useSelector((state) => state.pricing.plans);
 
   const currentPlan = pricingCurrent?.plan || null;
-  const currentCreditBalance = pricingCurrent?.creditBalance;
+  const currentCreditBalance = pricingCurrent?.spendableCreditsRemaining;
 
-  const plans = pricingPlans || [];
+  const plans = (pricingPlans || []).filter((plan) => ['free_trial', 'starter', 'pro', 'agency'].includes(plan.key));
 
   useEffect(() => {
     let cancelled = false;
@@ -140,8 +141,8 @@ export default function PricingPage() {
                 body: JSON.stringify({ razorpay_order_id: order.order_id }),
               });
             }
-          } catch (err) {
-            console.error("Failed to mark payment as failed:", err);
+          } catch {
+            // Best-effort provider reconciliation; the original payment error is already visible.
           }
         },
       });
@@ -165,21 +166,20 @@ export default function PricingPage() {
   const renderPlanFeatures = (plan) => {
     const limits = plan.limits || {};
     const features = [];
-    if (limits.monthlyCredits) {
-      features.push(`${limits.monthlyCredits.toLocaleString('en-US')} monthly credits`);
-    }
-    if (limits.keywordLimit) {
-      features.push(`Track up to ${limits.keywordLimit.toLocaleString('en-US')} keywords`);
+    features.push(`${(plan.domain_limit || 0).toLocaleString('en-US')} project${plan.domain_limit === 1 ? '' : 's'}`);
+    features.push(`${(limits.keywordLimit || 0).toLocaleString('en-US')} keywords`);
+    features.push(`${(limits.monthlyCredits || 0).toLocaleString('en-US')} total monthly credits`);
+    if ((limits.automaticCredits || 0) > 0) {
+      features.push(`${limits.automaticCredits.toLocaleString('en-US')} reserved for automatic tracking`);
+      features.push(`${(limits.spendableCredits || 0).toLocaleString('en-US')} spendable credits`);
     }
     if (limits.competitorsPerProject) {
       features.push(`${limits.competitorsPerProject} competitors per project`);
     }
-    if (plan.domain_limit) {
-      features.push(`${plan.domain_limit} project domain${plan.domain_limit > 1 ? 's' : ''}`);
-    }
-    if (plan.refreshFrequency) {
-      features.push(`${plan.refreshFrequency.charAt(0).toUpperCase() + plan.refreshFrequency.slice(1)} refresh`);
-    }
+    features.push(limits.weeklyTrackingEnabled ? 'Weekly rank refresh included' : 'No weekly or monthly automatic tracking');
+    features.push(`Manual Refresh: ${limits.manualRefreshLimit || 0} keywords / cycle`);
+    features.push(`Keyword Research: ${limits.keywordResearchLimit || 0} reports / cycle`);
+    features.push(`Competitor Spy: ${limits.competitorSpyLimit || 0} reports / cycle`);
     return features;
   };
 
@@ -190,7 +190,7 @@ export default function PricingPage() {
         <div className="mx-auto max-w-3xl text-center">
           {authenticated && currentPlan ? (
             <div className="inline-flex items-center gap-3 rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
-              <span>Current Plan: {currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</span>
+              <span>Current Plan: {currentPlan === 'free_trial' ? 'Free' : currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</span>
               <span className="text-emerald-400">|</span>
               <span>
                 Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '...'}
@@ -201,7 +201,7 @@ export default function PricingPage() {
               to="/register"
               className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
             >
-              Start Free Trial — No credit card required
+              Start Free — No credit card required
             </Link>
           )}
         </div>
@@ -212,7 +212,7 @@ export default function PricingPage() {
             Simple plans for growing SEO workflows
           </h1>
           <p className="mt-4 text-lg text-slate-600">
-            Start with a free trial and choose the plan that fits your SEO workflow.
+            Start free and choose the plan that fits your SEO workflow. Paid prices exclude 18% GST.
           </p>
         </div>
 
@@ -226,7 +226,7 @@ export default function PricingPage() {
             const cleanDisplayPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
             const priceDisplay = isEnterprise
               ? "Custom"
-              : `₹${cleanDisplayPrice.toLocaleString('en-US')} / month`;
+              : `₹${cleanDisplayPrice.toLocaleString('en-US')}`;
             const isCurrentPlan = authenticated && currentPlan === plan.key;
             const currentPlanOrder = currentPlan ? PLAN_ORDER[currentPlan] : -1;
             const planOrder = PLAN_ORDER[plan.key];
@@ -296,12 +296,27 @@ export default function PricingPage() {
                     {plan.limits?.monthlyCredits ? `${plan.limits.monthlyCredits.toLocaleString('en-US')} Monthly Credits` : 'Custom Credits'}
                   </p>
                   <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                    {renderPlanFeatures(plan).map((feature, idx) => (
-                      <li key={idx} className="flex items-center gap-2">
-                        <span className="text-indigo-600">✓</span>
-                        {feature}
-                      </li>
-                    ))}
+                    {renderPlanFeatures(plan).map((feature, idx) => {
+                      const isDisabled =
+                        feature.startsWith("No ") ||
+                        feature.includes(": 0 ");
+
+                      return (
+                        <li key={idx} className="flex items-center gap-2">
+                          <span
+                            className={
+                              isDisabled
+                                ? "text-red-500"
+                                : "text-indigo-600"
+                            }
+                          >
+                            {isDisabled ? "✕" : "✓"}
+                          </span>
+
+                          {feature}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
 
@@ -322,7 +337,7 @@ export default function PricingPage() {
                 ) : (
                   <button
                     onClick={() => handleSelectPlan(plan.key)}
-                    disabled={loadingPlan === plan.key}
+                    disabled={loadingPlan !== null}
                     className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlighted
                       ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
                       : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
@@ -331,7 +346,7 @@ export default function PricingPage() {
                     {loadingPlan === plan.key
                       ? "Processing..."
                       : !authenticated
-                        ? (plan.key === "free_trial" ? "Start Free Trial" : "Get Started")
+                        ? (plan.key === "free_trial" ? "Start Free" : "Get Started")
                         : isHigherTier
                           ? `Upgrade to ${plan.name}`
                           : plan.cta

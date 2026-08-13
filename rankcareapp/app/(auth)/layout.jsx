@@ -2,16 +2,8 @@
 import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
 import AppLayout from '@/src/components/AppLayout'
-import { getStoredUser } from '@/src/utils/auth'
-
-function getIsAuthenticated() {
-  if (typeof window === 'undefined') return false
-  try {
-    return Boolean(window.localStorage.getItem('accessToken'))
-  } catch {
-    return false
-  }
-}
+import { clearStoredUser, setStoredUser } from '@/src/utils/auth'
+import { apiRequest } from '@/src/lib/api'
 
 export default function AppLayoutWrapper({ children, params }) {
   use(params)
@@ -22,18 +14,29 @@ export default function AppLayoutWrapper({ children, params }) {
   const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
-    const isAuth = getIsAuthenticated()
-    setAuthenticated(isAuth)
-    if (isAuth) {
-      setUser(getStoredUser())
-    }
-    setAuthChecked(true)
+    let active = true
+    apiRequest('/auth/me')
+      .then((result) => {
+        if (!active) return
+        const currentUser = result?.data || null
+        setStoredUser(currentUser)
+        setUser(currentUser)
+        setAuthenticated(true)
+      })
+      .catch(() => {
+        if (!active) return
+        clearStoredUser()
+        setAuthenticated(false)
+      })
+      .finally(() => { if (active) setAuthChecked(true) })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
     if (!authChecked) return
     if (!authenticated) {
-      router.replace('/login')
+      const returnTo = `${window.location.pathname}${window.location.search}`
+      router.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`)
       return
     }
     if (user && user.isVerified === false) {
@@ -41,7 +44,7 @@ export default function AppLayoutWrapper({ children, params }) {
     }
   }, [authChecked, authenticated, user, router])
 
-  if (!authenticated) {
+  if (!authChecked || !authenticated) {
     return null
   }
 

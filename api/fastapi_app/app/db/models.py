@@ -35,11 +35,14 @@ class User(Base):
     mobileOtpAttempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mobileOtpLastSentAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
-    selectedPlan: Mapped[str] = mapped_column(String, nullable=False, default="starter", server_default="starter")
-    subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="trialing", server_default="trialing")
+    selectedPlan: Mapped[str] = mapped_column(String, nullable=False, default="free_trial", server_default="free_trial")
+    subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="free", server_default="free")
     trialStartsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    planCreditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    purchasedCreditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    automaticCreditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
     pendingPlanChange: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     planAnniversaryAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     lastCreditResetAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
@@ -75,7 +78,10 @@ class User(Base):
 
     __table_args__ = (
         Index("User_mobileNumber_idx", "mobileNumber"),
-        CheckConstraint("creditBalance >= 0", name="user_credit_balance_non_negative"),
+        CheckConstraint('"creditBalance" >= 0', name="user_credit_balance_non_negative"),
+        CheckConstraint('"planCreditBalance" >= 0', name="user_plan_credit_balance_non_negative"),
+        CheckConstraint('"purchasedCreditBalance" >= 0', name="user_purchased_credit_balance_non_negative"),
+        CheckConstraint('"automaticCreditBalance" >= 0', name="user_automatic_credit_balance_non_negative"),
     )
 
 
@@ -294,6 +300,45 @@ class Subscription(Base):
     )
 
 
+class FeatureUsage(Base):
+    __tablename__ = "FeatureUsage"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    feature: Mapped[str] = mapped_column(String, nullable=False)
+    cycleStart: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    cycleEnd: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    usedUnits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    reservedUnits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("FeatureUsage_user_feature_cycle_key", "userId", "feature", "cycleStart", unique=True),
+        CheckConstraint('"usedUnits" >= 0', name="feature_usage_used_non_negative"),
+        CheckConstraint('"reservedUnits" >= 0', name="feature_usage_reserved_non_negative"),
+    )
+
+
+class FeatureUsageReservation(Base):
+    __tablename__ = "FeatureUsageReservation"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    usageId: Mapped[str] = mapped_column(String, ForeignKey("FeatureUsage.id", ondelete="CASCADE"), nullable=False)
+    reference: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    units: Mapped[int] = mapped_column(Integer, nullable=False)
+    consumedUnits: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("FeatureUsageReservation_usageId_idx", "usageId"),
+        CheckConstraint("units > 0", name="feature_usage_reservation_units_positive"),
+        CheckConstraint('"consumedUnits" >= 0', name="feature_usage_reservation_consumed_non_negative"),
+    )
+
+
 class SerpFeature(Base):
     __tablename__ = "SerpFeature"
 
@@ -419,6 +464,10 @@ class CreditLedger(Base):
     balanceAfter: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     requestId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    creditPool: Mapped[str] = mapped_column(String, nullable=False, default="spendable", server_default="spendable")
+    planCreditsChange: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    purchasedCreditsChange: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
+    automaticCreditsChange: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
 
     user: Mapped[User] = relationship("User", back_populates="creditLedgerEntries", foreign_keys=[userId])
     owner: Mapped[User] = relationship("User", foreign_keys=[ownerId])
@@ -433,8 +482,8 @@ class CreditLedger(Base):
         Index("CreditLedger_timestamp_idx", "timestamp"),
         Index("CreditLedger_projectId_idx", "projectId"),
         Index("CreditLedger_keywordId_idx", "keywordId"),
-        CheckConstraint("balanceBefore >= 0", name="ledger_balance_before_non_negative"),
-        CheckConstraint("balanceAfter >= 0", name="ledger_balance_after_non_negative"),
+        CheckConstraint('"balanceBefore" >= 0', name="ledger_balance_before_non_negative"),
+        CheckConstraint('"balanceAfter" >= 0', name="ledger_balance_after_non_negative"),
     )
 
 

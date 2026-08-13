@@ -1,7 +1,7 @@
 """phase10_3_processing_job_recovery
 
 Revision ID: phase10_3_processing_job_recovery
-Revises: a1b2c3d4e5f6
+Revises: phase10_idempotency
 Create Date: 2026-08-12
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'phase10_3_processing_job_recovery'
-down_revision: Union[str, Sequence[str], None] = 'a1b2c3d4e5f6'
+down_revision: Union[str, Sequence[str], None] = 'phase10_idempotency'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

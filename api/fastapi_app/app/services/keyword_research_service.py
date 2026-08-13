@@ -12,6 +12,12 @@ from app.services.plan_service import ensure_keyword_limit, get_user_plan_limits
 from app.services.dataforseo_client import DataForSEOClient
 from app.core.config import get_settings
 from app.core.errors import ApiError
+from app.services.feature_usage_service import (
+    ensure_feature_available,
+    reserve_feature_usage,
+    finalize_feature_usage,
+    release_feature_usage,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -28,14 +34,22 @@ def _is_cache_data_valid(data: dict) -> bool:
 def research_keyword(db: Session, user_id: str, keyword: str, location_code: int = 2840) -> dict:
     from app.services.keyword_research_cache_service import query_research_cache, save_research_cache
 
+    usage = ensure_feature_available(db, user_id, "keyword_research")
     cached_ideas = query_research_cache(db, user_id, keyword, location_code)
     if cached_ideas is not None:
         logger.info("Returning cached keyword research for '%s' (location=%s)", keyword, location_code)
         normalized = [_normalize_idea(i) for i in cached_ideas]
-        return _build_research_response(keyword, normalized, credits_charged=0)
+        response = _build_research_response(keyword, normalized, credits_charged=0)
+        response["cached"] = True
+        response["usage"] = usage
+        return response
 
     cost = settings.plan_config.credit_costs.get("keyword_research", 20)
-    reference = f"research:{user_id}:{keyword}:{location_code}"
+    usage_reference, usage = reserve_feature_usage(
+        db, user_id, "keyword_research", 1,
+        reference=f"research-usage:{user_id}:{keyword}:{location_code}:{datetime.utcnow().timestamp()}",
+    )
+    reference = f"research:{user_id}:{keyword}:{location_code}:{datetime.utcnow().timestamp()}"
     try:
         reserve_credits(
             db,
@@ -46,6 +60,7 @@ def research_keyword(db: Session, user_id: str, keyword: str, location_code: int
             reference=reference,
         )
     except Exception as exc:
+        release_feature_usage(db, usage_reference)
         raise ApiError(402, f"Insufficient credits for keyword research. Required: {cost}")
 
     try:
@@ -61,13 +76,21 @@ def research_keyword(db: Session, user_id: str, keyword: str, location_code: int
             description=f"Keyword research: {keyword}",
         )
 
+        usage = finalize_feature_usage(db, usage_reference, 1)
         db.commit()
-        return _build_research_response(keyword, ideas or [], credits_charged=1 if ideas else 0)
+        response = _build_research_response(keyword, ideas or [], credits_charged=1)
+        response["cached"] = False
+        response["usage"] = usage
+        return response
     except Exception as exc:
         db.rollback()
         try:
             refund_reserved(db, user_id, reference, float(cost), description=f"Refund: keyword research failed for {keyword}")
             db.commit()
+        except Exception:
+            db.rollback()
+        try:
+            release_feature_usage(db, usage_reference)
         except Exception:
             db.rollback()
         raise
@@ -134,7 +157,7 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
                 ).all()
             )
 
-            cost_per_keyword = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            cost_per_keyword = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
             total_cost = float(len(keywords_to_fetch) * cost_per_keyword)
             reference = f"bulkdayone:{user_id}:{domain}:{datetime.utcnow().timestamp()}"
             try:

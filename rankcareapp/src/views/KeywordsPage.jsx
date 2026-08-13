@@ -113,6 +113,8 @@ function KeywordsPage() {
   });
   const [activatingId, setActivatingId] = useState(null);
   const [deactivatingId, setDeactivatingId] = useState(null);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -142,7 +144,7 @@ function KeywordsPage() {
     const fetchSchedule = async () => {
       try {
         const json = await apiRequest('/rankings/schedule');
-        if (res.ok && json.success) {
+        if (json.success) {
           setNextRefresh(json.data?.nextRunAt);
         }
       } catch (err) {
@@ -390,6 +392,7 @@ function KeywordsPage() {
     setActivatingId(row.id);
     try {
       await apiRequest(`/keywords/${row.id}/activate`, { method: 'POST' });
+      setActionMessage('Keyword activated. No credits were used; it is eligible for the next scheduled refresh.');
       setTimeout(fetchTableData, 500);
     } catch (err) {
       setTableError(err.message || 'Failed to activate keyword');
@@ -403,11 +406,66 @@ function KeywordsPage() {
     setDeactivatingId(row.id);
     try {
       await apiRequest(`/keywords/${row.id}/deactivate`, { method: 'POST' });
+      setActionMessage('Keyword deactivated. Its row and history are preserved, and no credits were used.');
       setTimeout(fetchTableData, 500);
     } catch (err) {
       setTableError(err.message || 'Failed to deactivate keyword');
     } finally {
       setDeactivatingId(null);
+    }
+  };
+
+  const handleBulkStatus = async (active) => {
+    if (!selectedIds.length || bulkActionLoading) return;
+    setBulkActionLoading(true);
+    setActionMessage('');
+    setTableError('');
+    try {
+      const result = await apiRequest('/keywords/bulk/status', {
+        method: 'POST',
+        body: JSON.stringify({ keyword_ids: selectedIds.map((row) => row.id), active }),
+      });
+      const invalid = result.data?.invalid?.length || 0;
+      setActionMessage(invalid
+        ? `${result.data?.updatedCount || 0} keyword(s) updated; ${invalid} invalid selection(s) skipped.`
+        : `${result.data?.updatedCount || 0} keyword(s) ${active ? 'activated' : 'deactivated'}. No credits were used.`);
+      setSelectedIds([]);
+      await fetchTableData();
+    } catch (err) {
+      setTableError(err.message || `Failed to ${active ? 'activate' : 'deactivate'} selected keywords`);
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    if (!selectedIds.length || bulkActionLoading) return;
+    if (selectedIds.some((row) => row.deletedAt)) {
+      setTableError('Deleted keywords cannot be refreshed. Re-add them only after the existing cooldown permits it.');
+      return;
+    }
+    const inactive = selectedIds.filter((row) => row.is_active === false);
+    if (inactive.length) {
+      setTableError('Activate this keyword before refreshing it.');
+      return;
+    }
+    setBulkActionLoading(true);
+    setActionMessage('');
+    setTableError('');
+    try {
+      const result = await apiRequest(`/keywords/${selectedProjectId}/refresh`, {
+        method: 'POST',
+        body: JSON.stringify({ keyword_ids: selectedIds.map((row) => row.id) }),
+      });
+      const data = result.data || {};
+      setActionMessage(`${data.updated || 0} keyword(s) refreshed; ${data.skipped || 0} skipped.`);
+      setSelectedIds([]);
+      dispatch(fetchSubscriptionStatus());
+      await fetchTableData();
+    } catch (err) {
+      setTableError(err.message || 'Manual refresh failed');
+    } finally {
+      setBulkActionLoading(false);
     }
   };
 
@@ -417,6 +475,9 @@ function KeywordsPage() {
   };
 
   const actionBodyTemplate = (rowData) => {
+    if (rowData.deletedAt) {
+      return <span className="text-xs font-medium text-slate-400">Deleted</span>;
+    }
     const isActive = rowData.is_active !== false;
     if (isActive) {
       return (
@@ -435,6 +496,12 @@ function KeywordsPage() {
         {activatingId === rowData.id ? '...' : 'Activate'}
       </Button>
     );
+  };
+
+  const statusBodyTemplate = (rowData) => {
+    if (rowData.deletedAt) return <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">Deleted</span>;
+    if (rowData.is_active === false) return <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">Inactive</span>;
+    return <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-800">Active</span>;
   };
 
   const aiBodyTemplate = (rowData) => {
@@ -509,11 +576,21 @@ function KeywordsPage() {
     );
   }
 
-  const planName = subscriptionData?.plan || pricingCurrent?.plan || 'Free Trial';
+  const rawPlanName = subscriptionData?.effectivePlan || subscriptionData?.plan || pricingCurrent?.effectivePlan || pricingCurrent?.plan;
+  const planName = rawPlanName === 'free_trial' ? 'Free' : (rawPlanName || 'Free');
   const keywordLimit = subscriptionData?.limits?.keywordLimit ?? pricingCurrent?.limits?.keywordLimit ?? null;
   const totalKeywordCount = subscriptionData?.usage?.keywords ?? pricingCurrent?.usage?.keywords ?? null;
   const remainingSlots = keywordLimit != null && totalKeywordCount != null ? Math.max(0, keywordLimit - totalKeywordCount) : null;
   const creditBalance = subscriptionData?.creditBalance ?? pricingCurrent?.creditBalance ?? null;
+  const spendableCredits = subscriptionData?.spendableCreditsRemaining ?? pricingCurrent?.spendableCreditsRemaining ?? creditBalance;
+  const manualUsage = subscriptionData?.featureUsage?.manualRefresh;
+  const manualRefreshCost = subscriptionData?.creditCosts?.manualRefresh ?? pricingCurrent?.creditCosts?.manualRefresh;
+  const addKeywordCost = subscriptionData?.creditCosts?.addKeyword ?? pricingCurrent?.creditCosts?.addKeyword;
+  const manualLocked = (subscriptionData?.effectivePlan || subscriptionData?.plan) === 'free_trial' || (manualUsage?.limit ?? 0) <= 0;
+  const pendingKeywordCount = parseKeywords(keywordText).length;
+  const pendingAddCost = addKeywordCost != null ? pendingKeywordCount * addKeywordCost : null;
+  const addCapacityExceeded = remainingSlots != null && pendingKeywordCount > remainingSlots;
+  const addCreditsInsufficient = pendingAddCost != null && spendableCredits != null && pendingAddCost > spendableCredits;
 
   return (
     <div className="space-y-6">
@@ -544,8 +621,12 @@ function KeywordsPage() {
             <span className="font-semibold text-slate-900">{remainingSlots != null ? remainingSlots.toLocaleString('en-US') : '—'}</span>
           </div>
           <div>
-            <span className="text-slate-500">Credits:</span>{' '}
-            <span className="font-semibold text-slate-900">{creditBalance != null ? creditBalance.toLocaleString('en-US') : '—'}</span>
+            <span className="text-slate-500">Spendable Credits:</span>{' '}
+            <span className="font-semibold text-slate-900">{spendableCredits != null ? spendableCredits.toLocaleString('en-US') : '—'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Manual Refresh:</span>{' '}
+            <span className="font-semibold text-slate-900">{manualUsage ? `${manualUsage.used} of ${manualUsage.limit} used · ${manualUsage.remaining} remaining` : '—'}</span>
           </div>
         </div>
       </section>
@@ -614,6 +695,7 @@ function KeywordsPage() {
         >
           <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
           <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
+          <Column header="Status" body={statusBodyTemplate} style={{ width: '8rem' }} />
           <Column field="volume" header="Volume" sortable style={{ width: '8rem' }} />
           <Column field="kd" header={
             <TippyTooltip content="Keyword Difficulty (0-100) — how hard it is to rank" placement="top" appendTo={document.body}>
@@ -676,12 +758,19 @@ function KeywordsPage() {
           <div className="border-t border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
             <span className="text-sm font-medium text-rose-700">{selectedIds.length} selected</span>
             <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => handleBulkStatus(true)} disabled={bulkActionLoading}>Activate</Button>
+              <Button variant="outline" onClick={() => handleBulkStatus(false)} disabled={bulkActionLoading}>Deactivate</Button>
+              <Button variant="outline" onClick={handleManualRefresh} disabled={bulkActionLoading || manualLocked || (manualUsage?.remaining ?? 0) < selectedIds.length} title={manualLocked ? 'This feature is available on paid plans. Upgrade to continue.' : '20 spendable credits per keyword'}>
+                Manual Refresh ({manualRefreshCost != null ? selectedIds.length * manualRefreshCost : '—'} credits)
+              </Button>
               <Button variant="danger" onClick={handleDeleteSelected}
                 disabled={tableLoading}> <FontAwesomeIcon icon={faTrash} />Delete selected</Button>
             </div>
           </div>
         )}
 
+        {manualLocked && <Alert variant="warning" message="Manual Refresh is available on paid plans. Upgrade to continue. Automatic tracking is not included on Free." />}
+        {actionMessage && <Alert variant="success" message={actionMessage} />}
         {tableError && <Alert variant="error" message={tableError} />}
       </section>
 
@@ -693,7 +782,7 @@ function KeywordsPage() {
         footer={
           <>
             <Button variant="outline" onClick={() => setIsAddModalOpen(false)} disabled={isSubmitting} >Cancel</Button>
-            <Button onClick={handleAddKeywords} disabled={!keywordText.trim() || isSubmitting} loading={isSubmitting} >
+            <Button onClick={handleAddKeywords} disabled={!keywordText.trim() || isSubmitting || addCapacityExceeded || addCreditsInsufficient} loading={isSubmitting} >
               <FontAwesomeIcon icon={faPlus} /> {isSubmitting ? 'Adding...' : 'Add Keywords'}
             </Button>
           </>
@@ -721,6 +810,10 @@ function KeywordsPage() {
               disabled={isSubmitting}
               className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
             />
+            <p className="mt-2 text-xs text-slate-500">{addKeywordCost ?? '—'} spendable credits per keyword for both single and bulk add. Inactive existing keywords should be reactivated at no cost; deleted keywords remain subject to the 30-day re-add cooldown.</p>
+            {pendingKeywordCount > 0 && <p className="mt-1 text-xs font-medium text-slate-700">This add requires {pendingAddCost ?? '—'} spendable credits and {pendingKeywordCount} keyword slot(s).</p>}
+            {addCapacityExceeded && <p className="mt-1 text-sm font-medium text-rose-600">Keyword plan capacity exceeded. You have {remainingSlots} slot(s) remaining.</p>}
+            {addCreditsInsufficient && <p className="mt-1 text-sm font-medium text-rose-600">Insufficient spendable credits. Automatic tracking credits cannot be used for keyword adds.</p>}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>

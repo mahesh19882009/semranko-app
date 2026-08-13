@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import ProcessingJob, Keyword, RankResult, SerpFeature, User, Project, RefreshJob, TrackedKeyword
-from app.services.credit_service import consume_reserved, deduct_credits
+from app.services.credit_service import consume_reserved, deduct_credits, consume_automatic_reserved
 from app.services.dataforseo_client import _build_serp_cache_key, _set_cached_serp, _log_dataforseo_cost
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -152,6 +153,23 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         
         now = datetime.utcnow()
         for keyword_row in keyword_rows:
+            user_id = keyword_row.project.userId if keyword_row.project else None
+            if user_id and job.refreshJobId:
+                try:
+                    consume_automatic_reserved(
+                        db=db,
+                        user_id=user_id,
+                        reference=f"auto:weekly:{job.refreshJobId}:{user_id}",
+                        amount=settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10),
+                        description=f"Weekly tracking: {job.keywordText}",
+                        project_id=keyword_row.projectId,
+                        keyword_id=keyword_row.id,
+                        task_id=task_id,
+                    )
+                except Exception as credit_exc:
+                    logger.error("Skipping weekly result without automatic credits keyword=%s user=%s: %s", job.keywordText, user_id, credit_exc)
+                    continue
+
             keyword_row.position = position
             keyword_row.visibility = _dfs_visibility(position)
             keyword_row.ai_badge = has_aio_badge
@@ -176,8 +194,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
             )
             db.add(rank_result)
             
-            user_id = keyword_row.project.userId if keyword_row.project else None
-            if user_id:
+            if user_id and not job.refreshJobId:
                 user = db.scalar(select(User).where(User.id == user_id))
                 if user and user.subscriptionStatus == "active":
                     try:

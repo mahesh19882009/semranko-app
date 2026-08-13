@@ -31,9 +31,10 @@ from app.services.async_bulk_service import (
     _submit_weekly_refresh,
 )
 from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
-from app.services.auth_service import login_user, register_user
+from app.services.auth_service import create_mobile_verification_session, login_user, register_user
 from app.services.otp_service import send_otp, verify_otp, resend_otp, _normalize_mobile
 from app.core.errors import ApiError
+from app.core.security import decode_access_token
 
 
 def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=100.0,
@@ -46,6 +47,7 @@ def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=1
         passwordHash="hash",
         selectedPlan=plan,
         creditBalance=credit_balance,
+        automaticCreditBalance=credit_balance,
         subscriptionStatus=subscription_status,
         trialStartsAt=now,
         trialEndsAt=now + timedelta(days=7),
@@ -108,7 +110,8 @@ class TestCacheHitBilling:
                 assert result is True
 
         db.refresh(user)
-        assert user.creditBalance == 90.0
+        assert user.creditBalance == 100.0
+        assert user.automaticCreditBalance == 90.0
 
     def test_weekly_cache_miss_no_pre_charge(self):
         engine = create_engine("sqlite:///:memory:")
@@ -277,9 +280,10 @@ class TestMobileVerification:
         db.add(user)
         db.commit()
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(ApiError) as exc_info:
             verify_otp(db, user.id, "123456")
         assert exc_info.value.status_code == 400
+        assert exc_info.value.data["error"] == "OTP_EXPIRED"
 
     def test_duplicate_mobile_rejected(self):
         engine = create_engine("sqlite:///:memory:")
@@ -308,9 +312,11 @@ class TestEmailVerificationEnforcement:
         user = make_user(db, is_verified=False, mobile_verified=True)
 
         with patch("app.services.auth_service.verify_password", return_value=True):
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ApiError) as exc_info:
                 login_user(db, {"email": user.email, "password": "password"})
             assert exc_info.value.status_code == 403
+            assert exc_info.value.data["error"] == "EMAIL_VERIFICATION_REQUIRED"
+            assert exc_info.value.data["action"] == "resend_verification"
 
     def test_login_requires_mobile_verification(self):
         engine = create_engine("sqlite:///:memory:")
@@ -320,9 +326,27 @@ class TestEmailVerificationEnforcement:
         user = make_user(db, is_verified=True, mobile_verified=False)
 
         with patch("app.services.auth_service.verify_password", return_value=True):
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ApiError) as exc_info:
                 login_user(db, {"email": user.email, "password": "password"})
             assert exc_info.value.status_code == 403
+            assert exc_info.value.data["error"] == "MOBILE_VERIFICATION_REQUIRED"
+            assert exc_info.value.data["action"] == "verify_mobile"
+
+    def test_old_account_can_create_purpose_scoped_mobile_recovery_session(self):
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        db = Session(engine)
+        user = make_user(db, is_verified=True, mobile_verified=False)
+
+        with patch("app.services.auth_service.verify_password", return_value=True):
+            result = create_mobile_verification_session(
+                db, {"email": user.email, "password": "password"}
+            )
+
+        token_payload = decode_access_token(result["mobileVerificationToken"])
+        assert result["mobileVerified"] is False
+        assert token_payload["userId"] == user.id
+        assert token_payload["purpose"] == "mobile_verification"
 
 
 class TestKeywordLimitEnforcement:

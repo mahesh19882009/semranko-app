@@ -18,6 +18,7 @@ from app.services.plan_service import (
     get_user_or_404,
     activate_keyword as service_activate_keyword,
     deactivate_keyword as service_deactivate_keyword,
+    set_keywords_active_state,
 )
 from app.core.config import get_settings
 from app.core.errors import ApiError
@@ -208,6 +209,25 @@ def bulk_remove_keywords(
     return {"success": True, "message": f"Deleted {deleted} keywords"}
 
 
+@router.post("/bulk/status")
+def bulk_set_keyword_status(
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    keyword_ids = payload.get("keyword_ids", [])
+    active = payload.get("active")
+    if not isinstance(active, bool):
+        raise ApiError(400, "active must be true or false")
+    result = set_keywords_active_state(db, user["userId"], keyword_ids, active)
+    action = "activated" if active else "deactivated"
+    return {
+        "success": True,
+        "message": f"{result['updatedCount']} keyword(s) {action}",
+        "data": result,
+    }
+
+
 @router.delete("/{keyword_id}")
 @rate_limit(max_requests=20, window_seconds=60)
 def remove_keyword(
@@ -254,6 +274,17 @@ def create_keyword(
     )
     if existing_active:
         raise ApiError(409, "Keyword already exists for this project")
+
+    existing_inactive = db.scalar(
+        select(Keyword).where(
+            Keyword.projectId == project_id,
+            Keyword.keyword == normalized_keyword,
+            Keyword.isActive == False,
+            Keyword.deletedAt.is_(None),
+        )
+    )
+    if existing_inactive:
+        raise ApiError(409, "Keyword already exists but is inactive. Activate it instead of adding it again.")
 
     existing_deleted = db.scalar(
         select(Keyword).where(
@@ -374,7 +405,7 @@ def bulk_create_keywords(
     deleted_map = {}
 
     for kw, is_active, deleted_at in existing:
-        if is_active:
+        if is_active or deleted_at is None:
             existing_set.add(kw)
         elif deleted_at:
             deleted_map[kw] = deleted_at
@@ -425,7 +456,7 @@ def bulk_create_keywords(
     tracking_errors = []
     for kw_text in added:
         try:
-            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
             tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain, cost=bulk_cost)
             if not tracked:
                 failed_keyword = db.scalar(
@@ -476,8 +507,8 @@ def bulk_create_keywords(
 @router.post("/{project_id}/refresh")
 @rate_limit(max_requests=10, window_seconds=60)
 def refresh_project_keywords(
-    request: Optional[Request] = None,
-    project_id: str = None,
+    project_id: str,
+    request: Request = None,
     payload: Optional[dict] = Body(default=None),
     user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),

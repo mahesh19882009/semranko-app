@@ -12,6 +12,7 @@ This service handles scheduled refresh with:
 
 import json
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -34,7 +35,11 @@ from app.db.models import (
     CreditLedger,
 )
 from app.core.config import get_settings
-from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
+from app.services.credit_service import (
+    deduct_credits, reserve_credits, consume_reserved, refund_reserved,
+    deduct_automatic_credits, reserve_automatic_credits,
+    consume_automatic_reserved, refund_automatic_reserved,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -88,6 +93,7 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
             cutoff = now - timedelta(days=6)
             query = query.where(
                 User.subscriptionStatus == "active",
+                User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
                 (Keyword.lastWeeklyRefreshAt == None) | (Keyword.lastWeeklyRefreshAt <= cutoff),
                 (Keyword.weeklyRefreshStatus == None) |
                 (Keyword.weeklyRefreshStatus != "processing") |
@@ -97,6 +103,7 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
             cutoff = now - timedelta(days=14)
             query = query.where(
                 User.subscriptionStatus == "active",
+                User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
                 User.refreshFrequency.in_(["monthly", None, ""]),
                 (Keyword.lastMonthlyMetricsRefreshAt == None) | (Keyword.lastMonthlyMetricsRefreshAt <= cutoff),
             )
@@ -298,12 +305,32 @@ def submit_refresh_job_to_dataforseo(db: Session, job: RefreshJob) -> bool:
             return False
     except Exception as exc:
         logger.error(f"Failed to submit RefreshJob {job.id}: {exc}")
+        _refund_job_automatic_reservations(db, job, "Automatic tracking submission failed")
         job.status = "failed"
         job.errorMessage = str(exc)
         job.completedAt = datetime.utcnow()
         db.add(job)
         db.commit()
         return False
+
+
+def _refund_job_automatic_reservations(db: Session, job: RefreshJob, reason: str) -> None:
+    """Refund every still-pending automatic reservation owned by a failed job."""
+    schedule_kind = "weekly" if job.jobType == "weekly_serp" else "monthly"
+    prefix = f"%[ref:auto:{schedule_kind}:{job.id}:%"
+    user_ids = db.scalars(
+        select(CreditLedger.userId).where(
+            CreditLedger.creditPool == "automatic",
+            CreditLedger.status == "pending",
+            CreditLedger.description.like(prefix),
+        ).distinct()
+    ).all()
+    for user_id in user_ids:
+        reference = f"auto:{schedule_kind}:{job.id}:{user_id}"
+        try:
+            refund_automatic_reserved(db, user_id, reference, 10**12, reason)
+        except Exception:
+            logger.exception("Failed to refund automatic reservation for job %s user %s", job.id, user_id)
 
 
 def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str]) -> bool:
@@ -374,14 +401,14 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                         if not existing_charge:
                             try:
                                 cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
-                                deduct_credits(
+                                deduct_automatic_credits(
                                     db=db,
                                     user_id=user_id,
                                     amount=cost,
-                                    action_type="charge",
                                     description=f"Weekly tracking (cache hit): {kw_text} [{cache_hit_ref}]",
                                     project_id=kw.projectId,
                                     keyword_id=kw.id,
+                                    task_id=cache_hit_ref,
                                 )
                             except Exception as credit_exc:
                                 logger.error(f"Cache-hit credit deduction failed for keyword={kw_text} user={user_id}: {credit_exc}")
@@ -430,6 +457,30 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
         db.add(job)
         db.commit()
         return True
+
+    refresh_cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
+    reserved_users = set()
+    for user_id, user_keywords in keyword_user_map.items():
+        if user_id in excluded_users:
+            continue
+        reference = f"auto:weekly:{job.id}:{user_id}"
+        try:
+            reserve_automatic_credits(
+                db, user_id, len(user_keywords) * refresh_cost,
+                f"Weekly automatic tracking reservation for job {job.id}", reference,
+                task_id=job.id,
+            )
+            reserved_users.add(user_id)
+        except HTTPException as exc:
+            logger.error("Weekly job %s excluded user %s: %s", job.id, user_id, exc.detail)
+
+    if not reserved_users:
+        job.status = "failed"
+        job.errorMessage = "Insufficient automatic tracking credits"
+        job.completedAt = datetime.utcnow()
+        db.add(job)
+        db.commit()
+        return False
     
     chunks = [
         uncached_keywords[i:i + ASYNC_BULK_MAX_TASKS]
@@ -438,6 +489,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     
     auth = (settings.effective_serp_login, settings.effective_serp_key)
     all_task_ids = []
+    submitted_keywords = []
     failed_chunks = 0
     
     for chunk in chunks:
@@ -470,19 +522,47 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
         post_response = post_res.json()
         chunk_task_ids = []
         if "tasks" in post_response and post_response["tasks"]:
-            for t in post_response["tasks"]:
+            for index, t in enumerate(post_response["tasks"]):
                 if t.get("id"):
                     chunk_task_ids.append(t["id"])
+                    task_keyword = (t.get("data") or {}).get("keyword")
+                    if not task_keyword and index < len(chunk):
+                        task_keyword = chunk[index]
+                    if task_keyword:
+                        submitted_keywords.append(task_keyword)
         
         all_task_ids.extend(chunk_task_ids)
     
     if not all_task_ids:
+        for user_id in reserved_users:
+            reference = f"auto:weekly:{job.id}:{user_id}"
+            try:
+                refund_automatic_reserved(db, user_id, reference, 10**12, "Weekly automatic tracking submission failed")
+            except Exception:
+                logger.exception("Failed to refund automatic reservation for weekly job %s user %s", job.id, user_id)
         job.status = "failed"
         job.errorMessage = "No task IDs returned from DataForSEO"
         job.completedAt = datetime.utcnow()
         db.add(job)
         db.commit()
         return False
+
+    submitted_counts = Counter(submitted_keywords)
+    for user_id in reserved_users:
+        user_counts = Counter(keyword_user_map.get(user_id, []))
+        submitted_for_user = sum(min(count, submitted_counts.get(keyword, 0)) for keyword, count in user_counts.items())
+        unused_count = sum(user_counts.values()) - submitted_for_user
+        if unused_count > 0:
+            try:
+                refund_automatic_reserved(
+                    db,
+                    user_id,
+                    f"auto:weekly:{job.id}:{user_id}",
+                    unused_count * refresh_cost,
+                    "Unused weekly automatic tracking reservation refunded",
+                )
+            except Exception:
+                logger.exception("Failed to refund partial automatic reservation for weekly job %s user %s", job.id, user_id)
     
     # Store task IDs and mark as submitted
     existing_ids = json.loads(job.dataforseoRequestIds or "[]")
@@ -532,6 +612,39 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
     results = {}
     missing_keywords = []
     cached_keywords = []
+
+    monthly_cost = settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10)
+    monthly_user_counts = {}
+    for keyword_row in db.scalars(
+        select(Keyword).join(User, User.id == Keyword.userId).where(
+            Keyword.keyword.in_(keyword_texts),
+            Keyword.isActive == True,
+            User.subscriptionStatus == "active",
+            User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
+        )
+    ).all():
+        monthly_user_counts[keyword_row.userId] = monthly_user_counts.get(keyword_row.userId, 0) + 1
+
+    reserved_users = set()
+    for user_id, count in monthly_user_counts.items():
+        reference = f"auto:monthly:{job.id}:{user_id}"
+        try:
+            reserve_automatic_credits(
+                db, user_id, count * monthly_cost,
+                f"Monthly metrics reservation for job {job.id}", reference,
+                task_id=job.id,
+            )
+            reserved_users.add(user_id)
+        except HTTPException as exc:
+            logger.error("Monthly job %s excluded user %s: %s", job.id, user_id, exc.detail)
+
+    if not reserved_users:
+        job.status = "failed"
+        job.errorMessage = "Insufficient automatic tracking credits"
+        job.completedAt = datetime.utcnow()
+        db.add(job)
+        db.commit()
+        return False
     
     for kw in keyword_texts:
         cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
@@ -553,44 +666,6 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
         })
         db.add(job)
         db.commit()
-        
-        monthly_cost = settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10)
-        for kw_text in cached_keywords:
-            kw = db.scalar(
-                select(Keyword).where(
-                    Keyword.keyword == kw_text,
-                    Keyword.location == "India",
-                    Keyword.isActive == True,
-                )
-            )
-            if kw:
-                project = db.scalar(select(Project).where(Project.id == kw.projectId))
-                if project:
-                    user_id = project.userId
-                    user = db.scalar(select(User).where(User.id == user_id))
-                    if user and user.subscriptionStatus == "active":
-                        cache_hit_ref = f"cache_hit_monthly:{job.id}:{kw.id}"
-                        existing_charge = db.scalar(
-                            select(CreditLedger).where(
-                                CreditLedger.description.like(f"%{cache_hit_ref}%"),
-                                CreditLedger.userId == user_id,
-                                CreditLedger.actionType == "charge",
-                                CreditLedger.status == "completed",
-                            )
-                        )
-                        if not existing_charge:
-                            try:
-                                deduct_credits(
-                                    db=db,
-                                    user_id=user_id,
-                                    amount=monthly_cost,
-                                    action_type="charge",
-                                    description=f"Monthly metrics (cache hit): {kw_text} [{cache_hit_ref}]",
-                                    project_id=kw.projectId,
-                                    keyword_id=kw.id,
-                                )
-                            except Exception as credit_exc:
-                                logger.error(f"Monthly cache-hit credit deduction failed for keyword={kw_text} user={user_id}: {credit_exc}")
         
         db.commit()
         return True
@@ -715,7 +790,8 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
                 keyword_count=1,
                 priority=1,
                 depth=100,
-                expand_ai_overview=True,
+                # Monthly Labs metrics do not request or update AIO data.
+                expand_ai_overview=False,
                 cache_hit=False,
                 success=True,
             )
@@ -826,13 +902,12 @@ def process_completed_async_task(
                         
                         try:
                             user_id = kw_obj.project.userId if kw_obj.project else task.userId
-                            reference = f"bulk:{task.id}:{user_id}"
-                            consume_reserved(
+                            reference = f"auto:legacy-weekly:{task.id}:{user_id}"
+                            consume_automatic_reserved(
                                 db=db,
                                 user_id=user_id,
                                 reference=reference,
                                 amount=settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10),
-                                action_type="charge",
                                 description=f"Weekly tracking: {keyword_text}",
                                 project_id=kw_obj.projectId,
                                 keyword_id=kw_obj.id,
@@ -928,42 +1003,43 @@ def run_weekly_refresh_worker(db: Session) -> dict:
     Worker that processes queued RefreshJobs and submits them to DataForSEO.
     Uses atomic claim to prevent duplicate submission.
     """
-    job = db.scalar(
-        select(RefreshJob)
-        .where(RefreshJob.jobType == "weekly_serp")
-        .where(RefreshJob.status.in_(["queued", "retry"]))
-        .order_by(RefreshJob.createdAt.asc())
-        .limit(1)
-    )
-    
-    if not job:
-        return {"status": "completed", "processed": 0}
-    
-    result = db.execute(
-        update(RefreshJob)
-        .where(RefreshJob.id == job.id)
-        .where(RefreshJob.status.in_(["queued", "retry"]))
-        .values(status="processing", updatedAt=datetime.utcnow())
-    ).rowcount
-    
-    if result == 0:
-        db.rollback()
-        return {"status": "completed", "processed": 0}
-    
-    db.commit()
-    
-    try:
-        keywords = json.loads(job.keywordsJson or "[]")
-        keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
-        location = keywords[0].get("location", "India") if keywords else "India"
-        if keyword_texts:
-            mark_keywords_processing_atomic(db, keyword_texts, location)
-        
-        success = submit_refresh_job_to_dataforseo(db, job)
-        return {"status": "completed", "processed": 1 if success else 0}
-    except Exception as exc:
-        logger.error(f"Failed to process RefreshJob {job.id}: {exc}")
-        return {"status": "failed", "error": str(exc)}
+    processed = 0
+    failed = 0
+    while True:
+        job = db.scalar(
+            select(RefreshJob)
+            .where(RefreshJob.jobType == "weekly_serp")
+            .where(RefreshJob.status.in_(["queued", "retry"]))
+            .order_by(RefreshJob.createdAt.asc())
+            .limit(1)
+        )
+        if not job:
+            return {"status": "completed", "processed": processed, "failed": failed}
+
+        claimed = db.execute(
+            update(RefreshJob)
+            .where(RefreshJob.id == job.id)
+            .where(RefreshJob.status.in_(["queued", "retry"]))
+            .values(status="processing", updatedAt=datetime.utcnow())
+        ).rowcount
+        if claimed == 0:
+            db.rollback()
+            continue
+        db.commit()
+
+        try:
+            keywords = json.loads(job.keywordsJson or "[]")
+            keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
+            location = keywords[0].get("location", "India") if keywords else "India"
+            if keyword_texts:
+                mark_keywords_processing_atomic(db, keyword_texts, location)
+            if submit_refresh_job_to_dataforseo(db, job):
+                processed += 1
+            else:
+                failed += 1
+        except Exception as exc:
+            failed += 1
+            logger.error(f"Failed to process RefreshJob {job.id}: {exc}")
 
 
 def recover_stale_weekly_jobs(db: Session) -> dict:
@@ -1075,7 +1151,25 @@ def submit_bulk_to_dataforseo(
             })
             db.add(task)
             db.commit()
+            deduct_automatic_credits(
+                db=db,
+                user_id=task.userId,
+                amount=cached_count * settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10),
+                description=f"Weekly tracking cache hits: task {task.id}",
+                task_id=f"auto:legacy-weekly-cache:{task.id}",
+            )
             return True
+
+        refresh_cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
+        legacy_reference = f"auto:legacy-weekly:{task.id}:{task.userId}"
+        reserve_automatic_credits(
+            db=db,
+            user_id=task.userId,
+            amount=len(uncached_keywords) * refresh_cost,
+            description=f"Weekly automatic tracking reservation for legacy task {task.id}",
+            reference=legacy_reference,
+            task_id=task.id,
+        )
         
         chunks = [
             uncached_keywords[i:i + ASYNC_BULK_MAX_TASKS]
@@ -1123,6 +1217,10 @@ def submit_bulk_to_dataforseo(
             all_task_ids.extend(chunk_task_ids)
         
         if not all_task_ids:
+            refund_automatic_reserved(
+                db, task.userId, legacy_reference, 10**12,
+                "Legacy weekly automatic tracking submission failed",
+            )
             logger.warning(f"DataForSEO: no task IDs returned for task {task.id}")
             task.status = "failed"
             task.errorMessage = "No task IDs returned from DataForSEO"
@@ -1172,40 +1270,6 @@ def submit_bulk_to_dataforseo(
                 task_id=dfs_task_id,
             )
         
-        from app.services.credit_service import reserve_credits
-        from app.db.models import Keyword, Project, User
-        
-        refresh_cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
-        user_reserve_map = {}
-        for kw_text in uncached_keywords:
-            db_keyword = db.scalar(
-                select(Keyword)
-                .join(Project, Project.id == Keyword.projectId)
-                .join(User, User.id == Project.userId)
-                .where(
-                    Keyword.keyword == kw_text,
-                    Keyword.isActive == True,
-                    User.subscriptionStatus == "active",
-                )
-            )
-            if db_keyword:
-                user_id = db_keyword.userId
-                user_reserve_map[user_id] = user_reserve_map.get(user_id, 0) + refresh_cost
-        
-        for uid, amount in user_reserve_map.items():
-            try:
-                reserve_credits(
-                    db=db,
-                    user_id=uid,
-                    amount=float(amount),
-                    action_type="reservation",
-                    description=f"Weekly SERP bulk reservation: task {task.id}",
-                    reference=f"bulk:{task.id}:{uid}",
-                    task_id=task.id,
-                )
-            except Exception as exc:
-                logger.error(f"Failed to reserve credits for bulk task {task.id} user {uid}: {exc}")
-        
         if failed_chunks > 0:
             logger.warning(
                 f"Task {task.id}: submitted {len(all_task_ids)} tasks across "
@@ -1218,6 +1282,13 @@ def submit_bulk_to_dataforseo(
          
     except Exception as e:
         logger.error(f"Failed to submit task {task.id} to DataForSEO: {e}")
+        try:
+            refund_automatic_reserved(
+                db, task.userId, f"auto:legacy-weekly:{task.id}:{task.userId}",
+                10**12, "Legacy weekly automatic tracking submission failed",
+            )
+        except Exception:
+            pass
         task.status = "failed"
         task.errorMessage = str(e)
         db.add(task)

@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react';
-import { useNavigate } from '../lib/navigation';
+import { useNavigate, useSearchParams } from '../lib/navigation';
 import { resendVerificationApi } from '../lib/api';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -8,7 +8,8 @@ import Alert from '../components/ui/Alert';
 
 export default function ResendVerificationPage() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('');
+  const [searchParams] = useSearchParams();
+  const [email, setEmail] = useState(() => searchParams.get('email') || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);

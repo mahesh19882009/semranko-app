@@ -7,6 +7,8 @@ import {
   faTrashCan,
   faTriangleExclamation,
   faUpload,
+  faPause,
+  faPlay,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from './ConfirmModal';
 import Button from './ui/Button';
@@ -18,11 +20,13 @@ import {
   bulkAddKeywords,
   bulkDeleteKeywords,
   bulkDeleteRankings,
+  bulkSetKeywordActiveState,
   clearKeywordMessage,
   clearProjectRankings,
   deleteKeywordById,
   deleteRankingById,
   runRankCheck,
+  setKeywordActiveState,
   setKeywordSearch,
   setSortBy,
 } from '../features/keywords/keywordsSlice';
@@ -44,6 +48,7 @@ function KeywordTable() {
     clearingRankings,
     deletingBulkKeywords,
     deletingBulkRankings,
+    updatingKeywordStatus,
     error,
     actionMessage,
   } = useSelector((state) => state.keywords);
@@ -89,7 +94,7 @@ function KeywordTable() {
     onConfirm: null,
   });
 
-  const isBulkLoading = deletingBulkKeywords || deletingBulkRankings || clearingRankings;
+  const isBulkLoading = deletingBulkKeywords || deletingBulkRankings || clearingRankings || updatingKeywordStatus;
 
   const filteredKeywords = useMemo(() => {
     return (keywords || []).filter((row) => {
@@ -180,6 +185,18 @@ function KeywordTable() {
     if (bulkDeleteRankings.fulfilled.match(resultAction)) {
       setSelectedRankings([]);
       closeConfirmModal();
+    }
+  };
+
+  const handleKeywordStatus = async (keywordIds, active) => {
+    if (!selectedProjectId || keywordIds.length === 0) return;
+    dispatch(clearKeywordMessage());
+    const action = keywordIds.length === 1
+      ? setKeywordActiveState({ keywordId: keywordIds[0], projectId: selectedProjectId, active })
+      : bulkSetKeywordActiveState({ projectId: selectedProjectId, keywordIds, active });
+    const resultAction = await dispatch(action);
+    if (setKeywordActiveState.fulfilled.match(resultAction) || bulkSetKeywordActiveState.fulfilled.match(resultAction)) {
+      setSelectedKeywords([]);
     }
   };
 
@@ -458,11 +475,18 @@ function KeywordTable() {
           </div>
 
           {selectedKeywords.length > 0 && (
-            <div className="border-b border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-rose-700">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium text-slate-700">
                 {selectedKeywords.length} selected
               </span>
-              <Button
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => handleKeywordStatus(selectedKeywords, true)} disabled={isBulkLoading} variant="ghost">
+                  <FontAwesomeIcon icon={faPlay} /> Activate
+                </Button>
+                <Button onClick={() => handleKeywordStatus(selectedKeywords, false)} disabled={isBulkLoading} variant="ghost">
+                  <FontAwesomeIcon icon={faPause} /> Deactivate
+                </Button>
+                <Button
                 onClick={() => {
                   openConfirmModal({
                     title: 'Delete selected keywords',
@@ -479,6 +503,7 @@ function KeywordTable() {
               >
                 Delete selected
               </Button>
+              </div>
             </div>
           )}
 
@@ -501,6 +526,7 @@ function KeywordTable() {
                       <th className="px-5 py-4">Keyword</th>
                       <th className="px-5 py-4">Device</th>
                       <th className="px-5 py-4">Location</th>
+                      <th className="px-5 py-4">Status</th>
                       <th className="px-5 py-4">Check URL</th>
                       <th className="px-5 py-4">Created at</th>
                       <th className="px-5 py-4">Actions</th>
@@ -526,13 +552,26 @@ function KeywordTable() {
                         <td className="px-5 py-4 text-sm text-slate-700">
                           {row.location || '-'}
                         </td>
+                        <td className="px-5 py-4 text-sm">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${row.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {row.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
                         <td className="px-5 py-4 text-sm text-slate-700">
                           {row.check_url ? <a href={row.check_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline truncate block max-w-[200px]">{row.check_url}</a> : '-'}
                         </td>
                         <td className="px-5 py-4 text-sm text-slate-700">
                           {row.createdAt ? formatDateTime(row.createdAt) : '-'}
                         </td>
-                        <td className="px-5 py-4">
+                        <td className="px-5 py-4 flex items-center gap-1">
+                          <Button
+                            onClick={() => handleKeywordStatus([row.id], !row.isActive)}
+                            disabled={updatingKeywordStatus}
+                            variant="ghost"
+                            title={row.isActive ? 'Deactivate keyword' : 'Activate keyword'}
+                          >
+                            <FontAwesomeIcon icon={row.isActive ? faPause : faPlay} />
+                          </Button>
                           <Button
                             onClick={() => handleDeleteKeyword(row)}
                             disabled={deletingKeyword}
@@ -547,7 +586,7 @@ function KeywordTable() {
 
                     {filteredKeywords.length === 0 && (
                       <tr>
-                        <td colSpan="7" className="px-5 py-10 text-center text-sm text-slate-500">
+                        <td colSpan="8" className="px-5 py-10 text-center text-sm text-slate-500">
                           No keywords added yet.
                         </td>
                       </tr>

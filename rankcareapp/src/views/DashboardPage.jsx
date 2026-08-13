@@ -41,7 +41,7 @@ function DashboardPage() {
   const error = useSelector(selectDashboardError);
   const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
   const pricingCurrent = useSelector((state) => state.pricing.current);
-  const creditBalance = pricingCurrent?.creditBalance ?? 0;
+  const creditBalance = pricingCurrent?.spendableCreditsRemaining ?? 0;
 
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
@@ -73,7 +73,6 @@ function DashboardPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error('Dashboard overview error:', err);
           setOverviewError(err.message || 'Failed to load overview');
         }
       })
@@ -245,7 +244,7 @@ function DashboardPage() {
       {error && (
         <Card padding="p-6 text-center" border="border-rose-200" className="bg-rose-50/70">
           <h3 className="text-lg font-semibold text-slate-900">Dashboard failed to load</h3>
-          <p className="mt-2 text-sm text-slate-600">{error}</p>
+          <p className="mt-2 text-sm text-slate-600">{error?.message || error}</p>
         </Card>
       )}
 
@@ -270,9 +269,9 @@ function DashboardPage() {
           tone="green"
         />
         <StatCard
-          title="Credit balance"
+          title="Spendable credits"
           value={creditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          hint="Available credits"
+          hint="For optional actions; automatic tracking is reserved separately"
           icon={faWallet}
           tone="purple"
         />
