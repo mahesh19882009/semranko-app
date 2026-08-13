@@ -21,34 +21,47 @@ def dfs_visibility(position: Optional[int]) -> float:
     return 0.0
 
 
-def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -> dict:
+def process_rank_check_job(project_id: str, domain: str, keywords: list[dict], user_id: str | None = None, reference: str | None = None) -> dict:
     if not project_id or not domain or not isinstance(keywords, list):
         raise ValueError("Invalid job payload")
 
     from app.services.dataforseo_client import DataForSEOClient
+    from app.services.credit_service import consume_reserved, refund_reserved
 
     db = SessionLocal()
     try:
         keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
-        aio_keyword_texts = set(
-            row.keyword
-            for row in db.scalars(
-                select(TrackedKeyword).where(
-                    TrackedKeyword.userId.in_(
-                        select(Project.userId).where(Project.id == project_id)
-                    ),
-                    TrackedKeyword.isActive == True,
-                    TrackedKeyword.trackAio == True,
-                    TrackedKeyword.keyword.in_(keyword_texts),
+        aio_keyword_texts = set()
+        if user_id:
+            try:
+                aio_keyword_texts = set(
+                    row.keyword
+                    for row in db.scalars(
+                        select(TrackedKeyword).where(
+                            TrackedKeyword.userId == user_id,
+                            TrackedKeyword.isActive == True,
+                            TrackedKeyword.trackAio == True,
+                            TrackedKeyword.keyword.in_(keyword_texts),
+                        )
+                    ).all()
                 )
-            ).all()
-        )
+            except Exception:
+                aio_keyword_texts = set()
     except Exception:
         aio_keyword_texts = set()
     finally:
         db.close()
 
-    rank_map = DataForSEOClient.get_rank_batch(keywords, domain, aio_keyword_texts=aio_keyword_texts)
+    refresh_cost = 10
+    try:
+        rank_map = DataForSEOClient.get_rank_batch(keywords, domain, aio_keyword_texts=aio_keyword_texts)
+    except Exception as exc:
+        if user_id and reference:
+            try:
+                refund_reserved(db, user_id, reference, float(len(keywords) * refresh_cost), description=f"Refund: rank check failed for project {project_id}", project_id=project_id)
+            except Exception:
+                pass
+        raise
 
     rows = []
     keyword_visibility_map = {}
@@ -93,59 +106,26 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict]) -
 
         db.commit()
         return {"inserted": len(rows)}
+
     except Exception:
         db.rollback()
         raise
     finally:
         db.close()
 
-
-def process_labs_metrics_job(project_id: str, keywords: list[dict]) -> dict:
-    if not project_id or not isinstance(keywords, list):
-        raise ValueError("Invalid Labs metrics job payload")
-
-    from app.services.dataforseo_client import DataForSEOClient
-
-    keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
-    if not keyword_texts:
-        return {"updated": 0}
-
-    batch_data = DataForSEOClient.get_keyword_data_batch(keyword_texts, "India", force_refresh=True)
-
-    db = SessionLocal()
-    try:
-        updated = 0
-        for kw in keywords:
-            keyword_text = kw.get("keyword", "")
-            data = batch_data.get(keyword_text)
-            if not data:
-                continue
-
-            keyword_id = kw.get("id")
-            if not keyword_id:
-                continue
-
-            from app.db.models import Keyword
-            keyword_obj = db.scalar(select(Keyword).where(Keyword.id == keyword_id, Keyword.projectId == project_id))
-            if not keyword_obj:
-                continue
-
-            keyword_obj.volume = data.get("volume")
-            keyword_obj.kd = data.get("difficulty")
-            keyword_obj.cpc = data.get("cpc")
-            keyword_obj.competition = data.get("competition")
-            keyword_obj.backlinks = data.get("backlinks")
-            keyword_obj.referring_domains = data.get("referring_domains")
-            keyword_obj.intent = data.get("intent")
-            updated += 1
-
-        db.commit()
-        return {"updated": updated}
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+    if user_id and reference:
+        try:
+            consume_reserved(
+                db,
+                user_id,
+                reference,
+                float(len(keywords) * refresh_cost),
+                action_type="charge",
+                description=f"Rank check: {len(keywords)} keyword(s) for project {project_id}",
+                project_id=project_id,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to consume reserved credits for rank check: {exc}")
 
 
 def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: list[str], keywords: list[dict]) -> dict:
@@ -229,7 +209,3 @@ def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: li
         raise
     finally:
         db.close()
-
-
-
-

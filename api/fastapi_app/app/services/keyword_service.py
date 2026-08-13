@@ -2,20 +2,27 @@ import logging
 import math
 import re
 from datetime import datetime, timedelta
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import or_, update, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project
-from app.services.plan_service import get_user_or_404
+from app.services.plan_service import get_user_or_404, ensure_keyword_limit, get_user_plan_limits_by_id, count_user_keywords
 from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
-from app.services.credit_service import deduct_credits
+from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
 from app.utils.serializers import model_to_dict
-from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _is_cache_data_valid(data: dict) -> bool:
+    if not data:
+        return False
+    core_fields = ["volume", "kd", "cpc", "position", "intent"]
+    non_null_count = sum(1 for field in core_fields if data.get(field) is not None)
+    return non_null_count >= 2
 
 
 def _update_keyword_from_data(db: Session, keyword_row: Keyword, data: dict) -> None:
@@ -36,7 +43,7 @@ def _update_keyword_from_data(db: Session, keyword_row: Keyword, data: dict) -> 
     keyword_row.updatedAt = datetime.utcnow()
 
 
-def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str) -> bool:
+def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str, project_id: str | None = None, keyword_id: str | None = None) -> bool:
     """
     Fetch DataForSEO data for a newly added keyword and update Keyword.
 
@@ -44,31 +51,70 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
     no data fetched.  Raises on failure so callers can
     refund / show an error.
     """
+    cost = settings.plan_config.credit_costs.get("add_keyword", 20)
+    reference = f"dayone:{project_id or user_id}:{keyword_text}:{datetime.utcnow().timestamp()}"
     try:
-        helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
-        rows = helper.fetch_cheapest_dashboard_data(
+        reserve_credits(
+            db,
+            user_id,
+            float(cost),
+            "reservation",
+            f"Day-one tracking reservation: {keyword_text}",
+            reference=reference,
+            project_id=project_id,
+            keyword_id=keyword_id,
+        )
+
+        from app.db.models import TrackedKeyword
+        aio_keyword_texts = set(
+            row.keyword
+            for row in db.scalars(
+                select(TrackedKeyword).where(
+                    TrackedKeyword.userId == user_id,
+                    TrackedKeyword.isActive == True,
+                    TrackedKeyword.trackAio == True,
+                    TrackedKeyword.keyword == keyword_text,
+                )
+            ).all()
+        )
+
+        rows = DataForSEOClient.fetch_dashboard_data(
             [keyword_text],
             domain,
             location_code=location_code,
             language_code="en",
+            aio_keyword_texts=aio_keyword_texts,
         )
 
         if not rows:
             logger.warning("Day-one tracking: no data returned from DataForSEO for %s", keyword_text)
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: no DataForSEO data for {keyword_text}", project_id=project_id, keyword_id=keyword_id)
             return False
 
         row = rows[0]
         if not _is_cache_data_valid(row):
             logger.warning("Day-one tracking: DataForSEO returned empty data for %s, skipping charge", keyword_text)
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: empty DataForSEO data for {keyword_text}", project_id=project_id, keyword_id=keyword_id)
             return False
 
-        deduct_credits(db, user_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        consume_reserved(
+            db,
+            user_id,
+            reference,
+            float(cost),
+            action_type="charge",
+            description=f"Day-one tracking: {keyword_text}",
+            project_id=project_id,
+            keyword_id=keyword_id,
+        )
 
         keyword_row = db.scalar(
             select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
         )
         if keyword_row:
             _update_keyword_from_data(db, keyword_row, row)
+            keyword_row.lastWeeklyRefreshAt = datetime.utcnow()
+            keyword_row.weeklyRefreshStatus = "success"
         db.commit()
         return True
     except Exception:
@@ -86,18 +132,61 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
     if not project:
         raise ApiError(404, "Project not found")
 
+    ensure_keyword_limit(db, user_id)
+
     normalized_keyword = keyword_text.strip().lower()
     if not normalized_keyword:
         raise ApiError(400, "Keyword is required")
 
-    existing = db.scalar(
+    existing_active = db.scalar(
         select(Keyword).where(
             Keyword.projectId == project_id,
             Keyword.keyword == normalized_keyword,
+            Keyword.isActive == True,
         )
     )
-    if existing:
+    if existing_active:
         raise ApiError(409, "Keyword already exists for this project")
+
+    existing_deleted = db.scalar(
+        select(Keyword).where(
+            Keyword.projectId == project_id,
+            Keyword.keyword == normalized_keyword,
+            Keyword.isActive == False,
+            Keyword.deletedAt.isnot(None),
+        ).order_by(Keyword.deletedAt.desc())
+    )
+    if existing_deleted:
+        cooldown_days = 30
+        deleted_at = existing_deleted.deletedAt
+        if deleted_at:
+            days_since_deletion = (datetime.utcnow() - deleted_at).days
+            if days_since_deletion < cooldown_days:
+                remaining = cooldown_days - days_since_deletion
+                raise ApiError(
+                    403,
+                    f"Keyword was recently deleted. You can re-add it in {remaining} day(s).",
+                )
+        db.delete(existing_deleted)
+        db.commit()
+
+    existing_deactivated = db.scalar(
+        select(Keyword).where(
+            Keyword.projectId == project_id,
+            Keyword.keyword == normalized_keyword,
+            Keyword.isActive == False,
+            Keyword.deletedAt.is_(None),
+        )
+    )
+    if existing_deactivated:
+        existing_deactivated.isActive = True
+        existing_deactivated.updatedAt = datetime.utcnow()
+        db.add(existing_deactivated)
+        db.commit()
+        db.refresh(existing_deactivated)
+        _apply_day_one_tracking(db, user_id, normalized_keyword, LOCATION_MAP.get(existing_deactivated.location or "India", 2840), project.domain, project_id=project_id, keyword_id=existing_deactivated.id)
+        db.refresh(existing_deactivated)
+        return model_to_dict(existing_deactivated)
 
     keyword = Keyword(
         projectId=project_id,
@@ -119,7 +208,7 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
     db.commit()
     db.refresh(keyword)
 
-    _apply_day_one_tracking(db, user_id, normalized_keyword, LOCATION_MAP.get(keyword.location or "India", 2840), project.domain)
+    _apply_day_one_tracking(db, user_id, normalized_keyword, LOCATION_MAP.get(keyword.location or "India", 2840), project.domain, project_id=project_id, keyword_id=keyword.id)
 
     db.refresh(keyword)
     return model_to_dict(keyword)
@@ -140,6 +229,8 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
     project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
     if not project:
         raise ApiError(404, "Project not found")
+
+    ensure_keyword_limit(db, user_id)
 
     normalized_keywords = []
     for kw in keywords:
@@ -183,6 +274,19 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         added.append(kw)
         existing_set.add(kw)
 
+    if added:
+        limits = get_user_plan_limits_by_id(db, user_id)
+        keyword_limit = limits.get("keywordLimit", 0)
+        current_count = db.scalar(
+            select(func.count())
+            .select_from(Keyword)
+            .join(Project, Keyword.projectId == Project.id)
+            .where(Project.userId == user_id)
+            .where(or_(Keyword.isActive == True, Keyword.deletedAt.is_(None)))
+        ) or 0
+        if keyword_limit > 0 and current_count + len(added) > keyword_limit:
+            raise ApiError(403, f"Keyword limit reached. Your current plan allows {keyword_limit} keywords. You can only add {keyword_limit - current_count} more.")
+
     db.commit()
 
     if added:
@@ -191,13 +295,56 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
             keywords_to_fetch.append(kw_text)
 
         if keywords_to_fetch:
-            helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
-            rows = helper.fetch_cheapest_dashboard_data(
-                keywords_to_fetch,
-                project.domain,
-                location_code=location_code,
-                language_code="en",
+            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            total_reserve = float(len(keywords_to_fetch) * bulk_cost)
+            bulk_reference = f"bulkdayone:{project_id}:{datetime.utcnow().timestamp()}"
+            try:
+                reserve_credits(
+                    db,
+                    user_id,
+                    total_reserve,
+                    "reservation",
+                    f"Bulk day-one tracking reservation: {len(keywords_to_fetch)} keyword(s) for project {project_id}",
+                    reference=bulk_reference,
+                    project_id=project_id,
+                )
+            except Exception as exc:
+                logger.error(f"Bulk day-one tracking credit reservation failed: {exc}")
+                for kw_text in keywords_to_fetch:
+                    failed = db.scalar(select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text))
+                    if failed:
+                        db.delete(failed)
+                db.commit()
+                raise ApiError(402, f"Insufficient credits for bulk day-one tracking. Required: {total_reserve}")
+
+            from app.db.models import TrackedKeyword
+            aio_keyword_texts = set(
+                row.keyword
+                for row in db.scalars(
+                    select(TrackedKeyword).where(
+                        TrackedKeyword.userId == user_id,
+                        TrackedKeyword.isActive == True,
+                        TrackedKeyword.trackAio == True,
+                        TrackedKeyword.keyword.in_(keywords_to_fetch),
+                    )
+                ).all()
             )
+
+            try:
+                rows = DataForSEOClient.fetch_dashboard_data(
+                    keywords_to_fetch,
+                    project.domain,
+                    location_code=location_code,
+                    language_code="en",
+                    aio_keyword_texts=aio_keyword_texts,
+                )
+            except Exception as exc:
+                try:
+                    refund_reserved(db, user_id, bulk_reference, total_reserve, description=f"Refund: bulk day-one tracking failed for project {project_id}", project_id=project_id)
+                except Exception as refund_exc:
+                    logger.error(f"Failed to refund reserved credits for bulk day-one tracking: {refund_exc}")
+                raise
+
             row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
 
             fetched_ok_count = 0
@@ -208,16 +355,40 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
                 row = row_map.get(kw_text.lower().strip())
                 if row and keyword:
                     _update_keyword_from_data(db, keyword, row)
+                    keyword.lastWeeklyRefreshAt = datetime.utcnow()
+                    keyword.weeklyRefreshStatus = "success"
                     fetched_ok_count += 1
 
-            if fetched_ok_count:
-                deduct_credits(
-                    db,
-                    user_id,
-                    float(fetched_ok_count * 25),
-                    "ON_DEMAND_ADD",
-                    f"Day-one tracking: {fetched_ok_count} keyword(s)",
-                )
+            consumed_amount = float(fetched_ok_count * bulk_cost)
+            refund_amount = total_reserve - consumed_amount
+
+            try:
+                if consumed_amount > 0:
+                    consume_reserved(
+                        db,
+                        user_id,
+                        bulk_reference,
+                        consumed_amount,
+                        action_type="charge",
+                        description=f"Bulk day-one tracking: {fetched_ok_count} keyword(s) for project {project_id}",
+                        project_id=project_id,
+                    )
+
+                if refund_amount > 0:
+                    refund_reserved(
+                        db,
+                        user_id,
+                        bulk_reference,
+                        refund_amount,
+                        description=f"Refund: {len(keywords_to_fetch) - fetched_ok_count} keyword(s) not fetched for project {project_id}",
+                        project_id=project_id,
+                    )
+            except Exception as exc:
+                logger.error(f"Failed to finalize reserved credits for bulk day-one tracking: {exc}")
+                try:
+                    refund_reserved(db, user_id, bulk_reference, total_reserve, description=f"Refund: bulk day-one tracking finalization failed for project {project_id}", project_id=project_id)
+                except Exception:
+                    pass
 
             db.commit()
 
@@ -254,14 +425,16 @@ def delete_keywords_bulk(db: Session, user_id: str, keyword_ids: list[str]) -> i
     )
     logger.info("Bulk delete matching_count=%s", existing_count)
 
-    result = db.execute(
-        delete(Keyword)
+    now = datetime.utcnow()
+    db.execute(
+        update(Keyword)
         .where(Keyword.id.in_(clean_ids))
         .where(Keyword.projectId.in_(user_project_ids))
+        .values(isActive=False, deletedAt=now)
     )
     db.commit()
-    logger.info("Bulk delete deleted=%s", result.rowcount)
-    return result.rowcount
+    logger.info("Bulk delete soft_deleted=%s", existing_count)
+    return existing_count
 
 
 def delete_keyword(db: Session, user_id: str, keyword_id: str) -> None:
@@ -277,5 +450,7 @@ def delete_keyword(db: Session, user_id: str, keyword_id: str) -> None:
     if not keyword:
         raise ApiError(404, "Keyword not found")
 
-    db.execute(delete(Keyword).where(Keyword.id == str(keyword_id)))
+    keyword.isActive = False
+    keyword.deletedAt = datetime.utcnow()
+    db.add(keyword)
     db.commit()

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Body, Depends, Header
+from fastapi import APIRouter, Body, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.api.deps import db_session, get_current_user
+from app.core.rate_limiter import rate_limit
 from app.core.session import generate_session_token, invalidate_session, store_session
 from app.schemas.common import ok
 from app.services.auth_service import (
@@ -14,18 +15,21 @@ from app.services.auth_service import (
     reset_password,
     verify_email_token,
 )
+from app.services.otp_service import send_otp, verify_otp as verify_otp_service, resend_otp as resend_otp_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register")
-def register(payload: dict = Body(...), db: Session = Depends(db_session)) -> JSONResponse:
+@rate_limit(max_requests=5, window_seconds=3600)
+def register(request: Request, payload: dict = Body(...), db: Session = Depends(db_session)) -> JSONResponse:
     user = register_user(db, payload)
     return JSONResponse(status_code=201, content=ok("User registered", user))
 
 
 @router.post("/login")
-def login(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+@rate_limit(max_requests=10, window_seconds=60)
+def login(request: Request, payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = login_user(db, payload)
     user_id = result["user"]["id"]
     invalidate_session(user_id)
@@ -41,7 +45,8 @@ def verify_email(payload: dict = Body(...), db: Session = Depends(db_session)) -
 
 
 @router.post("/resend-verification")
-def resend_verification(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+@rate_limit(max_requests=3, window_seconds=3600)
+def resend_verification(request: Request, payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = resend_verification_email(db, payload)
 
     if result.get("alreadyVerified"):
@@ -54,13 +59,15 @@ def resend_verification(payload: dict = Body(...), db: Session = Depends(db_sess
 
 
 @router.post("/forgot-password")
-def forgot_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+@rate_limit(max_requests=3, window_seconds=3600)
+def forgot_password_route(request: Request, payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = forgot_password(db, payload)
     return ok("Password reset email sent if your email is registered", result)
 
 
 @router.post("/reset-password")
-def reset_password_route(payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
+@rate_limit(max_requests=5, window_seconds=3600)
+def reset_password_route(request: Request, payload: dict = Body(...), db: Session = Depends(db_session)) -> dict:
     result = reset_password(db, payload)
     return ok("Password reset successfully", result)
 
@@ -72,3 +79,46 @@ def logout(
 ):
     invalidate_session(current_user["id"])
     return ok("Logged out")
+
+
+@router.post("/send-otp")
+@rate_limit(max_requests=3, window_seconds=60)
+def send_otp_route(
+    request: Request,
+    payload: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    mobile = payload.get("mobile")
+    if not mobile:
+        raise HTTPException(status_code=400, detail="Mobile number is required")
+    
+    result = send_otp(db, current_user["id"], mobile)
+    return ok("OTP sent successfully", result)
+
+
+@router.post("/verify-otp")
+@rate_limit(max_requests=5, window_seconds=60)
+def verify_otp_route(
+    request: Request,
+    payload: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    otp = payload.get("otp")
+    if not otp:
+        raise HTTPException(status_code=400, detail="OTP is required")
+    
+    result = verify_otp_service(db, current_user["id"], otp)
+    return ok("Mobile verified successfully", result)
+
+
+@router.post("/resend-otp")
+@rate_limit(max_requests=3, window_seconds=60)
+def resend_otp_route(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    result = resend_otp_service(db, current_user["id"])
+    return ok("OTP resent successfully", result)

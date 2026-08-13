@@ -7,17 +7,29 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.services.dataforseo_client import LOCATION_MAP
+from app.services.dataforseo_client import LOCATION_MAP, _log_dataforseo_cost, _build_serp_cache_key, _set_cached_serp
 from app.services.payment_service import razorpay_client
-from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword
+from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword, RankResult, Project, AsyncTaskQueue, SerpFeature, TrackedKeyword, PendingWebhookCredit, RefreshJob, ProcessingJob
 from app.db.session import SessionLocal
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ID_TO_KEY
 from app.services import email_service
+from app.services.credit_service import deduct_credits
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 LOCATION_CODE_MAP = {v: k for k, v in LOCATION_MAP.items()}
+
+
+def _dfs_visibility(position):
+    if position is None or position > 100:
+        return 0.0
+    if 1 <= position <= 10:
+        return round(1.0 - (position - 1) * 0.1, 2)
+    if 11 <= position <= 20:
+        return 0.05
+    return 0.0
+
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -79,8 +91,6 @@ async def razorpay_webhook(request: Request):
             return {"status": "ok"}
 
         if payment_order.status == "paid":
-            # Check if subscription was activated - if not, try to activate it
-            from app.db.models import Subscription
             existing_subscription = db.scalar(
                 select(Subscription).where(
                     Subscription.userId == payment_order.userId,
@@ -108,8 +118,6 @@ async def razorpay_webhook(request: Request):
             return {"status": "ok"}
 
         if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
-            from app.core.config import get_settings
-            settings = get_settings()
             multiplier = getattr(payment_order, "planId", 0)
             credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
             credits_to_add = int(multiplier) * credits_per_unit
@@ -146,8 +154,7 @@ async def razorpay_webhook(request: Request):
         else:
             plan_id = payment_order.planId
             logger.info(f"[webhook] Processing subscription payment user={user.id} plan_id={plan_id} order_id={order_id}")
-            
-            # Call activate_subscription to handle plan upgrade and credit allocation
+
             try:
                 from app.services.payment_service import activate_subscription
                 subscription = activate_subscription(
@@ -160,16 +167,13 @@ async def razorpay_webhook(request: Request):
                 )
                 logger.info(f"[webhook] activate_subscription succeeded subscription_id={subscription.id} plan_id={subscription.planId} status={subscription.status}")
             except Exception as exc:
-                logger.error(f"[webhook] activate_subscription failed: {exc}")
-                import traceback
-                traceback.print_exc()
-                # Still mark payment as paid even if activation fails
+                logger.error("[webhook] activate_subscription failed: %s", exc)
                 payment_order.status = "paid"
                 payment_order.razorpayPaymentId = payment_id
                 db.add(payment_order)
                 db.commit()
                 raise
-            
+
             payment_order.status = "paid"
             payment_order.razorpayPaymentId = payment_id
             db.add(payment_order)
@@ -178,7 +182,7 @@ async def razorpay_webhook(request: Request):
             plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
             plan_name = PLAN_DEFINITIONS.get(plan_key, {}).get("name", "Unknown")
             logger.info(f"[webhook] Subscription upgrade complete: user={user.id} plan={plan_name}")
-            
+
             email_service.send_payment_success_email(
                 to_email=user.email,
                 name=user.name,
@@ -188,9 +192,11 @@ async def razorpay_webhook(request: Request):
             )
 
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
-        logger.exception(f"Razorpay webhook processing failed: {exc}")
+        logger.exception("Razorpay webhook processing failed: %s", exc)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
     finally:
         db.close()
@@ -199,6 +205,14 @@ async def razorpay_webhook(request: Request):
 @router.post("/dataforseo")
 async def dataforseo_webhook(request: Request):
     """Receive DataForSEO pingback callbacks when SERP tasks complete."""
+    settings = get_settings()
+    
+    if settings.DATAFORSEO_WEBHOOK_SECRET:
+        webhook_secret = request.query_params.get("secret")
+        if webhook_secret != settings.DATAFORSEO_WEBHOOK_SECRET:
+            logger.warning("DataForSEO webhook rejected: invalid or missing secret")
+            raise HTTPException(status_code=401, detail="Invalid webhook secret")
+    
     try:
         data = await request.json()
     except Exception:
@@ -208,16 +222,33 @@ async def dataforseo_webhook(request: Request):
     if not task_id:
         raise HTTPException(status_code=400, detail="Missing task_id")
 
-    logger.info(f"DataForSEO webhook received: task_id={task_id}")
+    logger.info("DataForSEO webhook received: task_id=%s", task_id)
 
     tasks = data.get("tasks", []) or []
     if not tasks:
-        logger.warning(f"DataForSEO webhook: no tasks in payload for task_id={task_id}")
+        logger.warning("DataForSEO webhook: no tasks in payload for task_id=%s", task_id)
         return {"success": True, "message": f"Task {task_id} no tasks in payload"}
 
     db = SessionLocal()
     try:
-        updated_count = 0
+        refresh_job = db.scalar(
+            select(RefreshJob).where(
+                RefreshJob.dataforseoRequestIds.contains(task_id)
+            )
+        )
+        
+        if not refresh_job:
+            async_task = db.scalar(
+                select(AsyncTaskQueue).where(AsyncTaskQueue.id == task_id)
+            )
+            if not async_task:
+                logger.warning("DataForSEO webhook rejected: task_id=%s not found in any RefreshJob or AsyncTaskQueue", task_id)
+                raise HTTPException(status_code=404, detail="Task not found")
+        
+        now = datetime.utcnow()
+        created_count = 0
+        skipped_count = 0
+        
         for task_data in tasks:
             if not task_data:
                 continue
@@ -226,35 +257,18 @@ async def dataforseo_webhook(request: Request):
             if not current_keyword:
                 continue
 
-            location = task_data.get("data", {}).get("location_code", 2840)
-            location_name = LOCATION_CODE_MAP.get(location, "India")
-            if isinstance(location, str) and location:
-                location_name = location
+            location_code = task_data.get("data", {}).get("location_code", 2840)
+            location_name = LOCATION_CODE_MAP.get(location_code, "India") if isinstance(location_code, int) else (location_code or "India")
 
             detected_position = None
+            detected_url = None
             has_aio_badge = None
-            keyword_difficulty = None
-            cost_per_click = None
-            competition_level = None
-            search_intent = None
-            backlinks_count = None
-            referring_domains = None
-            search_volume = None
+            ai_description = None
+            first_block = None
 
             results_list = task_data.get("result", []) or []
             if isinstance(results_list, list) and len(results_list) > 0:
                 first_block = results_list[0]
-
-                keyword_properties = first_block.get("keyword_properties", {})
-                if isinstance(keyword_properties, dict):
-                    keyword_difficulty = keyword_properties.get("keyword_difficulty")
-                    search_intent = keyword_properties.get("search_intent")
-
-                keyword_info = first_block.get("keyword_info", {})
-                if isinstance(keyword_info, dict):
-                    search_volume = keyword_info.get("search_volume")
-                    cost_per_click = keyword_info.get("cpc")
-                    competition_level = keyword_info.get("competition")
 
                 serp_items = first_block.get("items", []) or []
                 if isinstance(serp_items, list):
@@ -264,68 +278,99 @@ async def dataforseo_webhook(request: Request):
 
                         if item.get("type") == "organic" and item.get("url"):
                             detected_position = item.get("rank_group") or item.get("rank_absolute")
+                            detected_url = item.get("url")
 
                         if item.get("type") == "ai_overview":
-                            references = item.get("ai_overview_reference", []) or []
+                            references = item.get("ai_overview_reference", []) or item.get("references", []) or []
                             if isinstance(references, list):
                                 for ref in references:
                                     if ref and ref.get("url"):
                                         has_aio_badge = "AIO"
+                            ai_description = item.get("description") or item.get("content") or ai_description
 
-            volume_int = None
-            kd_int = None
-            cpc_float = None
-            competition_float = None
-            backlinks_float = None
-            referring_domains_float = None
             position_int = None
-
-            if search_volume is not None and str(search_volume).replace(".", "", 1).isdigit():
-                volume_int = int(float(search_volume))
-            if keyword_difficulty is not None and str(keyword_difficulty).replace(".", "", 1).isdigit():
-                kd_int = int(float(keyword_difficulty))
-            if cost_per_click is not None and str(cost_per_click).replace(".", "", 1).isdigit():
-                cpc_float = float(cost_per_click)
-            if competition_level is not None and str(competition_level).replace(".", "", 1).isdigit():
-                competition_float = float(competition_level)
-            if backlinks_count is not None and str(backlinks_count).replace(".", "", 1).isdigit():
-                backlinks_float = float(backlinks_count)
-            if referring_domains is not None and str(referring_domains).replace(".", "", 1).isdigit():
-                referring_domains_float = float(referring_domains)
             if detected_position is not None and str(detected_position).replace(".", "", 1).isdigit():
                 position_int = int(float(detected_position))
 
-            keyword_row = db.scalar(
-                select(Keyword).where(Keyword.keyword == current_keyword)
+            deduplication_key = f"{task_id}:{current_keyword}:{location_name}"
+            
+            existing = db.scalar(
+                select(ProcessingJob).where(
+                    ProcessingJob.deduplicationKey == deduplication_key
+                )
             )
-            if keyword_row:
-                keyword_row.volume = volume_int
-                keyword_row.kd = kd_int
-                keyword_row.cpc = cpc_float
-                keyword_row.competition = competition_float
-                keyword_row.backlinks = backlinks_float
-                keyword_row.referring_domains = referring_domains_float
-                keyword_row.intent = search_intent
-                keyword_row.position = position_int
-                keyword_row.ai_badge = has_aio_badge
-                ai_description = row.get("ai_description")
-                if isinstance(ai_description, str):
-                    ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
-                keyword_row.ai_description = ai_description
-                keyword_row.updatedAt = datetime.utcnow()
-
-            updated_count += 1
-
+            if existing:
+                skipped_count += 1
+                continue
+            
+            processing_job = ProcessingJob(
+                refreshJobId=refresh_job.id if refresh_job else "",
+                keywordText=current_keyword,
+                location=location_name,
+                status="pending",
+                deduplicationKey=deduplication_key,
+                payload=json.dumps({
+                    "position": position_int,
+                    "url": detected_url,
+                    "has_aio_badge": has_aio_badge,
+                    "ai_description": ai_description,
+                    "task_id": task_id,
+                    "location_code": location_code,
+                    "first_block": first_block,
+                }),
+            )
+            db.add(processing_job)
+            created_count += 1
+        
         db.commit()
+        
+        if refresh_job:
+            result_data = json.loads(refresh_job.resultSummary or "{}")
+            processed_task_ids = result_data.get("processed_task_ids", [])
+            if task_id not in processed_task_ids:
+                processed_task_ids.append(task_id)
+                result_data["processed_task_ids"] = processed_task_ids
+                refresh_job.resultSummary = json.dumps(result_data)
+                db.add(refresh_job)
+                db.commit()
+        
+        message = f"Task {task_id} queued"
+        if created_count == 0 and skipped_count > 0:
+            message = f"Task {task_id} already processed"
+        
         logger.info(
-            "DataForSEO webhook processed: task_id=%s updated_keywords=%d",
+            "DataForSEO webhook queued: task_id=%s created=%d skipped=%d",
             task_id,
-            updated_count,
+            created_count,
+            skipped_count,
         )
-        return {"success": True, "message": f"Task {task_id} processed", "updated_keywords": updated_count}
+        return {
+            "success": True, 
+            "message": message, 
+            "created": created_count,
+            "skipped": skipped_count,
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
-        logger.exception(f"DataForSEO webhook processing failed: {exc}")
+        logger.exception("DataForSEO webhook processing failed: %s", exc)
         raise HTTPException(status_code=500, detail="Webhook processing failed")
+    finally:
+        db.close()
+
+
+@router.get("/refresh-status")
+async def get_refresh_status():
+    """Get refresh job status for weekly and monthly tracking."""
+    db = SessionLocal()
+    try:
+        from app.services.async_bulk_service import get_refresh_status
+        return get_refresh_status(db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to get refresh status: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to get refresh status")
     finally:
         db.close()

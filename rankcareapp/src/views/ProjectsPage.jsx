@@ -168,7 +168,7 @@ function ProjectsPage() {
         {projectCount > 0 ? (
           <Alert
             variant="info"
-            message={`Creating an additional project costs 10 credits. Your current balance: ${(pricingCurrent?.creditBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} credits.`}
+            message="Project creation is free. Create as many projects as you need within your plan's limits."
           />
         ) : (
           <Alert

@@ -13,7 +13,7 @@ class FaqItem(BaseModel):
 MARKETING_FAQS = [
     {
         "q": "How does the credit system work?",
-        "a": "RankCare uses a pure consumption model. There are no hidden keyword limits. Every action deducts credits transparently: adding a keyword costs 20 credits, weekly refresh is 10 credits/keyword, keyword research is 20 credits, competitor spy is 20 credits, extra projects are 10 credits each (first project is free), and CSV exports are 10 credits. Unused credits do not roll over to the next month.",
+        "a": "RankCare uses a pure consumption model. There are no hidden keyword limits. Every action deducts credits transparently: adding a keyword costs 20 credits, weekly refresh is 10 credits/keyword, keyword research is 20 credits, competitor spy is 20 credits, and CSV exports are 10 credits. Project creation is free. Unused credits do not roll over to the next month.",
     },
     {
         "q": "Why was I charged for a failed operation?",
@@ -21,7 +21,7 @@ MARKETING_FAQS = [
     },
     {
         "q": "How do I add more projects?",
-        "a": "Your first project is completely free. Every additional project costs 10 credits. If your credit balance is insufficient, you will see a clear message prompting you to top up credits before creating another project.",
+        "a": "Your first project is completely free. Creating additional projects is also free — there is no credit charge for project creation. You can create as many projects as you need within your plan's limits.",
     },
     {
         "q": "Do credits roll over month to month?",

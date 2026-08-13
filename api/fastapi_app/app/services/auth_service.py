@@ -16,6 +16,7 @@ from app.core.security import (
 )
 from app.db.models import User
 from app.services import email_service
+from app.services.otp_service import _normalize_mobile
 from app.utils.serializers import model_to_dict
 
 
@@ -32,15 +33,21 @@ def register_user(db: Session, payload: dict) -> dict:
     name = payload.get("name")
     email = payload.get("email")
     password = payload.get("password")
+    mobile = payload.get("mobile")
 
-    if not name or not email or not password:
-        raise ApiError(400, "Name, email and password are required")
+    if not name or not email or not password or not mobile:
+        raise ApiError(400, "Name, email, mobile and password are required")
 
     normalized_email = email.strip().lower()
+    normalized_mobile = _normalize_mobile(mobile)
 
-    existing = db.scalar(select(User).where(User.email == normalized_email))
-    if existing:
+    existing_email = db.scalar(select(User).where(User.email == normalized_email))
+    if existing_email:
         raise ApiError(409, "Email already registered")
+
+    existing_mobile = db.scalar(select(User).where(User.mobileNumber == normalized_mobile))
+    if existing_mobile:
+        raise ApiError(409, "Mobile number already registered")
 
     raw_token, token_hash = generate_email_verification_token()
     expires_at = datetime.utcnow() + timedelta(hours=settings.EMAIL_VERIFY_EXPIRE_HOURS)
@@ -61,6 +68,7 @@ def register_user(db: Session, payload: dict) -> dict:
         trialStartsAt=trial_starts_at,
         trialEndsAt=trial_ends_at,
         creditBalance=200.0,
+        mobileNumber=normalized_mobile,
     )
 
     db.add(user)
@@ -82,6 +90,7 @@ def register_user(db: Session, payload: dict) -> dict:
         exclude={"passwordHash", "emailVerificationToken"}
     )
     result["emailSent"] = True
+    result["mobileVerificationRequired"] = True
     return result
 
 
@@ -161,9 +170,11 @@ def login_user(db: Session, payload: dict) -> dict:
     if not user.passwordHash or not verify_password(password, user.passwordHash):
         raise ApiError(401, "Invalid email or password")
 
-    # CRITICAL: Block unverified users - terminate immediately without generating token
     if not user.isVerified:
         raise HTTPException(status_code=403, detail="Please verify your email before logging in")
+
+    if not user.mobileVerified:
+        raise HTTPException(status_code=403, detail="Please verify your mobile number before logging in")
 
     access_token = create_access_token(str(user.id), user.email)
 

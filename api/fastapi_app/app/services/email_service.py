@@ -318,7 +318,7 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
     settings = get_settings()
 
     if not settings.RESEND_API_KEY:
-        logger.info("[EMAIL DISABLED] Password reset link for %s: %s", to_email, reset_url)
+        logger.info("[EMAIL DISABLED] Password reset email for %s (URL not logged for security)", to_email)
         return False
 
     resend.api_key = settings.RESEND_API_KEY
@@ -400,9 +400,9 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
                 </html>
             """
         })
-
         logger.info("RESEND PASSWORD RESET EMAIL RESPONSE: %s", response)
-        logger.info("PASSWORD RESET URL SENT: %s", reset_url)
+
+        logger.info("Password reset email sent to %s", to_email)
         return True
 
     except Exception as exc:

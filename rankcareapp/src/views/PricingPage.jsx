@@ -2,14 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
-import { PLANS, PLAN_COMPARISON, CREDIT_ITEMS, VALID_PLAN_KEYS } from "../config/pricing";
 import { initRazorpayCheckout, apiRequest } from "../lib/api";
 import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
 import { useSelector, useDispatch } from "react-redux";
 import Alert from "../components/ui/Alert";
-// Assuming you have an action to fetch pricing if not already auto-fetched
-// If your app auto-fetches on mount via a wrapper, you might not need to dispatch here, 
-// but keeping it safe ensures data is requested.
 import { fetchCurrentPricing } from "../features/pricing/pricingSlice";
 
 const PLAN_ORDER = {
@@ -33,7 +29,6 @@ export default function PricingPage() {
 
   useEffect(() => {
     setAuthenticated(isAuthenticated());
-    // Ensure we fetch fresh pricing data when component mounts (handles refresh scenario)
     if (isAuthenticated()) {
       dispatch(fetchCurrentPricing());
     }
@@ -46,7 +41,6 @@ export default function PricingPage() {
   const [loadingFaqs, setLoadingFaqs] = useState(true);
   const [openFaq, setOpenFaq] = useState(null);
 
-  // Select data directly from Redux store
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const pricingLoading = useSelector((state) => state.pricing.loading);
   const pricingPlans = useSelector((state) => state.pricing.plans);
@@ -54,7 +48,7 @@ export default function PricingPage() {
   const currentPlan = pricingCurrent?.plan || null;
   const currentCreditBalance = pricingCurrent?.creditBalance;
 
-  const plans = pricingPlans?.length > 0 ? pricingPlans : PLANS;
+  const plans = pricingPlans || [];
 
   useEffect(() => {
     let cancelled = false;
@@ -124,7 +118,6 @@ export default function PricingPage() {
             );
             if (verifyResult?.success) {
               setSuccessMessage(`Successfully upgraded to ${plan.name}!`);
-              // Refresh pricing data after successful payment
               dispatch(fetchCurrentPricing());
               setTimeout(() => navigate("/dashboard"), 1500);
             } else {
@@ -162,13 +155,33 @@ export default function PricingPage() {
     setOpenFaq(openFaq === index ? null : index);
   };
 
-  // Use Redux data directly, fallback to 0 if loading or null
   const displayedCreditBalance = useMemo(() => {
     if (currentCreditBalance !== null && currentCreditBalance !== undefined) {
       return currentCreditBalance;
     }
     return pricingLoading ? null : 0;
   }, [currentCreditBalance, pricingLoading]);
+
+  const renderPlanFeatures = (plan) => {
+    const limits = plan.limits || {};
+    const features = [];
+    if (limits.monthlyCredits) {
+      features.push(`${limits.monthlyCredits.toLocaleString('en-US')} monthly credits`);
+    }
+    if (limits.keywordLimit) {
+      features.push(`Track up to ${limits.keywordLimit.toLocaleString('en-US')} keywords`);
+    }
+    if (limits.competitorsPerProject) {
+      features.push(`${limits.competitorsPerProject} competitors per project`);
+    }
+    if (plan.domain_limit) {
+      features.push(`${plan.domain_limit} project domain${plan.domain_limit > 1 ? 's' : ''}`);
+    }
+    if (plan.refreshFrequency) {
+      features.push(`${plan.refreshFrequency.charAt(0).toUpperCase() + plan.refreshFrequency.slice(1)} refresh`);
+    }
+    return features;
+  };
 
   return (
     <div className="bg-slate-50">
@@ -188,7 +201,7 @@ export default function PricingPage() {
               to="/register"
               className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
             >
-              🎉 7-Day Free Trial (150 Credits) — No credit card required
+              Start Free Trial — No credit card required
             </Link>
           )}
         </div>
@@ -199,7 +212,7 @@ export default function PricingPage() {
             Simple plans for growing SEO workflows
           </h1>
           <p className="mt-4 text-lg text-slate-600">
-            Start with a 7-day free trial and choose the plan that fits your SEO workflow.
+            Start with a free trial and choose the plan that fits your SEO workflow.
           </p>
         </div>
 
@@ -280,40 +293,15 @@ export default function PricingPage() {
 
                 <div className="mb-6 rounded-xl bg-slate-50 p-4">
                   <p className="text-sm font-medium text-slate-700">
-                    {plan.monthlyCredits.toLocaleString('en-US')} Monthly Credits
+                    {plan.limits?.monthlyCredits ? `${plan.limits.monthlyCredits.toLocaleString('en-US')} Monthly Credits` : 'Custom Credits'}
                   </p>
                   <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                    {plan.key === "free_trial" ? (
-                      <>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>7-day free trial</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>{plan.monthlyCredits.toLocaleString('en-US')} platform credits to use across all features dynamically</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Basic keyword tracking</li>
-                      </>
-                    ) : plan.key === "starter" ? (
-                      <>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 100 keywords automatically</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Keyword Research tool</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>On-demand Competitor Spy module</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
-                      </>
-                    ) : plan.key === "pro" ? (
-                      <>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 500 keywords automatically</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full access to advanced search utilities</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Native AI Overview (AIO) badge visibility</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
-                      </>
-                    ) : (
-                      <>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Includes {plan.monthlyCredits.toLocaleString('en-US')} credits to track up to 2,000 keywords automatically</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Create your first project for free</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Downloadable data report exports enabled</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Full Agency White-Label brand logo engine</li>
-                        <li className="flex items-center gap-2"><span className="text-indigo-600">✓</span>Priority bulk processing background queues</li>
-                      </>
-                    )}
+                    {renderPlanFeatures(plan).map((feature, idx) => (
+                      <li key={idx} className="flex items-center gap-2">
+                        <span className="text-indigo-600">✓</span>
+                        {feature}
+                      </li>
+                    ))}
                   </ul>
                 </div>
 
@@ -353,52 +341,6 @@ export default function PricingPage() {
               </div>
             );
           })}
-        </div>
-
-        {/* Credit Costing Calculator */}
-        <div className="mt-20">
-          <div className="mx-auto max-w-3xl text-center">
-            <h2 className="text-2xl font-bold text-slate-900">How Credits are Calculated (Pure Consumption Model)</h2>
-            <p className="mt-2 text-sm text-slate-500">
-              There are no hidden keyword limits. Every tool action burns tokens transparently based on the table below.
-            </p>
-          </div>
-          <div className="mx-auto mt-8 max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="min-w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-6 py-4 font-medium">Tool / Action</th>
-                  <th className="px-6 py-4 font-medium text-right">Credit Cost</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {[
-                  { label: "Rank Tracking (Add Keyword & Weekly Updates)", cost: "20 Credits / Keyword", note: "Includes automated Monday weekly update on 10 credits" },
-                  { label: "Keyword Research Search Query", cost: "20 Credits / Search", note: "Live keyword ideas / metrics lookup" },
-                  { label: "Competitor Domain Spy Lookup", cost: "20 Credits / Domain Check", note: "Full competitor analysis per domain" },
-                  { label: "Add Extra Multi-Domain Project", cost: "10 Credits / New Property", note: "Create additional website property" },
-                  { label: "Premium CSV Report Download", cost: "10 Credits / Download Click", note: "Export downloadable spreadsheet report" },
-                ].map((row, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="text-sm font-medium text-slate-900">{row.label}</p>
-                        <p className="text-xs text-slate-500">{row.note}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-right text-sm font-semibold text-slate-900">
-                      {row.cost}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
-              <p className="text-xs text-slate-600">
-                ➕ Need more? Top up <span className="font-semibold">600 credits</span> at any time on our Billing Page for flat <span className="font-semibold">₹100</span>.
-              </p>
-            </div>
-          </div>
         </div>
 
         {/* FAQ Section */}

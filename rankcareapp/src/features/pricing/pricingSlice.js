@@ -75,7 +75,7 @@ const initialState = {
   plans: [],
   current: null,
   creditBalance: null,
-  trialDays: 10,
+  trialDays: null,
   loadingPlans: false,
   loadingCurrent: false,
   changingPlan: false,
@@ -101,10 +101,12 @@ const pricingSlice = createSlice({
         state.error = null;
       })
        .addCase(fetchPricingPlans.fulfilled, (state, action) => {
-         state.loadingPlans = false;
-         state.plans = action.payload?.data || [];
-         state.trialDays = action.payload?.trialDays || 10;
-      })
+          state.loadingPlans = false;
+          state.plans = action.payload?.data || [];
+          if (action.payload?.trialDays != null) {
+            state.trialDays = action.payload.trialDays;
+          }
+        })
       .addCase(fetchPricingPlans.rejected, (state, action) => {
         state.loadingPlans = false;
         state.error = action.payload || "Failed to fetch plans";

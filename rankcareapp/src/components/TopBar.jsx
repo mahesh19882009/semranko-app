@@ -86,7 +86,10 @@ function Topbar({ onToggleSidebar }) {
   };
 
   const showSubscriptionBanner = subscriptionBannerOpen &&
-    (subscriptionData?.isInGracePeriod || subscriptionData?.subscriptionStatus === 'trialing');
+    (subscriptionData?.isInGracePeriod ||
+      subscriptionData?.subscriptionStatus === 'trialing' ||
+      subscriptionData?.subscriptionStatus === 'past_due' ||
+      subscriptionData?.subscriptionStatus === 'inactive');
 
   const getBannerMessage = () => {
     if (subscriptionData?.isInGracePeriod) {
@@ -100,6 +103,12 @@ function Topbar({ onToggleSidebar }) {
       if (daysLeft <= 3) {
         return `Your trial expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}. Upgrade now to avoid interruption.`;
       }
+    }
+    if (subscriptionData?.subscriptionStatus === 'past_due') {
+      return 'Your subscription payment is past due. Please update your payment details to avoid service interruption.';
+    }
+    if (subscriptionData?.subscriptionStatus === 'inactive') {
+      return 'Your subscription is inactive. Please upgrade to continue using RankCare.';
     }
     return null;
   };
@@ -120,7 +129,11 @@ function Topbar({ onToggleSidebar }) {
                 onClick={() => navigate('/billing')}
                 className="text-sm font-semibold text-amber-700 hover:text-amber-900"
               >
-                Upgrade Now
+                {subscriptionData?.subscriptionStatus === 'past_due'
+                  ? 'Update Payment'
+                  : subscriptionData?.subscriptionStatus === 'inactive'
+                    ? 'Upgrade Now'
+                    : 'Upgrade Now'}
               </button>
               <button
                 onClick={() => setSubscriptionBannerOpen(false)}

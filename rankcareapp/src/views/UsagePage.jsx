@@ -42,6 +42,8 @@ export default function UsagePage() {
 
   const pricingCurrent = useSelector((state) => state.pricing.current);
   const creditBalance = pricingCurrent?.creditBalance ?? null;
+  const lastCreditResetAt = pricingCurrent?.lastCreditResetAt ?? null;
+  const nextCreditResetAt = pricingCurrent?.nextCreditResetAt ?? null;
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -164,7 +166,7 @@ export default function UsagePage() {
       )}
 
       {/* KPI Hero Cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-brand-50 text-brand-700">
@@ -212,7 +214,26 @@ export default function UsagePage() {
               <p className="text-2xl font-bold text-emerald-700">
                 Active
               </p>
-              <p className="text-xs text-emerald-600">No keyword limits. Only credits matter.</p>
+              <p className="text-xs text-emerald-600">Credits control credit-consuming actions. Plan limits control active resource capacity like keywords.</p>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2V4M12 20V22M4 12H2M22 12H20M19.07 4.93L17.66 6.34M6.34 17.66L4.93 19.07M19.07 19.07L17.66 17.66M6.34 6.34L4.93 4.93" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Last Credit Refresh</p>
+              <p className="text-sm font-semibold text-slate-900">
+                {lastCreditResetAt ? new Date(lastCreditResetAt).toLocaleDateString() : "—"}
+              </p>
+              <p className="text-xs text-slate-500">
+                Next: {nextCreditResetAt ? new Date(nextCreditResetAt).toLocaleDateString() : "—"}
+              </p>
             </div>
           </div>
         </Card>

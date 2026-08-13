@@ -1,18 +1,24 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from typing import Optional
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import re
 
 from app.api.deps import db_session, get_current_user
+from app.core.rate_limiter import rate_limit
+from app.core.security import enforce_limits
 from app.db.models import Keyword, Project, RankResult
 from app.services.keyword_table_service import get_enriched_keywords
-from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
-from app.services.dataforseo_client import LOCATION_MAP
-from app.services.credit_service import deduct_credits, refund_credits
+from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
+from app.services.credit_service import deduct_credits, refund_credits, reserve_credits, consume_reserved
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
+from app.services.plan_service import (
+    get_user_or_404,
+    activate_keyword as service_activate_keyword,
+    deactivate_keyword as service_deactivate_keyword,
+)
 from app.core.config import get_settings
 from app.core.errors import ApiError
 
@@ -22,6 +28,8 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/keywords", tags=["keywords"])
+
+KEYWORD_READD_COOLDOWN_DAYS = 30
 
 
 def _calculate_visibility(position):
@@ -65,25 +73,64 @@ def _is_valid_keyword_data(data: dict) -> bool:
     return result
 
 
-def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str) -> bool:
+def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, location_code: int, domain: str, cost: int | None = None) -> bool:
     """
     Fetch DataForSEO data and update Keyword.
-    Charges user-configured credits only after a successful API response.
+    Reserves credits before the API call and consumes them on success.
     Returns True if data was fetched from API, False if no data fetched.
     Raises on failure so callers can return an error response.
     """
     logger.info("DAY_ONE_TRACKING START: keyword=%s location=%s domain=%s", keyword_text, location_code, domain)
     try:
-        helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
-        rows = helper.fetch_cheapest_dashboard_data(
+        from app.db.models import TrackedKeyword
+        aio_keyword_texts = set(
+            row.keyword
+            for row in db.scalars(
+                select(TrackedKeyword).where(
+                    TrackedKeyword.userId == user_id,
+                    TrackedKeyword.isActive == True,
+                    TrackedKeyword.trackAio == True,
+                    TrackedKeyword.keyword == keyword_text,
+                )
+            ).all()
+        )
+
+        if cost is None:
+            cost = settings.plan_config.credit_costs.get("add_keyword", 20)
+        reference = f"dayone:{user_id}:{keyword_text}:{datetime.utcnow().timestamp()}"
+        try:
+            reserve_credits(
+                db,
+                user_id,
+                float(cost),
+                "reservation",
+                f"Day-one tracking reservation: {keyword_text}",
+                reference=reference,
+            )
+        except Exception as exc:
+            logger.error(f"Day-one tracking credit reservation failed: {exc}")
+            raise ApiError(402, f"Insufficient credits for day-one tracking. Required: {cost}")
+
+        from app.services.dataforseo_client import check_dfs_cost_ceiling
+        try:
+            check_dfs_cost_ceiling(db, user_id, 0.037)
+        except Exception as exc:
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: DFS cost ceiling exceeded for {keyword_text}")
+            db.commit()
+            raise ApiError(403, str(exc.detail) if hasattr(exc, "detail") else str(exc))
+
+        rows = DataForSEOClient.fetch_dashboard_data(
             [keyword_text],
             domain,
             location_code=location_code,
             language_code="en",
+            aio_keyword_texts=aio_keyword_texts,
         )
 
         if not rows:
             logger.warning("Day-one tracking: no rows returned from DataForSEO for %s", keyword_text)
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: no DataForSEO data for {keyword_text}")
+            db.commit()
             return False
 
         row = rows[0]
@@ -92,9 +139,18 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
 
         if not _is_valid_keyword_data(row):
             logger.warning("Day-one tracking: all null data returned from DataForSEO for %s. Full row=%s", keyword_text, row)
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: empty DataForSEO data for {keyword_text}")
+            db.commit()
             return False
 
-        deduct_credits(db, user_id, 20, "ON_DEMAND_ADD", f"Day-one tracking: {keyword_text}")
+        consume_reserved(
+            db,
+            user_id,
+            reference,
+            float(cost),
+            action_type="charge",
+            description=f"Day-one tracking: {keyword_text}",
+        )
 
         try:
             keyword_row = db.scalar(
@@ -105,10 +161,16 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             db.commit()
         except Exception as exc:
             db.rollback()
-            refund_credits(db, user_id, 20, f"Refund: day-one tracking failed for {keyword_text}")
+            try:
+                refund_reserved(db, user_id, reference, float(cost), description=f"Refund: day-one tracking DB update failed for {keyword_text}")
+                db.commit()
+            except Exception:
+                db.rollback()
             raise
 
         return True
+    except ApiError:
+        raise
     except Exception:
         db.rollback()
         raise
@@ -147,7 +209,9 @@ def bulk_remove_keywords(
 
 
 @router.delete("/{keyword_id}")
+@rate_limit(max_requests=20, window_seconds=60)
 def remove_keyword(
+    request: Request,
     keyword_id: str,
     user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
@@ -157,7 +221,10 @@ def remove_keyword(
 
 
 @router.post("/{project_id}")
+@enforce_limits(resource_type='keyword')
+@rate_limit(max_requests=20, window_seconds=60, key_func=lambda r, kw: f"create_keyword:{kw.get('user', {}).get('userId', 'unknown')}")
 def create_keyword(
+    request: Request,
     project_id: str,
     payload: dict = Body(...),
     user: dict = Depends(get_current_user),
@@ -178,14 +245,37 @@ def create_keyword(
     if not normalized_keyword:
         raise ApiError(400, "Keyword is required")
 
-    existing = db.scalar(
+    existing_active = db.scalar(
         select(Keyword).where(
             Keyword.projectId == project_id,
             Keyword.keyword == normalized_keyword,
+            Keyword.isActive == True,
         )
     )
-    if existing:
+    if existing_active:
         raise ApiError(409, "Keyword already exists for this project")
+
+    existing_deleted = db.scalar(
+        select(Keyword).where(
+            Keyword.projectId == project_id,
+            Keyword.keyword == normalized_keyword,
+            Keyword.isActive == False,
+            Keyword.deletedAt.isnot(None),
+        ).order_by(Keyword.deletedAt.desc())
+    )
+    if existing_deleted:
+        cooldown_days = 30
+        deleted_at = existing_deleted.deletedAt
+        if deleted_at:
+            days_since_deletion = (datetime.utcnow() - deleted_at).days
+            if days_since_deletion < cooldown_days:
+                remaining = cooldown_days - days_since_deletion
+                raise ApiError(
+                    403,
+                    f"Keyword was recently deleted. You can re-add it in {remaining} day(s).",
+                )
+        db.execute(delete(Keyword).where(Keyword.id == existing_deleted.id))
+        db.commit()
 
     keyword = Keyword(
         projectId=project_id,
@@ -208,7 +298,8 @@ def create_keyword(
 
     try:
         logger.info("CREATE_KEYWORD: calling _apply_day_one_tracking for keyword=%s", normalized_keyword)
-        tracked = _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain)
+        single_cost = settings.plan_config.credit_costs.get("add_keyword", 20)
+        tracked = _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain, cost=single_cost)
         if not tracked:
             db.rollback()
             raise ApiError(502, f"Day-one tracking returned no data for \"{normalized_keyword}\". Keyword was not added.")
@@ -243,7 +334,10 @@ def create_keyword(
 
 
 @router.post("/{project_id}/bulk")
+@enforce_limits(resource_type='keyword')
+@rate_limit(max_requests=5, window_seconds=60, key_func=lambda r, kw: f"bulk_create_keyword:{kw.get('user', {}).get('userId', 'unknown')}")
 def bulk_create_keywords(
+    request: Request,
     project_id: str,
     payload: dict = Body(...),
     user: dict = Depends(get_current_user),
@@ -271,17 +365,38 @@ def bulk_create_keywords(
         return {"success": True, "message": "No valid keywords provided", "data": {"added": 0, "skipped": 0, "keywords": []}}
 
     existing = db.scalars(
-        select(Keyword.keyword).where(
+        select(Keyword.keyword, Keyword.isActive, Keyword.deletedAt).where(
             Keyword.projectId == project_id,
             Keyword.keyword.in_(normalized_keywords),
         )
     ).all()
-    existing_set = set(existing)
+    existing_set = set()
+    deleted_map = {}
+
+    for kw, is_active, deleted_at in existing:
+        if is_active:
+            existing_set.add(kw)
+        elif deleted_at:
+            deleted_map[kw] = deleted_at
 
     added = []
+    skipped = []
+    now = datetime.utcnow()
+
     for kw in normalized_keywords:
         if kw in existing_set:
+            skipped.append({"keyword": kw, "reason": "already_exists"})
             continue
+
+        if kw in deleted_map:
+            deleted_at = deleted_map[kw]
+            days_since_deletion = (now - deleted_at).days
+            if days_since_deletion < KEYWORD_READD_COOLDOWN_DAYS:
+                remaining = KEYWORD_READD_COOLDOWN_DAYS - days_since_deletion
+                skipped.append({"keyword": kw, "reason": f"cooldown_active", "remaining_days": remaining})
+                continue
+            db.execute(delete(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw))
+            db.commit()
 
         keyword = Keyword(
             projectId=project_id,
@@ -310,7 +425,8 @@ def bulk_create_keywords(
     tracking_errors = []
     for kw_text in added:
         try:
-            tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain)
+            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain, cost=bulk_cost)
             if not tracked:
                 failed_keyword = db.scalar(
                     select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
@@ -337,8 +453,8 @@ def bulk_create_keywords(
                 db.commit()
 
     message = f"Added {processed} keywords"
-    if skipped := len(normalized_keywords) - len(added):
-        message += f", skipped {skipped} duplicates"
+    if skipped_count := len(normalized_keywords) - len(added):
+        message += f", skipped {skipped_count} duplicates/cooldown"
     if failed_tracking:
         message += f", {failed_tracking} tracking failures"
 
@@ -348,6 +464,7 @@ def bulk_create_keywords(
         "data": {
             "added": processed,
             "skipped": len(normalized_keywords) - len(added),
+            "skipped_details": skipped,
             "keywords": added[:processed],
             "processed": processed,
             "failed_tracking": failed_tracking,
@@ -357,8 +474,10 @@ def bulk_create_keywords(
 
 
 @router.post("/{project_id}/refresh")
+@rate_limit(max_requests=10, window_seconds=60)
 def refresh_project_keywords(
-    project_id: str,
+    request: Optional[Request] = None,
+    project_id: str = None,
     payload: Optional[dict] = Body(default=None),
     user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
@@ -372,6 +491,26 @@ def refresh_project_keywords(
         status = 402 if result.get("error") == "INSUFFICIENT_CREDITS" else 400
         return JSONResponse(status_code=status, content=result)
     return JSONResponse(status_code=200, content={"success": True, "data": result})
+
+
+@router.post("/{keyword_id}/activate")
+def activate_keyword(
+    keyword_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    keyword = service_activate_keyword(db, user["userId"], keyword_id)
+    return {"success": True, "data": {"id": keyword.id, "isActive": keyword.isActive}}
+
+
+@router.post("/{keyword_id}/deactivate")
+def deactivate_keyword(
+    keyword_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    keyword = service_deactivate_keyword(db, user["userId"], keyword_id)
+    return {"success": True, "data": {"id": keyword.id, "isActive": keyword.isActive}}
 
 
 def _get_week_bounds(dt: datetime):
@@ -424,17 +563,32 @@ def get_keyword_history(
     ) or 0.0
 
     history = []
-    for key in sorted(weekly_data.keys()):
+    for i, key in enumerate(sorted(weekly_data.keys())):
         wd = weekly_data[key]
         avg_pos = sum(wd["positions"]) / len(wd["positions"]) if wd["positions"] else 0
         avg_vis = sum(wd["visibilities"]) / len(wd["visibilities"]) if wd["visibilities"] else keyword_visibility
         traffic = sum(wd["etvs"]) if wd["etvs"] else 0
+
+        position_change = None
+        if i > 0:
+            prev_pos = history[-1].get("avg_position")
+            if prev_pos is not None and avg_pos is not None:
+                pos_diff = round(avg_pos - prev_pos, 1)
+                position_change = {
+                    "previous": prev_pos,
+                    "current": avg_pos,
+                    "difference": pos_diff,
+                    "direction": "up" if pos_diff < 0 else ("down" if pos_diff > 0 else "same"),
+                    "isPositive": pos_diff < 0,
+                }
+
         history.append({
             "week_start": wd["week_start"],
             "week_end": wd["week_end"],
             "avg_position": round(avg_pos, 1),
             "avg_visibility": round(avg_vis, 2),
             "traffic": round(traffic, 2),
+            "positionChange": position_change,
         })
 
     return {
@@ -461,6 +615,24 @@ def get_weekly_comparison(
         select(Keyword).where(Keyword.projectId == project_id, Keyword.userId == user["userId"])
     ).all()
 
+    rank_results = db.scalars(
+        select(RankResult).where(
+            RankResult.projectId == project_id,
+            RankResult.checkedAt >= last_week_start,
+            RankResult.checkedAt <= this_week_end,
+        )
+    ).all()
+
+    results_by_keyword = {}
+    for row in rank_results:
+        kid = row.keywordId
+        if kid not in results_by_keyword:
+            results_by_keyword[kid] = {"this_week": [], "last_week": []}
+        if this_week_start <= row.checkedAt <= this_week_end:
+            results_by_keyword[kid]["this_week"].append(row)
+        elif last_week_start <= row.checkedAt <= last_week_end:
+            results_by_keyword[kid]["last_week"].append(row)
+
     this_week_positions = []
     this_week_visibilities = []
     this_week_traffic = []
@@ -469,28 +641,14 @@ def get_weekly_comparison(
     last_week_traffic = []
 
     for kw in keywords:
-        this_results = db.scalars(
-            select(RankResult).where(
-                RankResult.projectId == project_id,
-                RankResult.keywordId == kw.id,
-                RankResult.checkedAt >= this_week_start,
-                RankResult.checkedAt <= this_week_end,
-            )
-        ).all()
-        for row in this_results:
+        kw_results = results_by_keyword.get(kw.id, {"this_week": [], "last_week": []})
+        
+        for row in kw_results["this_week"]:
             if row.position:
                 this_week_positions.append(row.position)
             this_week_traffic.append(row.etv or 0)
 
-        last_results = db.scalars(
-            select(RankResult).where(
-                RankResult.projectId == project_id,
-                RankResult.keywordId == kw.id,
-                RankResult.checkedAt >= last_week_start,
-                RankResult.checkedAt <= last_week_end,
-            )
-        ).all()
-        for row in last_results:
+        for row in kw_results["last_week"]:
             if row.position:
                 last_week_positions.append(row.position)
             last_week_traffic.append(row.etv or 0)

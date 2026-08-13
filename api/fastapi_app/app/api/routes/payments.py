@@ -22,7 +22,7 @@ from app.schemas.common import ok
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
-PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency"}
+PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency", 3: "enterprise"}
 PLAN_KEY_TO_ID = {v: k for k, v in PLAN_ID_TO_KEY.items()}
 GST_RATE = Decimal(str(GST_RATE))
 PLAN_KEY_PRICES = {
@@ -207,10 +207,8 @@ async def create_payment_order(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"ERROR: Failed to create payment order: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to create payment order: {str(e)}")
+        logger.exception("Failed to create payment order: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to create payment order")
 
 @router.post("/create-top-up-order")
 async def create_top_up_order(
@@ -291,10 +289,8 @@ async def create_top_up_order(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"ERROR: Failed to create top-up order: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to create top-up order: {str(e)}")
+        logger.exception("Failed to create top-up order: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to create top-up order")
 
 @router.post("/verify-payment")
 async def verify_payment(
@@ -343,6 +339,9 @@ async def verify_payment(
         payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == razorpay_order_id))
         if not payment_order:
             raise HTTPException(status_code=404, detail="Payment order not found")
+
+        if payment_order.userId != current_user.id:
+            raise HTTPException(status_code=403, detail="Not your payment order")
 
         if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
             payment_order.status = "paid"
@@ -468,6 +467,14 @@ async def reactivate_subscription(
     """
     Reactivate a cancelled subscription (before period ends).
     """
+    active_subscription = db.query(Subscription).filter(
+        Subscription.userId == current_user.id,
+        Subscription.isActive == True
+    ).first()
+    
+    if active_subscription:
+        raise HTTPException(status_code=400, detail="You already have an active subscription")
+    
     subscription = db.query(Subscription).filter(
         Subscription.userId == current_user.id,
         Subscription.isActive == False,
@@ -476,6 +483,9 @@ async def reactivate_subscription(
     
     if not subscription:
         raise HTTPException(status_code=404, detail="No cancelled subscription found")
+    
+    if subscription.endDate and subscription.endDate < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Subscription period has expired. Please purchase a new plan.")
     
     subscription.isActive = True
     subscription.status = "active"
@@ -533,141 +543,6 @@ async def get_invoices(
             "user_gst_state_code": user.userGstStateCode if user else None,
         }
     }
-
-
-@router.post("/webhook")
-async def razorpay_webhook(
-    request_data: Dict[str, Any],
-    signature: str = Header(None),
-    db: Session = Depends(get_db)
-):
-    from app.services.payment_service import handle_webhook
-    from app.db.models import User, PaymentOrder as PO, CreditLedger
-
-    if not signature:
-        raise HTTPException(status_code=400, detail="Missing signature")
-
-    try:
-        event = handle_webhook(request_data, signature)
-    except Exception as exc:
-        logger.exception("Webhook verification failed: %s", exc)
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
-
-    if not event:
-        return {"received": True}
-
-    event_type = event.get("type")
-    payment_id = event.get("payment_id")
-    order_id = event.get("order_id")
-    user_email = event.get("user_email")
-    plan_id = event.get("plan_id")
-
-    payment_order = db.scalar(select(PO).where(PO.razorpayOrderId == order_id))
-    if not payment_order:
-        return {"received": True}
-
-    user = db.scalar(select(User).where(User.id == payment_order.userId))
-    if not user:
-        return {"received": True}
-
-    plan_name = PLAN_DEFINITIONS.get(PLAN_ID_TO_KEY.get(plan_id, "starter"), {}).get("name", "Unknown") if plan_id is not None else "Unknown"
-
-    if event_type == "payment.captured":
-        payment_order.status = "paid"
-        payment_order.razorpayPaymentId = payment_id
-        db.add(payment_order)
-        db.commit()
-
-        finalize_pending_ledger_entry(
-            db=db,
-            order_id=order_id,
-            amount_paid_inr=float(payment_order.amount) / 100.0,
-            plan_name=plan_name,
-        )
-
-        if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
-            multiplier = getattr(payment_order, "planId", 0)
-            settings = get_settings()
-            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
-            credits_to_add = int(multiplier) * credits_per_unit
-            user.creditBalance = round(float(getattr(user, "creditBalance", 0.0) or 0.0) + credits_to_add, 2)
-            db.add(user)
-            db.commit()
-
-            top_up_ledger = CreditLedger(
-                userId=user.id,
-                ownerId=user.id,
-                amount=float(credits_to_add),
-                actionType="CREDIT_TOP_UP",
-                description=f"Credit top-up: {credits_to_add} credits ({multiplier}x{credits_per_unit}) via Razorpay payment {payment_id}",
-                relatedOrderId=order_id,
-                status="success",
-            )
-            db.add(top_up_ledger)
-            db.commit()
-
-            email_service.send_payment_success_email(
-                to_email=user.email,
-                name=user.name,
-                plan_name="Credit Top-Up",
-                amount=float(payment_order.amount) / 100,
-                order_id=order_id
-            )
-        else:
-            logger.info(f"[payments-webhook] Calling activate_subscription user={user.id} plan_id={plan_id if plan_id is not None else payment_order.planId} order_id={order_id}")
-            try:
-                subscription = activate_subscription(
-                    db=db,
-                    user_id=user.id,
-                    plan_id=plan_id if plan_id is not None else payment_order.planId,
-                    payment_id=payment_id,
-                    order_id=order_id,
-                    billing_cycle="monthly"
-                )
-                user = db.scalar(select(User).where(User.id == user.id))
-                if user:
-                    user.selectedPlan = PLAN_ID_TO_KEY.get(plan_id if plan_id is not None else payment_order.planId, "starter")
-                    db.add(user)
-                    db.commit()
-                    db.refresh(user)
-            except Exception as exc:
-                logger.exception("Webhook subscription activation failed: %s", exc)
-
-            email_service.send_payment_success_email(
-                to_email=user.email,
-                name=user.name,
-                plan_name=plan_name,
-                amount=float(payment_order.amount) / 100,
-                order_id=order_id
-            )
-
-    elif event_type == "payment.failed":
-        payment_order.status = "failed"
-        payment_order.razorpayPaymentId = payment_id
-        db.add(payment_order)
-        db.commit()
-
-        ledger = db.scalar(
-            select(CreditLedger).where(
-                CreditLedger.relatedOrderId == order_id,
-                CreditLedger.status == "pending",
-            )
-        )
-        if ledger:
-            ledger.status = "failed"
-            db.add(ledger)
-            db.commit()
-            db.refresh(ledger)
-
-        email_service.send_payment_failure_email(
-            to_email=user.email,
-            name=user.name,
-            plan_name=plan_name,
-            order_id=order_id,
-            error_message="Payment failed via Razorpay webhook"
-        )
-
-    return {"received": True}
 
 
 @router.post("/mark-failed")

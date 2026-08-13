@@ -11,8 +11,10 @@ from app.services.competitor_spy_service import spy_competitor_keywords
 from app.services.project_onboarding_service import create_project_with_keywords
 from app.services.credit_service import check_credits, deduct_credits, refund_credits
 from app.services.dataforseo_client import LOCATION_MAP
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/keyword-research", tags=["keyword-research"])
 
@@ -43,10 +45,11 @@ async def research_keyword_endpoint(
         })
     
     try:
-        check_credits(db, current_user["userId"], 20)
+        cost = settings.plan_config.credit_costs.get("keyword_research", 20)
+        check_credits(db, current_user["userId"], cost)
         result = research_keyword(db, current_user["userId"], keyword, location_code)
         if result.get("credits_charged"):
-            deduct_credits(db, current_user["userId"], 20, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
+            deduct_credits(db, current_user["userId"], cost, "KEYWORD_RESEARCH", f"Keyword research: {keyword}")
         else:
             logger.info("Keyword research served from cache for '%s', no credits deducted", keyword)
         db.commit()
@@ -88,9 +91,10 @@ async def competitor_spy_endpoint(
         })
     
     try:
-        check_credits(db, current_user["userId"], 20)
+        cost = settings.plan_config.credit_costs.get("competitor_spy", 20)
+        check_credits(db, current_user["userId"], cost)
         results = spy_competitor_keywords(db, current_user["userId"], domain, location_code, limit)
-        deduct_credits(db, current_user["userId"], 20, "COMPETITOR_SPY", f"Competitor spy: {domain}")
+        deduct_credits(db, current_user["userId"], cost, "COMPETITOR_SPY", f"Competitor spy: {domain}")
         db.commit()
         return ok("Competitor keywords retrieved", {"keywords": results, "domain": domain})
     except Exception as e:

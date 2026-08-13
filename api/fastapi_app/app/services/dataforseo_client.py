@@ -1,17 +1,75 @@
 import base64
+import hashlib
 import json
 import logging
 import math
 import time
+from datetime import datetime
 from typing import Optional
 from requests.auth import HTTPBasicAuth
 
 import requests
 from app.core.config import get_settings
 from app.services.cache_service import get_cached, set_cached
+from app.db.models import DataForSEOCost
+from app.services.credit_service import track_dataforseo_cost
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def check_dfs_cost_ceiling(db, user_id: str, estimated_cost_usd: float) -> None:
+    """
+    Check if the user has exceeded their monthly DataForSEO cost ceiling.
+    Uses advisory lock to prevent concurrent ceiling bypass.
+    Raises HTTPException 403 if the ceiling would be exceeded.
+    """
+    from app.db.models import User, DataForSEOCost
+    from sqlalchemy import select, func, text
+    from fastapi import HTTPException
+
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    plan = user.selectedPlan or "starter"
+    plan_def = settings.plan_config.plans.get(plan)
+    if not plan_def:
+        return
+
+    ceiling = getattr(plan_def, "dfs_cost_ceiling_usd", 0.0)
+    if ceiling <= 0:
+        return
+
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    lock_id = (hash(f"{user_id}:{month_start.year}:{month_start.month}") & 0x7FFFFFFF)
+    if db.bind.dialect.name == "postgresql":
+        acquired = db.scalar(
+            select(func.pg_try_advisory_xact_lock(lock_id))
+        )
+        if not acquired:
+            raise HTTPException(
+                status_code=429,
+                detail="Concurrent cost ceiling check in progress, please retry",
+            )
+
+    current_spend = db.scalar(
+        select(func.coalesce(func.sum(DataForSEOCost.costUsd), 0.0))
+        .where(DataForSEOCost.userId == user_id)
+        .where(DataForSEOCost.createdAt >= month_start)
+    ) or 0.0
+
+    if current_spend + estimated_cost_usd > ceiling:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"DataForSEO monthly cost ceiling exceeded. "
+                f"Current spend: ${current_spend:.2f}, Ceiling: ${ceiling:.2f}, "
+                f"Estimated additional cost: ${estimated_cost_usd:.2f}"
+            ),
+        )
 
 LOCATION_MAP = {
     "India": 2356,
@@ -299,6 +357,137 @@ DEVICE_MAP = {
     "desktop": "desktop",
 }
 
+CODE_TO_LOCATION = {code: name for name, code in LOCATION_MAP.items()}
+
+
+def _build_serp_cache_key(keyword: str, location_code: int, language: str, device: str, os_name: str, depth: int, aio_flag: bool, engine: str = "google") -> str:
+    keyword_hash = hashlib.md5(keyword.strip().lower().encode()).hexdigest()[:12]
+    return f"serp:v1:{engine}:{keyword_hash}:{location_code}:{language}:{device}:{os_name or 'unknown'}:{depth}:{str(aio_flag).lower()}"
+
+
+def _build_kw_metrics_cache_key(keyword: str, location_code: int, language: str) -> str:
+    keyword_hash = hashlib.md5(keyword.strip().lower().encode()).hexdigest()[:12]
+    return f"kw_metrics:v1:{keyword_hash}:{location_code}:{language}"
+
+
+def _get_cached_serp(cache_key: str) -> Optional[dict]:
+    try:
+        return get_cached("serp", cache_key)
+    except Exception as exc:
+        logger.warning("SERP cache read failed: %s", exc)
+        return None
+
+
+def _set_cached_serp(cache_key: str, value: dict, ttl: int = 86400) -> bool:
+    try:
+        set_cached("serp", cache_key, value, ttl=ttl)
+        return True
+    except Exception as exc:
+        logger.warning("SERP cache write failed: %s", exc)
+        return False
+
+
+def _get_cached_kw_metrics(cache_key: str) -> Optional[dict]:
+    try:
+        return get_cached("kw_metrics", cache_key)
+    except Exception as exc:
+        logger.warning("Keyword metrics cache read failed: %s", exc)
+        return None
+
+
+def _build_labs_cache_key(endpoint: str, identifier: str, location_code: int, language: str) -> str:
+    identifier_hash = hashlib.md5(identifier.strip().lower().encode()).hexdigest()[:12]
+    return f"labs:v1:{endpoint}:{identifier_hash}:{location_code}:{language}"
+
+
+def _get_cached_labs(cache_key: str) -> Optional[dict]:
+    try:
+        return get_cached("labs", cache_key)
+    except Exception as exc:
+        logger.warning("Labs cache read failed: %s", exc)
+        return None
+
+
+def _set_cached_labs(cache_key: str, value: dict, ttl: int = 604800) -> bool:
+    try:
+        set_cached("labs", cache_key, value, ttl=ttl)
+        return True
+    except Exception as exc:
+        logger.warning("Labs cache write failed: %s", exc)
+        return False
+
+
+def _set_cached_kw_metrics(cache_key: str, value: dict, ttl: int = 604800) -> bool:
+    try:
+        set_cached("kw_metrics", cache_key, value, ttl=ttl)
+        return True
+    except Exception as exc:
+        logger.warning("Keyword metrics cache write failed: %s", exc)
+        return False
+
+
+def _estimate_dataforseo_cost(endpoint: str, keyword_count: int = 1, depth: int | None = None, cache_hit: bool = False) -> float:
+    """Estimate DataForSEO cost in USD based on endpoint and parameters."""
+    if cache_hit:
+        return 0.0
+
+    cost_map = {
+        "/serp/google/organic/live/advanced": 0.020 if depth and depth >= 100 else 0.010,
+        "/serp/google/organic/task_post": 0.012 if depth and depth >= 100 else 0.006,
+        "/dataforseo_labs/google/keyword_overview/live": 0.013,
+        "/dataforseo_labs/google/keyword_ideas/live": 0.018,
+        "/dataforseo_labs/google/competitors_domain/live": 0.132,
+        "/dataforseo_labs/google/domain_rank_overview/live": 0.013,
+        "/dataforseo_labs/google/bulk_traffic_estimation/live": 0.132,
+        "/dataforseo_labs/google/keyword_suggestions/live": 0.018,
+        "/dataforseo_labs/google/keywords_for_keywords/live": 0.018,
+        "/backlinks/summary/live": 0.040,
+    }
+
+    unit_cost = cost_map.get(endpoint, 0.0)
+    if endpoint in ("/dataforseo_labs/google/bulk_traffic_estimation/live", "/dataforseo_labs/google/competitors_domain/live", "/backlinks/summary/live"):
+        return unit_cost
+    return unit_cost * keyword_count
+
+
+def _log_dataforseo_cost(db, user_id, task_type, endpoint, method, keyword_count=1, priority=None, depth=None, expand_ai_overview=None, estimated_cost=None, actual_cost=None, cache_hit=False, success=True, error=None, meta=None, project_id=None, keyword_id=None, task_id=None, request_id=None):
+    """Log DataForSEO cost for tracking and profitability analysis."""
+    try:
+        from app.services.credit_service import track_dataforseo_cost
+
+        if estimated_cost is None:
+            estimated_cost = _estimate_dataforseo_cost(endpoint, keyword_count, depth, cache_hit)
+
+        cost_meta = {
+            "method": method,
+            "priority": priority,
+            "depth": depth,
+            "expand_ai_overview": expand_ai_overview,
+            "cache_hit": cache_hit,
+            "success": success,
+        }
+        if meta:
+            cost_meta.update(meta)
+        if error:
+            cost_meta["error"] = str(error)[:500]
+
+        track_dataforseo_cost(
+            db=db,
+            user_id=user_id,
+            task_type=task_type,
+            endpoint=endpoint,
+            cost_credits=estimated_cost,
+            keyword_count=keyword_count,
+            cost_usd=actual_cost,
+            meta=cost_meta,
+            project_id=project_id,
+            keyword_id=keyword_id,
+            task_id=task_id,
+            request_id=request_id,
+        )
+    except Exception as exc:
+        logger.warning("Failed to log DataForSEO cost: %s", exc)
+
 
 class DataForSEOClient:
     BASE_URL = "https://api.dataforseo.com/v3"
@@ -345,11 +534,11 @@ class DataForSEOClient:
         return result.get(keyword)
 
     @classmethod
-    def get_rank_batch(cls, keywords: list[dict], domain: str, location: str = "India", device: str = "desktop", aio_keyword_texts: set | None = None) -> dict:
+    def get_rank_batch(cls, keywords: list[dict], domain: str, location: str = "India", device: str = "desktop", aio_keyword_texts: set | None = None, depth: int = 100) -> dict:
         if not keywords:
             return {}
 
-        serp_map = cls.get_serp_data_batch(keywords, location, device, aio_keyword_texts=aio_keyword_texts)
+        serp_map = cls.get_serp_data_batch(keywords, location, device, aio_keyword_texts=aio_keyword_texts, depth=depth)
         results = {}
         for kw in keywords:
             keyword_text = kw.get("keyword", "")
@@ -410,15 +599,32 @@ class DataForSEOClient:
         return cls._fetch_keyword_data_batch(keywords, location) or {}
 
     @classmethod
-    def _fetch_keyword_data_batch(cls, keywords: list[str], location: str = "India") -> dict:
+    def _fetch_keyword_data_batch(cls, keywords: list[str], location: str = "India", db=None, user_id: str | None = None) -> dict:
         if not keywords:
             return {}
 
         location_code = LOCATION_MAP.get(location, 2840)
+        
+        # Check keyword metrics cache first
+        cached_results = {}
+        missing_keywords = []
+        for kw in keywords:
+            cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
+            cached = _get_cached_kw_metrics(cache_key)
+            if cached:
+                cached_results[kw] = cached
+                if db and user_id:
+                    _log_dataforseo_cost(db, user_id, "keyword_metrics_cache_hit", "/dataforseo_labs/google/keyword_overview/live", "GET", keyword_count=1, cache_hit=True, success=True)
+            else:
+                missing_keywords.append(kw)
+        
+        if not missing_keywords:
+            return cached_results
+        
         url = f"{cls.BASE_URL}/dataforseo_labs/google/keyword_overview/live"
         payload = [
             {
-                "keywords": keywords,
+                "keywords": missing_keywords,
                 "language_code": "en",
                 "item_types": ["organic", "paid", "ai_overview_reference"],
             }
@@ -433,9 +639,11 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO keyword_overview request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_metrics_error", "/dataforseo_labs/google/keyword_overview/live", "POST", keyword_count=len(missing_keywords), cache_hit=False, success=False, error=exc)
             return {}
 
-        results = {}
+        results = dict(cached_results)
         tasks = data.get("tasks", []) or []
         for task in tasks:
             result = task.get("result")
@@ -460,7 +668,7 @@ class DataForSEOClient:
             kw = item.get("keyword") or (task.get("data") or {}).get("keyword")
             if not kw:
                 continue
-            results[kw] = {
+            metric_entry = {
                 "volume": keyword_info.get("search_volume"),
                 "difficulty": keyword_properties.get("keyword_difficulty"),
                 "cpc": keyword_info.get("cpc"),
@@ -469,8 +677,175 @@ class DataForSEOClient:
                 "referring_domains": avg_backlinks_info.get("referring_domains"),
                 "intent": search_intent_info.get("main_intent"),
             }
-            logger.info("DataForSEO client Labs result for '%s': %s", kw, results[kw])
+            results[kw] = metric_entry
+            logger.info("DataForSEO client Labs result for '%s': %s", kw, metric_entry)
+            
+            # Store in keyword metrics cache
+            cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
+            _set_cached_kw_metrics(cache_key, metric_entry, ttl=604800)  # 7 days
+            
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_metrics", "/dataforseo_labs/google/keyword_overview/live", "POST", keyword_count=1, cache_hit=False, success=True)
+
         return results
+
+    @classmethod
+    def fetch_dashboard_data(cls, keywords, target_domain, location_code=2840, language_code="en", pingback_url=None, db=None, user_id=None, depth: int = 100, aio_keyword_texts: set | None = None):
+        if isinstance(keywords, str):
+            keywords = [keywords]
+
+        if not keywords:
+            return []
+
+        location = CODE_TO_LOCATION.get(location_code, "India") if isinstance(location_code, int) else (location_code or "India")
+
+        labs_results = cls._fetch_keyword_data_batch(keywords, location, db=db, user_id=user_id)
+
+        metrics_map = {}
+        for kw in keywords:
+            metric_entry = labs_results.get(kw)
+            if metric_entry:
+                metrics_map[kw] = {
+                    "keyword": kw,
+                    "volume": metric_entry.get("volume"),
+                    "kd": metric_entry.get("difficulty"),
+                    "cpc": metric_entry.get("cpc"),
+                    "competition": metric_entry.get("competition"),
+                    "competition_level": None,
+                    "intent": metric_entry.get("intent"),
+                    "foreign_intent": None,
+                    "backlinks": metric_entry.get("backlinks"),
+                    "dofollow": None,
+                    "referring_pages": None,
+                    "referring_domains": metric_entry.get("referring_domains"),
+                    "referring_main_domains": None,
+                    "domain_rank": None,
+                    "etv": None,
+                    "categories": None,
+                    "monthly_searches": None,
+                    "search_volume_trend": None,
+                    "low_top_of_page_bid": None,
+                    "high_top_of_page_bid": None,
+                    "detected_language": None,
+                    "words_count": None,
+                }
+                logger.info("DataForSEO client Labs metrics for '%s': volume=%s kd=%s cpc=%s competition=%s intent=%s",
+                            kw,
+                            metric_entry.get("volume"),
+                            metric_entry.get("difficulty"),
+                            metric_entry.get("cpc"),
+                            metric_entry.get("competition"),
+                            metric_entry.get("intent"))
+
+        serp_data = cls.get_serp_data_batch(
+            [{"keyword": kw, "location": location, "device": "desktop"} for kw in keywords],
+            location,
+            db=db,
+            user_id=user_id,
+            depth=depth,
+            aio_keyword_texts=aio_keyword_texts,
+        )
+
+        serp_map = {}
+        for kw in keywords:
+            serp_entry = serp_data.get(kw, {})
+            detected_position = None
+            has_aio_badge = None
+            check_url = None
+            ai_description = None
+
+            all_items = serp_entry.get("items", []) or []
+            for item in all_items:
+                item_type = item.get("type", "")
+
+                if item_type == "organic" and item.get("url"):
+                    if target_domain and target_domain.lower() in item.get("url", "").lower():
+                        candidate_position = item.get("rank_group") or item.get("rank_absolute")
+                        if candidate_position and (detected_position is None or candidate_position < detected_position):
+                            detected_position = candidate_position
+                        if not check_url:
+                            check_url = item.get("url")
+
+                if item_type in ("local_pack", "map", "local_services", "knowledge_graph", "google_hotels"):
+                    url = item.get("url") or ""
+                    domain = item.get("domain") or ""
+                    if target_domain and (target_domain.lower() in url.lower() or target_domain.lower() in domain.lower()):
+                        if detected_position is None:
+                            detected_position = item.get("rank_group") or item.get("rank_absolute") or 1
+                        if not check_url:
+                            check_url = url or f"https://{domain}" if domain else url
+
+                if item_type == "ai_overview":
+                    if item.get("asynchronous_ai_overview") is True:
+                        has_aio_badge = "AIO"
+                    ai_description = item.get("description") or item.get("text") or item.get("content") or ai_description
+                    if not ai_description and item.get("markdown"):
+                        ai_description = item.get("markdown")
+                    nested_items = item.get("items", []) or []
+                    if isinstance(nested_items, list):
+                        for nested in nested_items:
+                            if not ai_description and nested and nested.get("description"):
+                                ai_description = nested.get("description")
+                            if not ai_description and nested and nested.get("text"):
+                                ai_description = nested.get("text")
+                    references = item.get("ai_overview_reference", []) or item.get("references", []) or []
+                    if isinstance(references, list):
+                        for ref in references:
+                            if ref and ref.get("url") and target_domain:
+                                if target_domain in ref.get("url", "").lower():
+                                    has_aio_badge = "AIO"
+
+                if item_type == "organic" and item.get("url"):
+                    item_domain = (item.get("domain") or "").lower()
+                    item_url = item.get("url") or ""
+                    if target_domain and (target_domain.lower() in item_url.lower() or target_domain.lower() in item_domain):
+                        if has_aio_badge != "AIO":
+                            has_aio_badge = "AIO"
+                        if not ai_description and item.get("description"):
+                            ai_description = item.get("description")
+                        if not check_url:
+                            check_url = item_url
+
+            item_groups = serp_entry.get("item_groups", []) or []
+            for group in item_groups:
+                group_type = group.get("type")
+                group_items = group.get("items", []) or []
+                if group_type == "ai_overview" and group_items and not has_aio_badge:
+                    references = group_items[0].get("references", []) or group_items[0].get("ai_overview_reference", []) or []
+                    if isinstance(references, list):
+                        for ref in references:
+                            if ref and ref.get("url") and target_domain:
+                                if target_domain in ref.get("url", "").lower():
+                                    has_aio_badge = "AIO"
+
+            serp_map[kw] = {
+                "position": detected_position,
+                "ai_badge": has_aio_badge,
+                "ai_description": ai_description,
+                "check_url": check_url,
+            }
+
+        final_table_rows = []
+        for kw in keywords:
+            kw_metrics = metrics_map.get(kw, {
+                "keyword": kw,
+                "volume": None, "kd": None, "cpc": None,
+                "competition": None, "backlinks": None, "referring_domains": None,
+                "intent": None, "foreign_intent": None, "competition_level": None,
+                "dofollow": None, "referring_pages": None, "referring_main_domains": None,
+                "domain_rank": None, "etv": None, "categories": None,
+                "monthly_searches": None, "search_volume_trend": None,
+                "low_top_of_page_bid": None, "high_top_of_page_bid": None,
+                "detected_language": None, "words_count": None,
+            })
+            serp_data_row = serp_map.get(kw, {})
+
+            merged = {**kw_metrics, **serp_data_row}
+            final_table_rows.append(merged)
+
+        logger.info("DataForSEO client dashboard fetch complete: %d keywords, %d with metrics, %d with SERP",
+                    len(keywords), len(metrics_map), len(serp_map))
+        return final_table_rows
 
     @classmethod
     def get_keyword_metrics(cls, db, user_id: str, keywords: list[dict]) -> dict:
@@ -479,7 +854,7 @@ class DataForSEOClient:
 
         keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
         location = keywords[0].get("location", "India") if keywords else "India"
-        results = cls._fetch_keyword_data_batch(keyword_texts, location)
+        results = cls._fetch_keyword_data_batch(keyword_texts, location, db=db, user_id=user_id)
 
         return {
             "results": list(results.values()),
@@ -495,7 +870,7 @@ class DataForSEOClient:
 
         keyword_texts = [kw.get("keyword", "") for kw in keywords if kw.get("keyword")]
         location = keywords[0].get("location", "India") if keywords else "India"
-        results = cls._fetch_keyword_data_batch(keyword_texts, location)
+        results = cls._fetch_keyword_data_batch(keyword_texts, location, db=db, user_id=user_id)
 
         return {
             "results": list(results.values()),
@@ -506,15 +881,24 @@ class DataForSEOClient:
 
     @classmethod
     def get_keyword_ideas(cls, db, user_id: str, seed_keyword: str, location_code: int = 2840) -> dict:
-        ideas = cls.get_keyword_ideas_api(seed_keyword, location_code)
-        return {
+        cache_key = _build_labs_cache_key("keyword_ideas", seed_keyword, location_code, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_ideas", "/dataforseo_labs/google/keyword_ideas/live", "GET", keyword_count=len(cached.get("ideas", [])), cache_hit=True, success=True)
+            return cached
+
+        ideas = cls.get_keyword_ideas_api(seed_keyword, location_code, db=db, user_id=user_id)
+        result = {
             "seed": seed_keyword,
             "ideas": ideas,
             "credits_charged": len(ideas),
         }
+        _set_cached_labs(cache_key, result, ttl=604800)
+        return result
 
     @classmethod
-    def get_keyword_ideas_api(cls, seed_keyword: str, location_code: int = 2840, limit: int = 50) -> list:
+    def get_keyword_ideas_api(cls, seed_keyword: str, location_code: int = 2840, limit: int = 50, db=None, user_id: str | None = None) -> list:
         url = f"{cls.BASE_URL}/dataforseo_labs/google/keyword_ideas/live"
         payload = [{
             "keywords": [seed_keyword],
@@ -532,6 +916,8 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO keyword_ideas request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_ideas", "/dataforseo_labs/google/keyword_ideas/live", "POST", success=False, error=exc)
             return []
 
         results = []
@@ -561,6 +947,9 @@ class DataForSEOClient:
                     "intent": item.get("search_intent") or search_intent_info.get("main_intent"),
                 })
         logger.info("DataForSEO keyword_ideas returned %d ideas for '%s'", len(results), seed_keyword)
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "keyword_ideas", "/dataforseo_labs/google/keyword_ideas/live", "POST", keyword_count=len(results), success=True)
         return results
 
     @classmethod
@@ -576,16 +965,30 @@ class DataForSEOClient:
                 "cached": True,
             }
 
-        keywords = cls.get_competitor_keywords(domain, location_code, limit)
-        return {
+        cache_key = _build_labs_cache_key("competitors_domain", domain, location_code, "en")
+        labs_cached = _get_cached_labs(cache_key)
+        if labs_cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "competitors_domain", "/dataforseo_labs/google/competitors_domain/live", "GET", cache_hit=True, success=True)
+            return {
+                "domain": domain,
+                "keywords": labs_cached.get("keywords", []),
+                "credits_charged": 0,
+                "cached": True,
+            }
+
+        keywords = cls.get_competitor_keywords(domain, location_code, limit, db=db, user_id=user_id)
+        result = {
             "domain": domain,
             "keywords": keywords,
             "credits_charged": 1 if keywords else 0,
             "cached": False,
         }
+        _set_cached_labs(cache_key, result, ttl=604800)
+        return result
 
     @classmethod
-    def get_competitor_keywords(cls, domain: str, location_code: int = 2840, limit: int = 100) -> list:
+    def get_competitor_keywords(cls, domain: str, location_code: int = 2840, limit: int = 100, db=None, user_id: str | None = None) -> list:
         url = f"{cls.BASE_URL}/dataforseo_labs/google/competitors_domain/live"
         payload = [{
             "target": domain,
@@ -601,6 +1004,8 @@ class DataForSEOClient:
             logger.debug("DataForSEO competitors_domain full response: %s", data)
         except Exception as exc:
             logger.error("DataForSEO competitors_domain request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "competitors_domain", "/dataforseo_labs/google/competitors_domain/live", "POST", success=False, error=exc)
             return []
 
         results = []
@@ -638,25 +1043,58 @@ class DataForSEOClient:
                     "etv": organic.get("etv"),
                     "paid_traffic_cost": paid.get("estimated_paid_traffic_cost"),
                 })
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "competitors_domain", "/dataforseo_labs/google/competitors_domain/live", "POST", keyword_count=limit, success=True)
         return results[:limit]
 
     @classmethod
-    def get_serp_data_batch(cls, keywords: list[dict], location: str = "India", device: str = "desktop", result_type: str = "regular", aio_keyword_texts: set | None = None) -> dict:
+    def get_serp_data_batch(cls, keywords: list[dict], location: str = "India", device: str = "desktop", result_type: str = "regular", aio_keyword_texts: set | None = None, db=None, user_id: str | None = None, priority: str | None = None, os_name: str | None = None, force_refresh: bool = False, depth: int = 100) -> dict:
         if not keywords:
             return {}
 
         location_code = LOCATION_MAP.get(location, 2840)
+        expand_ai_overview = True if aio_keyword_texts else False
+        cache_ttl = 86400  # 24 hours
+        
+        # Check shared SERP cache first unless force_refresh
+        cached_results = {}
+        missing_keywords = []
+        if not force_refresh:
+            for kw in keywords:
+                keyword_text = kw.get("keyword", "")
+                if not keyword_text:
+                    continue
+                cache_key = _build_serp_cache_key(keyword_text, location_code, "en", DEVICE_MAP.get(device, "desktop"), os_name or "unknown", depth, expand_ai_overview)
+                cached = _get_cached_serp(cache_key)
+                if cached:
+                    cached_results[keyword_text] = cached
+                    if db and user_id:
+                        _log_dataforseo_cost(db, user_id, "serp_cache_hit", "/serp/google/organic/live/advanced", "GET", keyword_count=1, priority=priority, depth=depth, expand_ai_overview=expand_ai_overview, cache_hit=True, success=True)
+                else:
+                    missing_keywords.append(kw)
+        else:
+            missing_keywords = list(keywords)
+            if db and user_id:
+                for kw in keywords:
+                    keyword_text = kw.get("keyword", "")
+                    if keyword_text:
+                        _log_dataforseo_cost(db, user_id, "manual_serp_force_refresh", "/serp/google/organic/live/advanced", "GET", keyword_count=1, priority=priority, depth=depth, expand_ai_overview=expand_ai_overview, cache_hit=False, success=True)
+        
+        if not missing_keywords:
+            return cached_results
+        
+        # Fetch missing keywords from DataForSEO
         url = f"{cls.BASE_URL}/serp/google/organic/live/advanced"
-
         tasks = []
-        for kw in keywords:
+        for kw in missing_keywords:
             task = {
                 "keyword": kw.get("keyword", ""),
                 "location_code": location_code,
                 "language_code": "en",
                 "device": DEVICE_MAP.get(device, "desktop"),
-                "depth": 100,
-                "expand_ai_overview": True,
+                "depth": depth,
+                "expand_ai_overview": expand_ai_overview,
             }
             if result_type == "async":
                 task["pingback_url"] = None
@@ -671,9 +1109,11 @@ class DataForSEOClient:
             logger.debug("DataForSEO SERP batch full response: %s", data)
         except Exception as exc:
             logger.error("DataForSEO serp/live/advanced request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "serp_error", "/serp/google/organic/live/advanced", "POST", keyword_count=len(missing_keywords), priority=priority, depth=depth, expand_ai_overview=expand_ai_overview, cache_hit=False, success=False, error=exc)
             return {}
 
-        results = {}
+        results = dict(cached_results)
         tasks_data = data.get("tasks", []) or []
         for task in tasks_data:
             keyword_text = (task.get("data") or {}).get("keyword", "")
@@ -736,6 +1176,13 @@ class DataForSEOClient:
                     serp_entry["ai_overview"] = ai_items[0]
 
             results[keyword_text] = serp_entry
+            
+            # Store in shared cache
+            cache_key = _build_serp_cache_key(keyword_text, location_code, "en", DEVICE_MAP.get(device, "desktop"), os_name or "unknown", depth, expand_ai_overview)
+            _set_cached_serp(cache_key, serp_entry, ttl=cache_ttl)
+            
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "weekly_serp" if result_type == "async" else "manual_serp", "/serp/google/organic/live/advanced", "POST", keyword_count=1, priority=priority, depth=depth, expand_ai_overview=expand_ai_overview, cache_hit=False, success=True)
 
         return results
 
@@ -808,7 +1255,14 @@ class DataForSEOClient:
         return cached
 
     @classmethod
-    def get_backlinks(cls, target_domain: str, limit: int = 100) -> list:
+    def get_backlinks(cls, target_domain: str, limit: int = 100, db=None, user_id: str | None = None) -> list:
+        cache_key = _build_labs_cache_key("backlinks", target_domain, 0, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "backlinks", "/backlinks/summary/live", "GET", cache_hit=True, success=True)
+            return cached.get("results", [])[:limit]
+
         url = f"{cls.BASE_URL}/backlinks/summary/live"
         payload = [{
             "target": target_domain,
@@ -821,6 +1275,8 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO backlinks request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "backlinks", "/backlinks/summary/live", "POST", success=False, error=exc)
             return []
 
         results = []
@@ -842,11 +1298,22 @@ class DataForSEOClient:
                     "domain_rank": item.get("domain_rank"),
                     "page_rank": item.get("page_rank"),
                 })
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "backlinks", "/backlinks/summary/live", "POST", success=True)
+        _set_cached_labs(cache_key, {"results": results[:limit]}, ttl=604800)
         return results[:limit]
 
     @classmethod
-    def get_domain_rank_overview(cls, domain: str, location: str = "India") -> Optional[dict]:
+    def get_domain_rank_overview(cls, domain: str, location: str = "India", db=None, user_id: str | None = None) -> Optional[dict]:
         location_code = LOCATION_MAP.get(location, 2840)
+        cache_key = _build_labs_cache_key("domain_rank_overview", domain, location_code, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "domain_rank_overview", "/dataforseo_labs/google/domain_rank_overview/live", "GET", cache_hit=True, success=True)
+            return cached.get("result")
+
         url = f"{cls.BASE_URL}/dataforseo_labs/google/domain_rank_overview/live"
         payload = [{
             "target": domain,
@@ -860,9 +1327,12 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO domain_rank_overview request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "domain_rank_overview", "/dataforseo_labs/google/domain_rank_overview/live", "POST", success=False, error=exc)
             return None
 
         tasks = data.get("tasks", []) or []
+        result_data = None
         for task in tasks:
             result = task.get("result")
             if not result:
@@ -874,15 +1344,32 @@ class DataForSEOClient:
 
             items = result.get("items", []) or []
             if items:
-                return items[0]
-        return None
+                result_data = items[0]
+                if db and user_id:
+                    _log_dataforseo_cost(db, user_id, "domain_rank_overview", "/dataforseo_labs/google/domain_rank_overview/live", "POST", success=True)
+                break
+        
+        if result_data is None and db and user_id:
+            _log_dataforseo_cost(db, user_id, "domain_rank_overview", "/dataforseo_labs/google/domain_rank_overview/live", "POST", success=True)
+        
+        if result_data:
+            _set_cached_labs(cache_key, {"result": result_data}, ttl=604800)
+        return result_data
 
     @classmethod
-    def get_bulk_traffic_estimation(cls, domains: list[str], location: str = "India") -> list:
+    def get_bulk_traffic_estimation(cls, domains: list[str], location: str = "India", db=None, user_id: str | None = None) -> list:
         if not domains:
             return []
 
         location_code = LOCATION_MAP.get(location, 2840)
+        domains_key = ",".join(sorted(domains))
+        cache_key = _build_labs_cache_key("bulk_traffic_estimation", domains_key, location_code, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "bulk_traffic_estimation", "/dataforseo_labs/google/bulk_traffic_estimation/live", "GET", keyword_count=len(domains), cache_hit=True, success=True)
+            return cached.get("results", [])
+
         url = f"{cls.BASE_URL}/dataforseo_labs/google/bulk_traffic_estimation/live"
         payload = [{
             "targets": domains,
@@ -896,6 +1383,8 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO bulk_traffic_estimation request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "bulk_traffic_estimation", "/dataforseo_labs/google/bulk_traffic_estimation/live", "POST", keyword_count=len(domains), success=False, error=exc)
             return []
 
         results = []
@@ -911,11 +1400,22 @@ class DataForSEOClient:
 
             items = result.get("items", []) or []
             results.extend(items)
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "bulk_traffic_estimation", "/dataforseo_labs/google/bulk_traffic_estimation/live", "POST", keyword_count=len(domains), success=True)
+        _set_cached_labs(cache_key, {"results": results}, ttl=604800)
         return results
 
     @classmethod
-    def get_keyword_suggestions(cls, seed_keyword: str, location: str = "India", limit: int = 100) -> list:
+    def get_keyword_suggestions(cls, seed_keyword: str, location: str = "India", limit: int = 100, db=None, user_id: str | None = None) -> list:
         location_code = LOCATION_MAP.get(location, 2840)
+        cache_key = _build_labs_cache_key("keyword_suggestions", seed_keyword, location_code, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_suggestions", "/dataforseo_labs/google/keyword_suggestions/live", "GET", keyword_count=len(cached.get("results", [])), cache_hit=True, success=True)
+            return cached.get("results", [])[:limit]
+
         url = f"{cls.BASE_URL}/dataforseo_labs/google/keyword_suggestions/live"
         payload = [{
             "keyword": seed_keyword,
@@ -930,6 +1430,8 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO keyword_suggestions request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keyword_suggestions", "/dataforseo_labs/google/keyword_suggestions/live", "POST", success=False, error=exc)
             return []
 
         results = []
@@ -953,14 +1455,26 @@ class DataForSEOClient:
                     "difficulty": item.get("keyword_difficulty") or keyword_properties.get("keyword_difficulty"),
                     "cpc": item.get("cpc") or keyword_info.get("cpc"),
                 })
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "keyword_suggestions", "/dataforseo_labs/google/keyword_suggestions/live", "POST", keyword_count=len(results), success=True)
+        _set_cached_labs(cache_key, {"results": results[:limit]}, ttl=604800)
         return results[:limit]
 
     @classmethod
-    def get_keywords_for_keywords(cls, keywords: list[str], location: str = "India", limit: int = 100) -> list:
+    def get_keywords_for_keywords(cls, keywords: list[str], location: str = "India", limit: int = 100, db=None, user_id: str | None = None) -> list:
         if not keywords:
             return []
 
         location_code = LOCATION_MAP.get(location, 2840)
+        keywords_key = ",".join(sorted(keywords))
+        cache_key = _build_labs_cache_key("keywords_for_keywords", keywords_key, location_code, "en")
+        cached = _get_cached_labs(cache_key)
+        if cached:
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keywords_for_keywords", "/dataforseo_labs/google/keywords_for_keywords/live", "GET", keyword_count=len(keywords), cache_hit=True, success=True)
+            return cached.get("results", [])[:limit]
+
         url = f"{cls.BASE_URL}/dataforseo_labs/google/keywords_for_keywords/live"
         payload = [{
             "keywords": keywords[:10],
@@ -975,6 +1489,8 @@ class DataForSEOClient:
             data = response.json()
         except Exception as exc:
             logger.error("DataForSEO keywords_for_keywords request failed: %s", exc)
+            if db and user_id:
+                _log_dataforseo_cost(db, user_id, "keywords_for_keywords", "/dataforseo_labs/google/keywords_for_keywords/live", "POST", keyword_count=len(keywords), success=False, error=exc)
             return []
 
         results = []
@@ -1000,6 +1516,10 @@ class DataForSEOClient:
                     "cpc": item.get("cpc") or keyword_info.get("cpc"),
                     "intent": item.get("search_intent") or search_intent_info.get("main_intent"),
                 })
+        
+        if db and user_id:
+            _log_dataforseo_cost(db, user_id, "keywords_for_keywords", "/dataforseo_labs/google/keywords_for_keywords/live", "POST", keyword_count=len(keywords), success=True)
+        _set_cached_labs(cache_key, {"results": results[:limit]}, ttl=604800)
         return results[:limit]
 
     @staticmethod

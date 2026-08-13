@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.core.config import get_settings
-from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary
+from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary, is_upgrade, is_downgrade, get_plan_key, _record_subscription_ledger, get_user_plan_limits_from_plan
 from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -27,7 +27,7 @@ def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") ->
     
     Args:
         db: Database session (not used but kept for consistency)
-        plan_id: ID of the plan (0=starter, 1=pro, 2=agency)
+        plan_id: ID of the plan (0=starter, 1=pro, 2=agency, 3=enterprise)
         billing_cycle: 'monthly' or 'yearly'
     
     Returns:
@@ -35,7 +35,7 @@ def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") ->
     """
     from app.services.plan_service import PLAN_DEFINITIONS
     
-    plan_keys = ["starter", "pro", "agency"]
+    plan_keys = ["starter", "pro", "agency", "enterprise"]
     if plan_id < 0 or plan_id >= len(plan_keys):
         return None
     
@@ -213,6 +213,17 @@ def activate_subscription(
         raise Exception("User not found")
     
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+    if order and order.status == "paid":
+        existing_subscription = db.scalar(
+            select(Subscription).where(
+                Subscription.userId == user_id,
+                Subscription.isActive == True,
+                Subscription.razorpayOrderId == order_id,
+            )
+        )
+        if existing_subscription:
+            return existing_subscription
+    
     if order:
         order.status = "paid"
         order.razorpayPaymentId = payment_id
@@ -241,8 +252,34 @@ def activate_subscription(
     effective_plan_id = plan_id
     effective_plan_key = plan["key"]
     now = datetime.utcnow()
+    duration_days = plan["duration_days"]
+    monthly_credits = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
     
-    logger.info(f"[activate_subscription] user={user_id} plan_id={plan_id} plan_key={effective_plan_key} existing_sub={existing_subscription is not None}")
+    current_plan_key = get_plan_key(user)
+    is_same_plan = existing_subscription is not None and current_plan_key == effective_plan_key
+    is_renewal = is_same_plan
+    upgrade = is_upgrade(current_plan_key, effective_plan_key)
+    downgrade = is_downgrade(current_plan_key, effective_plan_key)
+    
+    if is_renewal:
+        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
+        user.creditBalance = round(old_balance + monthly_credits, 2)
+        ledger_action = "renewal"
+        ledger_desc = f"Subscription renewal: {plan['name']} (Order {order_id})"
+    else:
+        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
+        user.creditBalance = float(monthly_credits)
+        ledger_action = "purchase"
+        ledger_desc = f"Subscription purchase: {plan['name']} (Order {order_id})"
+    
+    user.subscriptionStatus = "active"
+    user.selectedPlan = effective_plan_key
+    
+    if not is_renewal or upgrade or downgrade:
+        user.planAnniversaryAt = now
+        user.lastCreditResetAt = now
+    
+    db.add(user)
     
     if existing_subscription:
         existing_subscription.planId = effective_plan_id
@@ -251,60 +288,8 @@ def activate_subscription(
         existing_subscription.razorpayPaymentId = payment_id
         existing_subscription.razorpayOrderId = order_id
         existing_subscription.startDate = now
-        existing_subscription.endDate = now + timedelta(days=plan["duration_days"])
+        existing_subscription.endDate = now + timedelta(days=duration_days)
         db.add(existing_subscription)
-        
-        user.subscriptionStatus = "active"
-        user.selectedPlan = effective_plan_key
-        
-        # Set plan anniversary for credit reset tracking (no rollover)
-        set_plan_anniversary(db, user)
-        
-        credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
-        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-        new_balance = round(old_balance + credits_to_add, 2)
-        logger.info(f"[activate_subscription] UPGRADE path old_balance={old_balance} credits_to_add={credits_to_add} new_balance={new_balance}")
-        user.creditBalance = new_balance
-        db.add(user)
-        
-        db.commit()
-        db.refresh(existing_subscription)
-        db.refresh(user)
-        
-        logger.info(f"[activate_subscription] UPGRADE path AFTER COMMIT creditBalance={user.creditBalance}")
-        
-        # Create ledger entry for subscription purchase
-        try:
-            ledger = CreditLedger(
-                userId=user_id,
-                ownerId=user_id,
-                amount=credits_to_add,
-                actionType="purchase",
-                description=f"Subscription purchase: {plan['name']} (Order {order_id})",
-                relatedOrderId=order_id,
-                status="success",
-            )
-            db.add(ledger)
-            db.commit()
-            logger.info(f"[activate_subscription] UPGRADE path ledger created successfully: amount={credits_to_add}")
-        except Exception as ledger_exc:
-            logger.error(f"[activate_subscription] UPGRADE path ledger creation failed: {ledger_exc}")
-            import traceback
-            traceback.print_exc()
-            db.rollback()
-            # Continue anyway since subscription is activated
-        
-        payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
-        amount = float(payment_order.amount) / 100 if payment_order else 0.0
-        email_service.send_payment_success_email(
-            to_email=user.email,
-            name=user.name,
-            plan_name=plan['name'],
-            amount=amount,
-            order_id=order_id
-        )
-        
-        return existing_subscription
     else:
         subscription = Subscription(
             userId=user_id,
@@ -312,60 +297,58 @@ def activate_subscription(
             status='active',
             isActive=True,
             startDate=now,
-            endDate=now + timedelta(days=plan["duration_days"]),
+            endDate=now + timedelta(days=duration_days),
             razorpayPaymentId=payment_id,
             razorpayOrderId=order_id
         )
-        
         db.add(subscription)
-        db.commit()
-        db.refresh(subscription)
+    
+    db.commit()
+    db.refresh(user)
+    
+    pending_plan = getattr(user, "pendingPlanChange", None)
+    if pending_plan:
+        pending_plan = pending_plan.strip().lower()
+        if pending_plan not in PLAN_DEFINITIONS:
+            raise Exception(f"Invalid pending plan: {pending_plan}")
         
-        user.subscriptionStatus = "active"
-        user.selectedPlan = effective_plan_key
+        pending_plan_id = {"starter": 0, "pro": 1, "agency": 2, "enterprise": 3}.get(pending_plan, 0)
+        if pending_plan_id != effective_plan_id:
+            raise Exception(
+                f"Payment plan mismatch: you have a pending plan change to {pending_plan}, "
+                f"but this payment is for {effective_plan_key}. "
+                f"Please cancel the pending change or pay for {pending_plan}."
+            )
         
-        # Set plan anniversary for credit reset tracking (no rollover)
-        set_plan_anniversary(db, user)
-        
-        credits_to_add = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
-        old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
-        new_balance = round(old_balance + credits_to_add, 2)
-        logger.info(f"[activate_subscription] NEW path old_balance={old_balance} credits_to_add={credits_to_add} new_balance={new_balance}")
-        user.creditBalance = new_balance
+        user.pendingPlanChange = None
         db.add(user)
         db.commit()
         db.refresh(user)
-        
-        logger.info(f"[activate_subscription] NEW path AFTER COMMIT creditBalance={user.creditBalance}")
-        
-        try:
-            ledger = CreditLedger(
-                userId=user_id,
-                ownerId=user_id,
-                amount=credits_to_add,
-                actionType="purchase",
-                description=f"Subscription purchase: {plan['name']} (Order {order_id})",
-                relatedOrderId=order_id,
-                status="success",
-            )
-            db.add(ledger)
-            db.commit()
-            logger.info(f"[activate_subscription] NEW path ledger created: amount={credits_to_add}")
-        except Exception as ledger_exc:
-            logger.error(f"[activate_subscription] NEW path ledger creation failed: {ledger_exc}")
-            db.rollback()
-            # Continue anyway since subscription is activated
-        
-        payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
-        amount = float(payment_order.amount) / 100 if payment_order else 0.0
-        email_service.send_payment_success_email(
-            to_email=user.email,
-            name=user.name,
-            plan_name=plan['name'],
-            amount=amount,
-            order_id=order_id
-        )
-        
+    
+    _record_subscription_ledger(
+        db=db,
+        user_id=user_id,
+        amount=float(monthly_credits),
+        action_type=ledger_action,
+        description=ledger_desc,
+        related_order_id=order_id,
+        balance_before=old_balance,
+    )
+    db.commit()
+    
+    payment_order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+    amount = float(payment_order.amount) / 100 if payment_order else 0.0
+    email_service.send_payment_success_email(
+        to_email=user.email,
+        name=user.name,
+        plan_name=plan['name'],
+        amount=amount,
+        order_id=order_id
+    )
+    
+    if existing_subscription:
+        return existing_subscription
+    else:
         return subscription
 
 

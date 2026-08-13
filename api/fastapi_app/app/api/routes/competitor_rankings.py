@@ -15,7 +15,7 @@ async def track_competitors(
     current_user: dict = Depends(get_current_user),
 ):
     try:
-        result = track_competitor_rankings(db, current_user["userId"], project_id)
+        result = track_competitor_rankings(db, current_user["userId"], project_id, depth=100)
         return ok("Competitor tracking completed", result)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

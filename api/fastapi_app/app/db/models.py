@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, JSON
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, func, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -28,6 +28,12 @@ class User(Base):
     passwordResetExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     authProvider: Mapped[str] = mapped_column(String, nullable=False, default="local", server_default="local")
     googleId: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
+    mobileNumber: Mapped[Optional[str]] = mapped_column(String, nullable=True, unique=True)
+    mobileVerified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    mobileVerificationOtp: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    mobileVerificationExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    mobileOtpAttempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mobileOtpLastSentAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     selectedPlan: Mapped[str] = mapped_column(String, nullable=False, default="starter", server_default="starter")
     subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="trialing", server_default="trialing")
@@ -35,8 +41,8 @@ class User(Base):
     trialEndsAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     creditBalance: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0.0")
     pendingPlanChange: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    planAnniversaryAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, server_default="NULL")  # When plan was activated for anniversary tracking
-    lastCreditResetAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, server_default="NULL")  # Last time credits were reset
+    planAnniversaryAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    lastCreditResetAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     userGstin: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
     userGstName: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
     userGstAddress: Mapped[Optional[str]] = mapped_column(String, nullable=True, server_default="NULL")
@@ -46,7 +52,7 @@ class User(Base):
     dailyKeywordMovement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     weeklyAuditSummary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     competitorAlerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    refreshFrequency: Mapped[str] = mapped_column(String, nullable=False, default="weekly", server_default="weekly")
+    refreshFrequency: Mapped[str] = mapped_column(String, nullable=False, default="monthly", server_default="monthly")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -66,6 +72,11 @@ class User(Base):
         primaryjoin="and_(CreditLedger.userId == User.id, CreditLedger.userId != None)",
     )
     dataforseoCosts: Mapped[list["DataForSEOCost"]] = relationship("DataForSEOCost", back_populates="user")
+
+    __table_args__ = (
+        Index("User_mobileNumber_idx", "mobileNumber"),
+        CheckConstraint("creditBalance >= 0", name="user_credit_balance_non_negative"),
+    )
 
 
 class KeywordList(Base):
@@ -157,6 +168,11 @@ class Keyword(Base):
     isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+    lastMonthlyMetricsRefreshAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    lastWeeklyRefreshAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    weeklyRefreshStatus: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    processingTimeoutAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    deletedAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
 
     project: Mapped[Project] = relationship(back_populates="keywords")
     rankResults: Mapped[list["RankResult"]] = relationship(back_populates="keyword")
@@ -164,6 +180,11 @@ class Keyword(Base):
     __table_args__ = (
         Index("Keyword_projectId_idx", "projectId"),
         Index("Keyword_projectId_keyword_key", "projectId", "keyword", unique=True),
+        Index("idx_keyword_last_monthly_metrics_refresh", "lastMonthlyMetricsRefreshAt"),
+        Index("idx_keyword_last_weekly_refresh", "lastWeeklyRefreshAt"),
+        Index("idx_keyword_weekly_eligibility", "lastWeeklyRefreshAt", "weeklyRefreshStatus", "isActive"),
+        Index("idx_keyword_monthly_eligibility", "lastMonthlyMetricsRefreshAt", "isActive"),
+        Index("idx_keyword_deleted_at", "deletedAt"),
     )
 
 
@@ -291,31 +312,6 @@ class SerpFeature(Base):
     )
 
 
-class ScheduledReport(Base):
-    __tablename__ = "ScheduledReport"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    frequency: Mapped[str] = mapped_column(String, nullable=False)  # daily, weekly, monthly
-    format: Mapped[str] = mapped_column(String, nullable=False)  # pdf, csv
-    recipients: Mapped[str] = mapped_column(String, nullable=False)  # comma-separated emails
-    startDate: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)  # When to start sending reports
-    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    lastSentAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    nextSendAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
-    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
-
-    user: Mapped[User] = relationship("User")
-    project: Mapped[Project] = relationship("Project")
-
-    __table_args__ = (
-        Index("ScheduledReport_userId_idx", "userId"),
-        Index("ScheduledReport_projectId_idx", "projectId"),
-    )
-
-
 class TrackedKeyword(Base):
     __tablename__ = "TrackedKeyword"
 
@@ -345,20 +341,27 @@ class DataForSEOCost(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     userId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)
+    projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
+    keywordId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Keyword.id", ondelete="SET NULL"), nullable=True)
     taskType: Mapped[str] = mapped_column(String, nullable=False)  # 'rank_tracker', 'aio', etc.
     endpoint: Mapped[str] = mapped_column(String, nullable=False)  # API endpoint called
     costCredits: Mapped[float] = mapped_column(Float, nullable=False)  # Cost in credits
     costUsd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Cost in USD for reporting
     keywordCount: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # Number of keywords processed
     meta: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # Additional context
+    taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # DataForSEO task ID
+    requestId: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # DataForSEO request ID
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
 
     user: Mapped[Optional[User]] = relationship("User")
+    project: Mapped[Optional[Project]] = relationship("Project")
+    keyword: Mapped[Optional[Keyword]] = relationship("Keyword")
 
     __table_args__ = (
         Index("DataForSEOCost_userId_idx", "userId"),
         Index("DataForSEOCost_createdAt_idx", "createdAt"),
         Index("DataForSEOCost_taskType_idx", "taskType"),
+        Index("DataForSEOCost_taskId_idx", "taskId"),
     )
 
 
@@ -406,32 +409,87 @@ class CreditLedger(Base):
     planName: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
+    keywordId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Keyword.id", ondelete="SET NULL"), nullable=True)
+    creditsReserved: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    creditsConsumed: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    creditsRefunded: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    netCreditChange: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    balanceBefore: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    balanceAfter: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    taskId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    requestId: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     user: Mapped[User] = relationship("User", back_populates="creditLedgerEntries", foreign_keys=[userId])
     owner: Mapped[User] = relationship("User", foreign_keys=[ownerId])
     triggeredByUser: Mapped[Optional[User]] = relationship("User", foreign_keys=[triggeredByUserId])
+    project: Mapped[Optional[Project]] = relationship("Project")
+    keyword: Mapped[Optional[Keyword]] = relationship("Keyword")
 
     __table_args__ = (
         Index("CreditLedger_userId_idx", "userId"),
         Index("CreditLedger_ownerId_idx", "ownerId"),
         Index("CreditLedger_actionType_idx", "actionType"),
         Index("CreditLedger_timestamp_idx", "timestamp"),
+        Index("CreditLedger_projectId_idx", "projectId"),
+        Index("CreditLedger_keywordId_idx", "keywordId"),
+        CheckConstraint("balanceBefore >= 0", name="ledger_balance_before_non_negative"),
+        CheckConstraint("balanceAfter >= 0", name="ledger_balance_after_non_negative"),
     )
 
 
-class UserCacheUnlock(Base):
-    __tablename__ = "UserCacheUnlock"
+class PendingWebhookCredit(Base):
+    __tablename__ = "PendingWebhookCredit"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
-    ownerId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
-    targetString: Mapped[str] = mapped_column(String, nullable=False)
-    unlockedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    taskId: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    keywordId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Keyword.id", ondelete="SET NULL"), nullable=True)
+    projectId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Project.id", ondelete="SET NULL"), nullable=True)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    maxAttempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    lastError: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
 
-    owner: Mapped[User] = relationship("User")
+    user: Mapped[User] = relationship("User")
+    keyword: Mapped[Optional[Keyword]] = relationship("Keyword")
+    project: Mapped[Optional[Project]] = relationship("Project")
 
     __table_args__ = (
-        Index("UserCacheUnlock_ownerId_idx", "ownerId"),
-        Index("UserCacheUnlock_ownerId_targetString_key", "ownerId", "targetString", unique=True),
+        Index("PendingWebhookCredit_taskId_idx", "taskId"),
+        Index("PendingWebhookCredit_userId_idx", "userId"),
+        Index("PendingWebhookCredit_status_idx", "status"),
+        Index("PendingWebhookCredit_taskId_keywordId_key", "taskId", "keywordId", unique=True),
+    )
+
+
+class KeywordMetricsHistory(Base):
+    __tablename__ = "KeywordMetricsHistory"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    keywordId: Mapped[str] = mapped_column(String, ForeignKey("Keyword.id", ondelete="CASCADE"), nullable=False)
+    projectId: Mapped[str] = mapped_column(String, ForeignKey("Project.id", ondelete="CASCADE"), nullable=False)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cpc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    competition: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    backlinks: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    refreshedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    keyword: Mapped[Optional[Keyword]] = relationship("Keyword")
+    project: Mapped[Optional[Project]] = relationship("Project")
+    user: Mapped[Optional[User]] = relationship("User")
+
+    __table_args__ = (
+        Index("KeywordMetricsHistory_keywordId_refreshedAt_idx", "keywordId", "refreshedAt"),
+        Index("KeywordMetricsHistory_projectId_refreshedAt_idx", "projectId", "refreshedAt"),
     )
 
 
@@ -464,4 +522,56 @@ class AsyncTaskQueue(Base):
         Index("AsyncTaskQueue_status_idx", "status"),
         Index("AsyncTaskQueue_taskType_idx", "taskType"),
         Index("AsyncTaskQueue_createdAt_idx", "createdAt"),
+    )
+
+
+class RefreshJob(Base):
+    __tablename__ = "RefreshJob"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    jobType: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued", server_default="queued")
+    batchIndex: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    totalBatches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    keywordCount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    keywordsJson: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    dataforseoRequestIds: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resultSummary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retryCount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    maxRetries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    processingTimeoutAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+    completedAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        Index("RefreshJob_status_idx", "status"),
+        Index("RefreshJob_createdAt_idx", "createdAt"),
+        Index("RefreshJob_jobType_status_idx", "jobType", "status"),
+    )
+
+
+class ProcessingJob(Base):
+    __tablename__ = "ProcessingJob"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    refreshJobId: Mapped[str] = mapped_column(String, ForeignKey("RefreshJob.id", ondelete="CASCADE"), nullable=False)
+    keywordText: Mapped[str] = mapped_column(String, nullable=False)
+    location: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+    deduplicationKey: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    processingTimeoutAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    retryCount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    maxRetries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+
+    __table_args__ = (
+        Index("ProcessingJob_refreshJobId_idx", "refreshJobId"),
+        Index("ProcessingJob_status_idx", "status"),
+        Index("ProcessingJob_refreshJobId_status_idx", "refreshJobId", "status"),
+        Index("ProcessingJob_deduplicationKey_idx", "deduplicationKey"),
+        Index("ProcessingJob_processingTimeoutAt_idx", "processingTimeoutAt"),
     )

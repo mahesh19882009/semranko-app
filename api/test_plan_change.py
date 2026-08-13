@@ -73,14 +73,28 @@ class TestPlanChange:
     def test_upgrade_is_immediate(self):
         user = make_user(self.db, plan="starter")
         result = change_user_plan(self.db, user.id, "pro")
-        assert result.selectedPlan == "pro"
-        assert result.pendingPlanChange is None
+        assert result.selectedPlan == "starter"
+        assert result.pendingPlanChange == "pro"
 
     def test_activate_subscription_applies_pending_downgrade(self):
         user = make_user(self.db, plan="pro", end_date=datetime.utcnow() + timedelta(days=30))
         change_user_plan(self.db, user.id, "starter")
         assert user.pendingPlanChange == "starter"
         
+        with pytest.raises(Exception, match="Payment plan mismatch"):
+            activate_subscription(
+                db=self.db,
+                user_id=user.id,
+                plan_id=1,
+                payment_id="pay_test",
+                order_id="order_test"
+            )
+        self.db.refresh(user)
+        assert user.selectedPlan == "pro"
+        assert user.pendingPlanChange == "starter"
+
+    def test_activate_subscription_without_pending_change(self):
+        user = make_user(self.db, plan="starter")
         activate_subscription(
             db=self.db,
             user_id=user.id,
@@ -89,11 +103,14 @@ class TestPlanChange:
             order_id="order_test"
         )
         self.db.refresh(user)
-        assert user.selectedPlan == "starter"
+        assert user.selectedPlan == "pro"
         assert user.pendingPlanChange is None
 
-    def test_activate_subscription_without_pending_change(self):
-        user = make_user(self.db, plan="starter")
+    def test_activate_subscription_matches_pending_plan_clears_pending(self):
+        user = make_user(self.db, plan="starter", end_date=datetime.utcnow() + timedelta(days=30))
+        change_user_plan(self.db, user.id, "pro")
+        assert user.pendingPlanChange == "pro"
+        
         activate_subscription(
             db=self.db,
             user_id=user.id,

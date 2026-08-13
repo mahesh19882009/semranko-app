@@ -35,6 +35,7 @@ import {
   clearKeywordMessage,
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
+import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
 import { apiRequest } from '../lib/api';
 import { Card } from '../components/ui';
 
@@ -66,6 +67,8 @@ function KeywordsPage() {
   const pricingCurrent = useSelector((state) => state.pricing.current);
 
   const selectedProject = projects.find((p) => String(p.id) === String(selectedProjectId));
+  const subscriptionData = useSelector((state) => state.subscription.data);
+  const subscriptionLoading = useSelector((state) => state.subscription.loading);
   let projectCountry = 'India';
   let projectCountryCode = 2356;
   if (selectedProject?.location) {
@@ -108,6 +111,8 @@ function KeywordsPage() {
     icon: null,
     onConfirm: null,
   });
+  const [activatingId, setActivatingId] = useState(null);
+  const [deactivatingId, setDeactivatingId] = useState(null);
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -155,6 +160,10 @@ function KeywordsPage() {
     }
     fetchTableData();
   }, [dispatch, selectedProjectId, projectsLoading]);
+
+  useEffect(() => {
+    dispatch(fetchSubscriptionStatus());
+  }, [dispatch]);
 
   const filteredData = useMemo(() => {
     let rows = [...tableData];
@@ -376,15 +385,54 @@ function KeywordsPage() {
     });
   };
 
+  const handleActivate = async (row) => {
+    if (!row.id || activatingId) return;
+    setActivatingId(row.id);
+    try {
+      await apiRequest(`/keywords/${row.id}/activate`, { method: 'POST' });
+      setTimeout(fetchTableData, 500);
+    } catch (err) {
+      setTableError(err.message || 'Failed to activate keyword');
+    } finally {
+      setActivatingId(null);
+    }
+  };
+
+  const handleDeactivate = async (row) => {
+    if (!row.id || deactivatingId) return;
+    setDeactivatingId(row.id);
+    try {
+      await apiRequest(`/keywords/${row.id}/deactivate`, { method: 'POST' });
+      setTimeout(fetchTableData, 500);
+    } catch (err) {
+      setTableError(err.message || 'Failed to deactivate keyword');
+    } finally {
+      setDeactivatingId(null);
+    }
+  };
+
   const positionBodyTemplate = (rowData) => {
     if (!rowData.position) return <span title="Not ranking">—</span>;
     return <span title={`Ranked at position #${rowData.position}`}>#{rowData.position}</span>;
   };
 
   const actionBodyTemplate = (rowData) => {
+    const isActive = rowData.is_active !== false;
+    if (isActive) {
+      return (
+        <div className="flex items-center gap-1">
+          <Button variant="outline" onClick={() => handleDeactivate(rowData)} disabled={deactivatingId === rowData.id} title="Deactivate keyword" className="px-2 py-1 text-xs">
+            {deactivatingId === rowData.id ? '...' : 'Deactivate'}
+          </Button>
+          <Button variant="danger" onClick={() => handleDeleteOne(rowData)} title="Delete keyword" className="px-2 py-1 text-xs">
+            <FontAwesomeIcon icon={faTrash} />
+          </Button>
+        </div>
+      );
+    }
     return (
-      <Button variant="danger" onClick={() => handleDeleteOne(rowData)} title="Delete keyword">
-        <FontAwesomeIcon icon={faTrash} />
+      <Button variant="primary" onClick={() => handleActivate(rowData)} disabled={activatingId === rowData.id} title="Activate keyword" className="px-2 py-1 text-xs">
+        {activatingId === rowData.id ? '...' : 'Activate'}
       </Button>
     );
   };
@@ -461,6 +509,12 @@ function KeywordsPage() {
     );
   }
 
+  const planName = subscriptionData?.plan || pricingCurrent?.plan || 'Free Trial';
+  const keywordLimit = subscriptionData?.limits?.keywordLimit ?? pricingCurrent?.limits?.keywordLimit ?? null;
+  const totalKeywordCount = subscriptionData?.usage?.keywords ?? pricingCurrent?.usage?.keywords ?? null;
+  const remainingSlots = keywordLimit != null && totalKeywordCount != null ? Math.max(0, keywordLimit - totalKeywordCount) : null;
+  const creditBalance = subscriptionData?.creditBalance ?? pricingCurrent?.creditBalance ?? null;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -474,6 +528,27 @@ function KeywordsPage() {
           <FontAwesomeIcon icon={faPlus} /> Add Keywords
         </Button>
       </div>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-6 text-sm">
+          <div>
+            <span className="text-slate-500">Plan:</span>{' '}
+            <span className="font-semibold text-slate-900 capitalize">{planName}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Keywords:</span>{' '}
+            <span className="font-semibold text-slate-900">{totalKeywordCount != null ? totalKeywordCount.toLocaleString('en-US') : '—'} / {keywordLimit != null ? keywordLimit.toLocaleString('en-US') : '—'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Remaining Slots:</span>{' '}
+            <span className="font-semibold text-slate-900">{remainingSlots != null ? remainingSlots.toLocaleString('en-US') : '—'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Credits:</span>{' '}
+            <span className="font-semibold text-slate-900">{creditBalance != null ? creditBalance.toLocaleString('en-US') : '—'}</span>
+          </div>
+        </div>
+      </section>
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>

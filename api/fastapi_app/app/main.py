@@ -1,3 +1,4 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,7 +10,6 @@ from app.core.errors import register_exception_handlers
 from app.db.models import Base
 from app.db.session import engine
 from app.jobs.rank_scheduler import start_scheduler, stop_scheduler
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,16 @@ settings = get_settings()
 
 login = settings.effective_serp_login
 key = settings.effective_serp_key
-logger.info(f"DataForSEO login configured: {bool(login)} value={login}")
-logger.info(f"DataForSEO key configured: {bool(key)} value={key[:10]}..." if key else "DataForSEO key configured: False")
+logger.info("DataForSEO credentials configured: %s", bool(login and key))
 
-origins = [settings.FRONTEND_URL] if settings.FRONTEND_URL else ["*"]
+if settings.ENV == "production" and not settings.FRONTEND_URL:
+    raise RuntimeError("FRONTEND_URL must be configured in production")
 
-# Properly add CORS middleware
+if not settings.FRONTEND_URL:
+    origins = ["*"]
+else:
+    origins = [settings.FRONTEND_URL]
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="RankCare SEO Analytics API - Track rankings, analyze competitors, and optimize your SEO strategy",

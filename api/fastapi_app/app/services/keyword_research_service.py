@@ -1,14 +1,17 @@
 import logging
 import math
 import re
+from datetime import datetime
 from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db.models import Keyword, Project
 from app.services.cache_service import increment_usage
-from app.services.credit_service import deduct_credits, refund_credits
-from app.services.dataforseo_dashboard import DataForSeoDashboardHelper
+from app.services.credit_service import deduct_credits, refund_credits, reserve_credits, consume_reserved
+from app.services.plan_service import ensure_keyword_limit, get_user_plan_limits_by_id, count_user_keywords
+from app.services.dataforseo_client import DataForSEOClient
 from app.core.config import get_settings
+from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -23,7 +26,6 @@ def _is_cache_data_valid(data: dict) -> bool:
 
 
 def research_keyword(db: Session, user_id: str, keyword: str, location_code: int = 2840) -> dict:
-    from app.services.dataforseo_client import DataForSEOClient
     from app.services.keyword_research_cache_service import query_research_cache, save_research_cache
 
     cached_ideas = query_research_cache(db, user_id, keyword, location_code)
@@ -32,9 +34,43 @@ def research_keyword(db: Session, user_id: str, keyword: str, location_code: int
         normalized = [_normalize_idea(i) for i in cached_ideas]
         return _build_research_response(keyword, normalized, credits_charged=0)
 
-    ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location_code, limit=50)
-    save_research_cache(db, user_id, keyword, location_code, ideas or [])
-    return _build_research_response(keyword, ideas or [], credits_charged=1 if ideas else 0)
+    cost = settings.plan_config.credit_costs.get("keyword_research", 20)
+    reference = f"research:{user_id}:{keyword}:{location_code}"
+    try:
+        reserve_credits(
+            db,
+            user_id,
+            float(cost),
+            "reservation",
+            f"Keyword research: {keyword}",
+            reference=reference,
+        )
+    except Exception as exc:
+        raise ApiError(402, f"Insufficient credits for keyword research. Required: {cost}")
+
+    try:
+        ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location_code, limit=50)
+        save_research_cache(db, user_id, keyword, location_code, ideas or [])
+
+        consume_reserved(
+            db,
+            user_id,
+            reference,
+            float(cost),
+            action_type="charge",
+            description=f"Keyword research: {keyword}",
+        )
+
+        db.commit()
+        return _build_research_response(keyword, ideas or [], credits_charged=1 if ideas else 0)
+    except Exception as exc:
+        db.rollback()
+        try:
+            refund_reserved(db, user_id, reference, float(cost), description=f"Refund: keyword research failed for {keyword}")
+            db.commit()
+        except Exception:
+            db.rollback()
+        raise
 
 
 def _normalize_idea(idea: dict) -> dict:
@@ -81,18 +117,49 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
 
     try:
         keywords_to_fetch = [kw.keyword for kw in created]
+        total_cost = 0.0
+        reference = None
 
-        fetched_ok_count = 0
         if keywords_to_fetch:
-            helper = DataForSeoDashboardHelper(settings.effective_serp_login, settings.effective_serp_key)
-            rows = helper.fetch_cheapest_dashboard_data(
+            from app.db.models import TrackedKeyword
+            aio_keyword_texts = set(
+                row.keyword
+                for row in db.scalars(
+                    select(TrackedKeyword).where(
+                        TrackedKeyword.userId == user_id,
+                        TrackedKeyword.isActive == True,
+                        TrackedKeyword.trackAio == True,
+                        TrackedKeyword.keyword.in_(keywords_to_fetch),
+                    )
+                ).all()
+            )
+
+            cost_per_keyword = settings.plan_config.credit_costs.get("bulk_add_keyword", 25)
+            total_cost = float(len(keywords_to_fetch) * cost_per_keyword)
+            reference = f"bulkdayone:{user_id}:{domain}:{datetime.utcnow().timestamp()}"
+            try:
+                reserve_credits(
+                    db,
+                    user_id,
+                    total_cost,
+                    "reservation",
+                    f"Bulk day-one tracking reservation: {len(keywords_to_fetch)} keyword(s)",
+                    reference=reference,
+                )
+            except Exception as exc:
+                logger.error(f"Bulk day-one tracking credit reservation failed: {exc}")
+                raise ApiError(402, f"Insufficient credits for bulk day-one tracking. Required: {total_cost}")
+
+            rows = DataForSEOClient.fetch_dashboard_data(
                 keywords_to_fetch,
                 domain,
                 location_code=location_code,
                 language_code="en",
+                aio_keyword_texts=aio_keyword_texts,
             )
             row_map = {row.get("keyword", "").lower().strip(): row for row in rows}
 
+            fetched_ok_count = 0
             for kw in created:
                 row = row_map.get(kw.keyword.lower().strip())
                 if row and _is_cache_data_valid(row):
@@ -108,16 +175,33 @@ def _apply_day_one_tracking_bulk(db: Session, user_id: str, created: list[Keywor
                     kw.ai_description = ai_description
                     fetched_ok_count += 1
 
-        if fetched_ok_count:
-            deduct_credits(
-                db,
-                user_id,
-                float(fetched_ok_count * 25),
-                "ON_DEMAND_ADD",
-                f"Day-one tracking: {fetched_ok_count} keyword(s)",
-            )
+            consumed_cost = float(fetched_ok_count * cost_per_keyword)
+            if fetched_ok_count > 0:
+                consume_reserved(
+                    db,
+                    user_id,
+                    reference,
+                    consumed_cost,
+                    action_type="charge",
+                    description=f"Day-one tracking: {fetched_ok_count} keyword(s)",
+                )
+
+            refund_amount = total_cost - consumed_cost
+            if refund_amount > 0:
+                try:
+                    refund_reserved(
+                        db,
+                        user_id,
+                        reference,
+                        refund_amount,
+                        description=f"Refund: {len(keywords_to_fetch) - fetched_ok_count} keyword(s) failed day-one tracking",
+                    )
+                except Exception as refund_exc:
+                    logger.error(f"Failed to refund reserved credits for bulk day-one tracking: {refund_exc}")
 
         db.commit()
+    except ApiError:
+        raise
     except Exception as exc:
         db.rollback()
         logger.error(f"Day-one tracking failed for batch: {exc}")
@@ -130,6 +214,14 @@ def add_keywords_to_project(db: Session, user_id: str, project_id: str, keywords
     )
     if not project:
         raise ValueError("Project not found")
+
+    ensure_keyword_limit(db, user_id)
+
+    limits = get_user_plan_limits_by_id(db, user_id)
+    keyword_limit = limits.get("keywordLimit", 0)
+    current_count = count_user_keywords(db, user_id)
+    if keyword_limit > 0 and current_count + len(keywords) > keyword_limit:
+        raise ValueError(f"Keyword limit reached. Your current plan allows {keyword_limit} keywords. You can only add {keyword_limit - current_count} more.")
 
     created = []
     for kw in keywords:

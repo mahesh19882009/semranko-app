@@ -11,6 +11,8 @@ from app.schemas.common import ok
 from app.services.report_service import generate_csv_report, generate_pdf_report, stream_project_keywords_csv
 from app.services import email_service
 from app.services.credit_service import deduct_credits
+from app.services.report_service import generate_csv_report, generate_pdf_report, stream_project_keywords_csv
+from app.core.config import get_settings
 from app.db.models import Project
 
 logger = logging.getLogger(__name__)
@@ -126,10 +128,12 @@ async def generate_keyword_pdf_report(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    settings = get_settings()
+    cost = settings.plan_config.credit_costs.get("download_report", 10)
     deduct_credits(
         db,
         current_user["id"],
-        20,
+        cost,
         "Report Download Charges",
         f"Keyword PDF report: {project.name}",
     )

@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "../lib/navigation";
 import { registerApi } from "../lib/api";
 import { getAccessToken } from "../utils/auth";
-import { TRIAL_DAYS } from "../config/pricing";
 
 function RegisterPage() {
   const navigate = useNavigate();
@@ -62,7 +61,7 @@ function RegisterPage() {
       }}>
         <h1 style={{ margin: 0, fontSize: "28px", fontWeight: 700 }}>Register</h1>
         <p style={{ margin: "8px 0 24px", color: "#667085", lineHeight: 1.6 }}>
-          Create your RankCare account and start your {TRIAL_DAYS}-day free trial with 150 credits
+          Create your RankCare account and start your free trial with credits to explore RankCare.
         </p>
 
         <div style={{

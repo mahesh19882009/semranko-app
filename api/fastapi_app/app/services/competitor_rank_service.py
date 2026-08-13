@@ -6,12 +6,13 @@ from sqlalchemy.orm import Session
 from app.db.models import Competitor, CompetitorRank, Keyword, Project, RankResult, User
 from app.services.dataforseo_client import DataForSEOClient
 from app.services.cache_service import get_cached, set_cached
+from app.services.credit_service import reserve_credits, consume_reserved, refund_reserved
 from app.core.errors import ApiError
 
-logger = logging.getLogger(__name__)
+logger = logger = logging.getLogger(__name__)
 
 
-def track_competitor_rankings(db: Session, user_id: str, project_id: str) -> dict:
+def track_competitor_rankings(db: Session, user_id: str, project_id: str, depth: int = 100, aio_keyword_texts: set | None = None) -> dict:
     project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user_id))
     if not project:
         raise ApiError(404, "Project not found")
@@ -24,8 +25,8 @@ def track_competitor_rankings(db: Session, user_id: str, project_id: str) -> dic
 
     location = keywords[0].location or "India"
     tracked = 0
-
     keywords_to_fetch = []
+
     for competitor in competitors:
         for keyword in keywords:
             cached = get_cached("competitor_rank", (project_id, competitor.id, keyword.keyword))
@@ -34,16 +35,37 @@ def track_competitor_rankings(db: Session, user_id: str, project_id: str) -> dic
                 continue
             keywords_to_fetch.append({"competitor": competitor, "keyword": keyword})
 
-    if keywords_to_fetch:
-        unique_keywords = []
-        seen = set()
-        for item in keywords_to_fetch:
-            kw_text = item["keyword"].keyword
-            if kw_text not in seen:
-                seen.add(kw_text)
-                unique_keywords.append({"keyword": kw_text, "location": location, "device": item["keyword"].device or "desktop"})
+    if not keywords_to_fetch:
+        db.commit()
+        return {"tracked": tracked}
 
-        serp_map = DataForSEOClient.get_serp_data_batch(unique_keywords, location)
+    unique_keyword_texts = []
+    seen = set()
+    for item in keywords_to_fetch:
+        kw_text = item["keyword"].keyword
+        if kw_text not in seen:
+            seen.add(kw_text)
+            unique_keyword_texts.append(kw_text)
+
+    refresh_cost = 10
+    reference = f"competitor:{project_id}:{datetime.utcnow().timestamp()}"
+    try:
+        reserve_credits(
+            db,
+            user_id,
+            float(len(unique_keyword_texts) * refresh_cost),
+            "reservation",
+            f"Competitor tracking reservation: {len(unique_keyword_texts)} keyword(s) for project {project_id}",
+            reference=reference,
+            project_id=project_id,
+        )
+    except Exception as exc:
+        logger.error(f"Competitor tracking credit reservation failed: {exc}")
+        raise ApiError(402, f"Insufficient credits for competitor tracking. Required: {len(unique_keyword_texts) * refresh_cost}")
+
+    try:
+        unique_keywords = [{"keyword": kw_text, "location": location, "device": "desktop"} for kw_text in unique_keyword_texts]
+        serp_map = DataForSEOClient.get_serp_data_batch(unique_keywords, location, depth=depth, aio_keyword_texts=aio_keyword_texts)
 
         for item in keywords_to_fetch:
             competitor = item["competitor"]
@@ -100,6 +122,28 @@ def track_competitor_rankings(db: Session, user_id: str, project_id: str) -> dic
                     )
                 tracked += 1
                 set_cached("competitor_rank", (project_id, competitor.id, keyword_text), {"position": rank, "url": url}, ttl_seconds=24 * 60 * 60)
+
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        try:
+            refund_reserved(db, user_id, reference, float(len(unique_keyword_texts) * refresh_cost), description=f"Refund: competitor tracking failed for project {project_id}", project_id=project_id)
+        except Exception as refund_exc:
+            logger.error(f"Failed to refund reserved credits for competitor tracking: {refund_exc}")
+        raise
+
+    try:
+        consume_reserved(
+            db,
+            user_id,
+            reference,
+            float(len(unique_keyword_texts) * refresh_cost),
+            action_type="charge",
+            description=f"Competitor tracking: {tracked} keyword(s) for project {project_id}",
+            project_id=project_id,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to consume reserved credits for competitor tracking: {exc}")
 
     db.commit()
     return {"tracked": tracked}

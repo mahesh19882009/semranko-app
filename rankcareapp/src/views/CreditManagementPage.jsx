@@ -4,17 +4,18 @@ import { useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
 import { initRazorpayCheckout } from "../lib/api";
 import {
-  createCreditPurchaseOrderApi,
+  createCreditTopUpOrderApi,
   fetchCreditBalanceApi,
   verifyCreditPaymentApi,
 } from "../features/pricing/pricingApi";
 import Alert from "../components/ui/Alert";
 
-const CREDIT_PACKS = [
-  { credits: 1000, priceInr: 499, popular: false },
-  { credits: 5000, priceInr: 1999, popular: true },
-  { credits: 10000, priceInr: 3499, popular: false },
-  { credits: 25000, priceInr: 7999, popular: false },
+const TOP_UP_MULTIPLIERS = [
+  { multiplier: 1, credits: 600, priceInr: 100, popular: false },
+  { multiplier: 2, credits: 1200, priceInr: 200, popular: false },
+  { multiplier: 3, credits: 1800, priceInr: 300, popular: true },
+  { multiplier: 5, credits: 3000, priceInr: 500, popular: false },
+  { multiplier: 10, credits: 6000, priceInr: 1000, popular: false },
 ];
 
 export default function CreditManagementPage() {
@@ -22,7 +23,7 @@ export default function CreditManagementPage() {
   const authenticated = isAuthenticated();
   const [balance, setBalance] = useState(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
-  const [loadingPack, setLoadingPack] = useState(null);
+  const [loadingMultiplier, setLoadingMultiplier] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
@@ -52,16 +53,16 @@ export default function CreditManagementPage() {
   const handlePurchase = async (pack) => {
     setError(null);
     setSuccess(null);
-    setLoadingPack(pack.credits);
+    setLoadingMultiplier(pack.multiplier);
 
     try {
-      const order = await createCreditPurchaseOrderApi(pack.priceInr, pack.credits);
+      const order = await createCreditTopUpOrderApi(pack.multiplier);
 
-          await initRazorpayCheckout({
-            order_id: order.order_id,
-            amount: order.amount,
-            currency: order.currency || "INR",
-            key_id: order.key_id,
+      await initRazorpayCheckout({
+        order_id: order.order_id,
+        amount: order.amount,
+        currency: order.currency || "INR",
+        key_id: order.key_id,
         prefill: {
           name: "",
           email: "",
@@ -73,8 +74,9 @@ export default function CreditManagementPage() {
               response.razorpay_payment_id,
               response.razorpay_signature
             );
-            if (verifyResult) {
-              setSuccess(`Successfully purchased ${pack.credits} credits!`);
+            if (verifyResult?.success) {
+              const added = verifyResult.data?.credits_added || pack.credits;
+              setSuccess(`Successfully topped up ${added.toLocaleString()} credits!`);
               loadBalance();
             } else {
               setError("Payment verification failed. Please contact support.");
@@ -82,17 +84,17 @@ export default function CreditManagementPage() {
           } catch (err) {
             setError(err.message || "Payment verification failed");
           } finally {
-            setLoadingPack(null);
+            setLoadingMultiplier(null);
           }
         },
         onPaymentError: (error) => {
           setError(error?.description || "Payment failed. Please try again.");
-          setLoadingPack(null);
+          setLoadingMultiplier(null);
         },
       });
     } catch (err) {
       setError(err.message || "Failed to initiate credit purchase");
-      setLoadingPack(null);
+      setLoadingMultiplier(null);
     }
   };
 
@@ -136,17 +138,17 @@ export default function CreditManagementPage() {
 
         {/* Credit Packs */}
         <div className="mt-16">
-          <h2 className="text-center text-2xl font-bold text-slate-900">Purchase Credits</h2>
+          <h2 className="text-center text-2xl font-bold text-slate-900">Top Up Credits</h2>
           <p className="mt-2 text-center text-sm text-slate-500">
-            Credits never expire and can be used for any RankCare feature.
+            Top up credits at any time. 600 credits per ₹100. Credits never expire.
           </p>
 
-          <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {CREDIT_PACKS.map((pack) => {
+          <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
+            {TOP_UP_MULTIPLIERS.map((pack) => {
               const perCredit = pack.priceInr / pack.credits;
               return (
                 <div
-                  key={pack.credits}
+                  key={pack.multiplier}
                   className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${
                     pack.popular ? "border-indigo-600 ring-1 ring-indigo-600" : "border-slate-200"
                   }`}
@@ -175,14 +177,14 @@ export default function CreditManagementPage() {
 
                   <button
                     onClick={() => handlePurchase(pack)}
-                    disabled={loadingPack === pack.credits}
+                    disabled={loadingMultiplier === pack.multiplier}
                     className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${
                       pack.popular
                         ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
                         : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
                     }`}
                   >
-                    {loadingPack === pack.credits ? "Processing..." : "Purchase"}
+                    {loadingMultiplier === pack.multiplier ? "Processing..." : "Top Up"}
                   </button>
                 </div>
               );

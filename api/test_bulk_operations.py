@@ -89,8 +89,11 @@ class TestBulkKeywords:
         deleted = delete_keywords_bulk(self.db, user.id, [kw1.id, kw2.id])
         assert deleted == 2
 
-        remaining = self.db.scalar(select(Keyword).where(Keyword.projectId == project.id))
-        assert remaining is None
+        remaining = self.db.scalars(select(Keyword).where(Keyword.projectId == project.id)).all()
+        assert len(remaining) == 2
+        for kw in remaining:
+            assert kw.isActive is False
+            assert kw.deletedAt is not None
 
 
 class TestBulkRankings:
