@@ -20,6 +20,10 @@ const toneStyles = {
   warning: 'bg-warning-light text-warning-dark border-amber-200',
   danger: 'bg-danger-light text-danger-dark border-red-200',
   info: 'bg-info-light text-info-dark border-blue-200',
+  active: 'bg-active-subtle text-active border-emerald-200',
+  inactive: 'bg-inactive-subtle text-inactive border-amber-200',
+  deleted: 'bg-deleted-subtle text-deleted border-slate-200',
+  locked: 'bg-locked-subtle text-locked border-violet-200',
 };
 
 const sizeStyles = {
@@ -42,7 +46,7 @@ function Badge({
     'inline-flex items-center gap-1.5 font-semibold border',
     rounded,
     sizeStyles[size],
-    toneStyles[tone],
+    toneStyles[tone] || toneStyles.secondary,
     className,
   ]
     .filter(Boolean)

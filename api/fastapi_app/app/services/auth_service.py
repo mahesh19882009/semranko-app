@@ -17,6 +17,7 @@ from app.core.security import (
 from app.db.models import User
 from app.services import email_service
 from app.services.otp_service import _normalize_mobile
+from app.services.phone_number_service import mask_phone_number
 from app.utils.serializers import model_to_dict
 from app.core.session import invalidate_session
 
@@ -40,7 +41,7 @@ def register_user(db: Session, payload: dict) -> dict:
         raise ApiError(400, "Name, email, mobile and password are required")
 
     normalized_email = email.strip().lower()
-    normalized_mobile = _normalize_mobile(mobile)
+    normalized_mobile = _normalize_mobile(mobile, payload.get("mobileCountry"))
 
     existing_email = db.scalar(select(User).where(User.email == normalized_email))
     if existing_email:
@@ -97,6 +98,7 @@ def register_user(db: Session, payload: dict) -> dict:
     result["emailSent"] = True
     result["mobileVerificationRequired"] = True
     result["mobileVerificationToken"] = create_mobile_verification_token(user.id)
+    result["mobileMasked"] = mask_phone_number(normalized_mobile)
     return result
 
 
@@ -209,6 +211,7 @@ def create_mobile_verification_session(db: Session, payload: dict) -> dict:
     return {
         "mobileVerified": False,
         "mobileVerificationToken": create_mobile_verification_token(user.id),
+        "mobileMasked": mask_phone_number(user.mobileNumber),
     }
 
 

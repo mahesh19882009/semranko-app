@@ -48,6 +48,7 @@ const CODE_MESSAGES = {
   OTP_ATTEMPTS_EXCEEDED: 'Maximum OTP attempts exceeded. Please request a new OTP.',
   OTP_RESEND_COOLDOWN: 'Please wait before requesting another OTP.',
   OTP_SEND_LIMIT_EXCEEDED: 'Too many OTP requests. Please try again later.',
+  INVALID_MOBILE_NUMBER: 'Enter a valid mobile number for the selected country.',
   TURNSTILE_REQUIRED: 'Complete the security check to continue.',
   TURNSTILE_REJECTED: 'The security check failed. Please try again.',
   CSRF_INVALID: 'Your security session is invalid. Refresh the page and try again.',
@@ -153,13 +154,16 @@ export function normalizeApiError(error, fallback = 'Request failed') {
   if (code === 'feature_limit_exceeded' && usage.limit != null) {
     message = `You've used ${usage.used ?? usage.limit} of ${usage.limit} for this billing cycle.`;
   }
+  const structuredFieldErrors = structured.fieldErrors && typeof structured.fieldErrors === 'object'
+    ? structured.fieldErrors
+    : {};
   return {
     __normalizedApiError: true,
     status,
     code,
     message: message || fallback,
     data: structured,
-    fieldErrors: validation.fieldErrors,
+    fieldErrors: { ...validation.fieldErrors, ...structuredFieldErrors },
     action: structured.action || payload.action || null,
     upgradeRequired: Boolean(structured.upgrade_required || code === 'upgrade_required'),
     resetAt: usage.resetAt || structured.resetAt || null,
@@ -211,10 +215,10 @@ export async function resetPasswordApi(token, newPassword) {
 
 }
 
-export async function sendMobileOtpApi(verificationToken, mobile, turnstileToken = null) {
+export async function sendMobileOtpApi(verificationToken, mobile, mobileCountry = 'IN', turnstileToken = null) {
   return apiRequest('/auth/send-otp', {
     method: 'POST',
-    body: JSON.stringify({ verificationToken, mobile, turnstileToken }),
+    body: JSON.stringify({ verificationToken, mobile, mobileCountry, turnstileToken }),
   });
 }
 

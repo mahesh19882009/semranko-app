@@ -34,8 +34,8 @@ const VARIANT_STYLES = {
     icon: 'text-sky-600',
   },
   plain: {
-    wrapper: 'border-slate-200 bg-white text-slate-500',
-    icon: 'text-slate-600',
+    wrapper: 'border-border bg-surface text-text-muted',
+    icon: 'text-text-secondary',
   },
 };
 
@@ -64,7 +64,8 @@ function Alert({
   return (
     <div
       className={`rounded-2xl border px-4 py-3 text-sm ${styles.wrapper} ${className}`}
-      role="alert"
+      role={variant === 'error' || variant === 'warning' ? 'alert' : 'status'}
+      aria-live={variant === 'error' || variant === 'warning' ? 'assertive' : 'polite'}
     >
       <div className="flex items-start gap-3">
         <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${styles.icon}`} aria-hidden="true" />

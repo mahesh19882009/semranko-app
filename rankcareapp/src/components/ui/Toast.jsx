@@ -1,5 +1,6 @@
 'use client'
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { CheckCircle2, Info, TriangleAlert, X, XCircle } from 'lucide-react';
 
 const ToastContext = createContext(null);
 
@@ -57,16 +58,16 @@ const VARIANT_STYLES = {
 };
 
 const VARIANT_ICONS = {
-  success: '✓',
-  error: '✕',
-  warning: '⚠',
-  info: 'ℹ',
+  success: CheckCircle2,
+  error: XCircle,
+  warning: TriangleAlert,
+  info: Info,
 };
 
 function ToastItem({ toast, onDismiss }) {
   const { message, variant } = toast;
   const style = VARIANT_STYLES[variant] || VARIANT_STYLES.info;
-  const icon = VARIANT_ICONS[variant] || VARIANT_ICONS.info;
+  const Icon = VARIANT_ICONS[variant] || VARIANT_ICONS.info;
 
   return (
     <div
@@ -74,8 +75,8 @@ function ToastItem({ toast, onDismiss }) {
       role="status"
       aria-live="polite"
     >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/60 text-xs font-bold">
-        {icon}
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden="true">
+        <Icon className="h-4 w-4" strokeWidth={2.25} />
       </span>
       <p className="flex-1 min-w-0">{message}</p>
       <button
@@ -83,9 +84,7 @@ function ToastItem({ toast, onDismiss }) {
         className="flex-shrink-0 rounded-lg p-1 opacity-70 hover:opacity-100 transition-opacity"
         aria-label="Dismiss notification"
       >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M3 3L11 11M11 3L3 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <X className="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
   );

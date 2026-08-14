@@ -5,7 +5,6 @@ Uses 2Factor.in as the SMS provider.
 """
 
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -19,26 +18,24 @@ from app.db.models import User
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.core.rate_limiter import consume_limit
+from app.services.phone_number_service import (
+    mask_phone_number,
+    normalize_phone_number,
+    to_provider_phone_number,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def _normalize_mobile(mobile: str) -> str:
-    """Normalize mobile number to E.164 format without leading +."""
-    cleaned = re.sub(r"[^\d]", "", mobile)
-    if cleaned.startswith("91") and len(cleaned) == 12:
-        return cleaned
-    if len(cleaned) == 10:
-        return f"91{cleaned}"
-    return cleaned
+def _normalize_mobile(mobile: str, country: str | None = None) -> str:
+    """Backward-compatible gateway to canonical country-aware normalization."""
+    return normalize_phone_number(mobile, country)
 
 
 def _mask_mobile(mobile: str) -> str:
     """Mask mobile number for logging."""
-    if len(mobile) >= 6:
-        return f"{mobile[:2]}****{mobile[-4:]}"
-    return "****"
+    return mask_phone_number(mobile)
 
 
 def _enforce_send_limits(user_id: str, mobile: str, source_ip: str | None) -> None:
@@ -58,9 +55,15 @@ def _enforce_send_limits(user_id: str, mobile: str, source_ip: str | None) -> No
             })
 
 
-def send_otp(db: Session, user_id: str, mobile: str, source_ip: str | None = None) -> dict:
+def send_otp(
+    db: Session,
+    user_id: str,
+    mobile: str,
+    source_ip: str | None = None,
+    country: str | None = None,
+) -> dict:
     """Send OTP to user's mobile number via 2Factor.in."""
-    normalized = _normalize_mobile(mobile)
+    normalized = _normalize_mobile(mobile, country)
     
     user = db.scalar(select(User).where(User.id == user_id))
     if not user:
@@ -93,8 +96,9 @@ def send_otp(db: Session, user_id: str, mobile: str, source_ip: str | None = Non
         raise HTTPException(status_code=500, detail="OTP service not configured")
     
     try:
+        provider_mobile = to_provider_phone_number(normalized)
         response = requests.get(
-            f"https://2factor.in/API/V1/{api_key}/SMS/{normalized}/AUTOGEN/OTP",
+            f"https://2factor.in/API/V1/{api_key}/SMS/{provider_mobile}/AUTOGEN/OTP",
             timeout=30,
         )
         response.raise_for_status()
@@ -119,6 +123,7 @@ def send_otp(db: Session, user_id: str, mobile: str, source_ip: str | None = Non
             "message": "OTP sent successfully",
             "session_id": result.get("SessionId"),
             "expires_in_minutes": otp_expire_minutes,
+            "masked_mobile": _mask_mobile(normalized),
         }
     except (HTTPException, ApiError):
         raise

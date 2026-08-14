@@ -140,7 +140,13 @@ def send_otp_route(
         raise HTTPException(status_code=400, detail="Mobile number is required")
     
     verify_turnstile(payload.get("turnstileToken"), client_ip(request), "otp_send")
-    result = send_otp(db, user_id, mobile, source_ip=client_ip(request))
+    result = send_otp(
+        db,
+        user_id,
+        mobile,
+        source_ip=client_ip(request),
+        country=payload.get("mobileCountry"),
+    )
     return ok("OTP sent successfully", result)
 
 

@@ -5,9 +5,12 @@ import Card from './ui/Card';
 function StatCard({ title, value, hint, icon, tone = 'brand' }) {
   const toneClasses = {
     brand: 'bg-brand-50 text-brand-700',
-    green: 'bg-emerald-50 text-emerald-700',
-    amber: 'bg-amber-50 text-amber-700',
-    red: 'bg-rose-50 text-rose-700'
+    green: 'bg-success-light text-success-dark',
+    amber: 'bg-warning-light text-warning-dark',
+    red: 'bg-danger-light text-danger-dark',
+    success: 'bg-success-light text-success-dark',
+    warning: 'bg-warning-light text-warning-dark',
+    danger: 'bg-danger-light text-danger-dark',
   };
 
   return (
@@ -20,7 +23,7 @@ function StatCard({ title, value, hint, icon, tone = 'brand' }) {
         </div>
 
         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${toneClasses[tone]}`}>
-          <FontAwesomeIcon icon={icon} />
+          <FontAwesomeIcon icon={icon} aria-hidden="true" />
         </div>
       </div>
     </Card>

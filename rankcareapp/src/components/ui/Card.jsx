@@ -17,13 +17,13 @@ function Card({
   className = '',
   padding = 'p-5',
   shadow = 'shadow-card',
-  border = 'border border-slate-200',
-  radius = 'rounded-md',
+  border = 'border border-border',
+  radius = 'rounded-xl',
   as: Component = 'div',
   ...props
 }) {
   const classes = [
-    'bg-white',
+    'bg-surface',
     radius,
     border,
     shadow,
@@ -54,7 +54,7 @@ function Card({
 function CardHeader({
   children,
   className = '',
-  border = 'border-b border-slate-200',
+  border = 'border-b border-border',
   padding = 'px-5 py-5',
   as: Component = 'div',
   ...props
@@ -119,7 +119,7 @@ function CardBody({
 function CardFooter({
   children,
   className = '',
-  border = 'border-t border-slate-200',
+  border = 'border-t border-border',
   padding = 'px-5 py-4',
   as: Component = 'div',
   ...props

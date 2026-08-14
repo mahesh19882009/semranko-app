@@ -73,6 +73,7 @@ function LoginPage() {
       const verificationToken = session?.data?.mobileVerificationToken;
       if (!verificationToken) throw new Error('Mobile verification is already complete. Please log in again.');
       sessionStorage.setItem('mobileVerificationToken', verificationToken);
+      if (session?.data?.mobileMasked) sessionStorage.setItem('mobileVerificationMasked', session.data.mobileMasked);
       navigate('/verify-mobile?source=login');
     } catch (err) {
       setError(normalizeApiError(err, 'Could not start mobile verification.').message);

@@ -4,6 +4,7 @@ import { Link, useNavigate } from "../lib/navigation";
 import { apiRequest, normalizeApiError, registerApi } from "../lib/api";
 import { clearStoredUser } from "../utils/auth";
 import TurnstileWidget from '../components/TurnstileWidget';
+import PhoneInput from '../components/PhoneInput';
 
 function RegisterPage() {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
+  const [mobileCountry, setMobileCountry] = useState("IN");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -39,6 +41,7 @@ function RegisterPage() {
         name,
         email,
         mobile,
+        mobileCountry,
         password,
         turnstileToken,
       });
@@ -46,6 +49,7 @@ function RegisterPage() {
       const verificationToken = result?.data?.mobileVerificationToken;
       if (verificationToken) {
         sessionStorage.setItem('mobileVerificationToken', verificationToken);
+        if (result?.data?.mobileMasked) sessionStorage.setItem('mobileVerificationMasked', result.data.mobileMasked);
         navigate("/verify-mobile");
       } else {
         setSuccess("Registration successful. Verify your email and mobile number before logging in.");
@@ -144,23 +148,16 @@ function RegisterPage() {
           />
           {fieldErrors.email && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.email}</p>}
 
-          <input
-            style={{
-              width: "100%",
-              padding: "14px 16px",
-              borderRadius: "10px",
-              border: "1px solid #d0d5dd",
-              fontSize: "15px"
-            }}
-            type="tel"
-            name="mobile"
-            placeholder="Mobile number"
+          <PhoneInput
             value={mobile}
-            onChange={(e) => setMobile(e.target.value)}
             required
-            autoComplete="tel"
+            disabled={loading}
+            error={fieldErrors.mobile || fieldErrors.mobileNumber}
+            onChange={({ phone, country }) => {
+              setMobile(phone);
+              setMobileCountry(country);
+            }}
           />
-          {(fieldErrors.mobile || fieldErrors.mobileNumber) && <p style={{ margin: '-8px 0 0', color: '#b91c1c', fontSize: '13px' }}>{fieldErrors.mobile || fieldErrors.mobileNumber}</p>}
 
           <div style={{ position: "relative" }}>
             <input

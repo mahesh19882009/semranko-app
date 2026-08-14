@@ -93,6 +93,22 @@ test('normalizes a FastAPI 422 response through the real request wrapper', async
   )
 })
 
+test('keeps structured country-aware mobile validation attached to the registration field', () => {
+  const normalized = normalizeApiError({
+    status: 422,
+    responseData: {
+      message: 'Enter a valid mobile number for the selected country.',
+      data: {
+        error: 'INVALID_MOBILE_NUMBER',
+        fieldErrors: { mobile: 'Enter a valid mobile number for the selected country.' },
+      },
+    },
+  })
+  assert.equal(normalized.code, 'INVALID_MOBILE_NUMBER')
+  assert.equal(normalized.fieldErrors.mobile, 'Enter a valid mobile number for the selected country.')
+  assert.equal(normalized.message, 'Enter a valid mobile number for the selected country.')
+})
+
 test('authenticated mutations use cookies and CSRF without bearer credentials', async (t) => {
   const originalFetch = globalThis.fetch
   const originalDocument = globalThis.document
