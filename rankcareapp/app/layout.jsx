@@ -13,20 +13,20 @@ const inter = Inter({
 })
 
 export const metadata = {
-  title: 'RankCare - SEO Rank Tracking',
-  description: 'Track keyword rankings, monitor competitors, and grow your organic traffic.',
-  keywords: 'SEO, keyword tracking, rank checking, competitor analysis, search engine optimization',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'https://rankcare.com'),
+  title: { default: 'RankCare | SEO rank tracking', template: '%s | RankCare' },
+  description: 'Track keyword rankings, understand search visibility, and research SEO opportunities with RankCare.',
   openGraph: {
-    title: 'RankCare - SEO Rank Tracking & Competitor Analysis',
-    description: 'Track keyword rankings, monitor competitors, and grow your organic traffic.',
+    title: 'RankCare | SEO rank tracking',
+    description: 'Track keyword rankings, understand search visibility, and research SEO opportunities.',
     type: 'website',
     url: 'https://rankcare.com',
     locale: 'en_US',
   },
   twitter: {
     card: 'summary',
-    title: 'RankCare - SEO Rank Tracking & Competitor Analysis',
-    description: 'Track keyword rankings, monitor competitors, and grow your organic traffic.',
+    title: 'RankCare | SEO rank tracking',
+    description: 'Track keyword rankings, understand search visibility, and research SEO opportunities.',
   },
   icons: {
     icon: '/favicon.svg',

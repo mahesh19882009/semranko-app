@@ -93,6 +93,22 @@ test('normalizes a FastAPI 422 response through the real request wrapper', async
   )
 })
 
+test('uses endpoint-specific, safe rate-limit messages through the real request wrapper', async (t) => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({ detail: { error: 'RATE_LIMITED' } }), {
+    status: 429,
+    headers: { 'content-type': 'application/json', 'retry-after': '90' },
+  })
+  t.after(() => { globalThis.fetch = originalFetch })
+
+  await assert.rejects(
+    apiRequest('/auth/login', { method: 'POST', body: '{}' }),
+    (error) => error.code === 'RATE_LIMITED'
+      && error.message === 'Too many login attempts. Please try again shortly. Try again in about 2 minutes.'
+      && error.retryAfter === 90,
+  )
+})
+
 test('keeps structured country-aware mobile validation attached to the registration field', () => {
   const normalized = normalizeApiError({
     status: 422,

@@ -8,6 +8,7 @@ from app.core.session import validate_session
 from app.db.session import get_db
 from app.db.models import User
 from app.core.auth_cookies import read_auth_cookies
+from app.core.config import get_settings
 
 
 def get_current_user(
@@ -53,6 +54,18 @@ def get_current_user(
 
 def db_session(db: Session = Depends(get_db)) -> Session:
     return db
+
+
+def require_admin(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+) -> User:
+    """Explicit server-side commercial-admin gate; hidden UI routes are not authority."""
+    user = db.scalar(select(User).where(User.id == current_user["id"]))
+    configured = {email.strip().lower() for email in (get_settings().ADMIN_EMAILS or "").split(",") if email.strip()}
+    if not user or not (user.isAdmin or user.email.lower() in configured):
+        raise ApiError(403, "Admin access required")
+    return user
 
 
 def verify_user_access_privileges(

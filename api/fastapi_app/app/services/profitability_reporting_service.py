@@ -15,6 +15,7 @@ from sqlalchemy import select, func
 
 from app.db.models import User, Subscription, DataForSEOCost, CreditLedger, Keyword, Project
 from app.core.config import get_settings
+from app.services.commercial_config_service import plan_definitions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -31,14 +32,14 @@ def _get_plan_revenue(db: Session, plan_key: str, days: int = 30) -> float:
         .where(Subscription.createdAt >= cutoff)
     ).all()
     
+    plan_def = plan_definitions(db).get(plan_key)
     revenue = 0.0
     for sub in subscriptions:
-        plan_def = settings.plan_config.plans.get(plan_key)
         if plan_def:
             if sub.billingCycle == "yearly":
-                revenue += plan_def.yearly_price_inr / 12
+                revenue += plan_def["yearlyPrice"] / 12
             else:
-                revenue += plan_def.monthly_price_inr
+                revenue += plan_def["monthlyPrice"]
     
     return revenue
 
@@ -161,7 +162,7 @@ def _get_credit_usage_by_plan(db: Session, plan_key: str, days: int = 30) -> dic
 
 def calculate_plan_profitability(db: Session, plan_key: str, days: int = 30) -> dict:
     """Calculate profitability metrics for a single plan."""
-    plan_def = settings.plan_config.plans.get(plan_key)
+    plan_def = plan_definitions(db).get(plan_key)
     if not plan_def:
         return {"error": f"Plan {plan_key} not found"}
     
@@ -174,12 +175,12 @@ def calculate_plan_profitability(db: Session, plan_key: str, days: int = 30) -> 
     
     return {
         "plan_key": plan_key,
-        "plan_name": plan_def.name,
-        "monthly_price_inr": plan_def.monthly_price_inr,
-        "yearly_price_inr": plan_def.yearly_price_inr,
-        "monthly_credits": plan_def.monthly_credits,
-        "keyword_limit": plan_def.keyword_limit,
-        "domain_limit": plan_def.domain_limit,
+        "plan_name": plan_def["name"],
+        "monthly_price_inr": plan_def["monthlyPrice"],
+        "yearly_price_inr": plan_def["yearlyPrice"],
+        "monthly_credits": plan_def["monthlyCredits"],
+        "keyword_limit": plan_def["keywordLimit"],
+        "domain_limit": plan_def["domain_limit"],
         "period_days": days,
         "revenue_inr": round(revenue, 2),
         "dataforseo_cost": {
@@ -217,7 +218,7 @@ def calculate_plan_profitability(db: Session, plan_key: str, days: int = 30) -> 
 def calculate_all_plans_profitability(db: Session, days: int = 30) -> dict:
     """Calculate profitability for all configured plans."""
     results = {}
-    for plan_key in settings.plan_config.plans:
+    for plan_key in plan_definitions(db):
         if plan_key == "enterprise":
             continue
         results[plan_key] = calculate_plan_profitability(db, plan_key, days)
@@ -226,7 +227,7 @@ def calculate_all_plans_profitability(db: Session, days: int = 30) -> dict:
 
 def get_profitability_summary(db: Session, days: int = 30) -> dict:
     """Get a summary of profitability across all plans."""
-    plans = settings.plan_config.plans
+    plans = plan_definitions(db)
     total_revenue = 0.0
     total_dfs_cost = 0.0
     total_gross_profit = 0.0

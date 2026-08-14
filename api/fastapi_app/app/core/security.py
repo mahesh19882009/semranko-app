@@ -162,7 +162,7 @@ def enforce_limits(resource_type: str = None):
             
             # Check specific resource limits if resource_type is provided
             if resource_type:
-                limits = get_user_plan_limits(user)
+                limits = get_user_plan_limits(user, db)
                 
                 if resource_type == 'keyword':
                     ensure_keyword_limit(db, user.id)

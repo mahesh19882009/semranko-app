@@ -1,4 +1,4 @@
-import BillingPage from '@/src/views/BillingPage'
+import { redirect } from 'next/navigation'
 
 export const metadata = {
   title: 'Billing & Invoices - RankCare',
@@ -6,5 +6,5 @@ export const metadata = {
 }
 
 export default function Page() {
-  return <BillingPage />
+  redirect('/billing')
 }

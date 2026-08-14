@@ -15,7 +15,7 @@ import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPencil, faTrash } from '@fortawesome/free-solid-svg-icons';
-import { COUNTRY_LOCATION_CODES } from '../data/locations';
+import { COUNTRY_LOCATION_CODES, getCountryCode } from '../data/locations';
 
 function ProjectsPage() {
   const dispatch = useDispatch();

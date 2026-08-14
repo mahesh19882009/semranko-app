@@ -32,6 +32,8 @@ def _plan_definition_to_dict(pd) -> dict:
         "name": pd.name,
         "monthlyPrice": pd.monthly_price_inr,
         "yearlyPrice": pd.yearly_price_inr,
+        "monthlyPriceUsd": pd.monthly_price_usd,
+        "yearlyPriceUsd": pd.yearly_price_usd,
         "domain_limit": pd.domain_limit,
         "monthlyCredits": pd.monthly_credits,
         "automaticCredits": pd.automatic_credits,
@@ -87,6 +89,8 @@ def list_available_plans() -> list[dict]:
             "name": plan["name"],
             "monthlyPrice": plan["monthlyPrice"],
             "yearlyPrice": plan["yearlyPrice"],
+            "monthlyPriceUsd": plan.get("monthlyPriceUsd", 0),
+            "yearlyPriceUsd": plan.get("yearlyPriceUsd", 0),
             "description": plan["description"],
             "highlighted": plan["highlighted"],
             "cta": plan["cta"],
@@ -142,10 +146,9 @@ def get_effective_plan_key(user: User) -> str:
     return selected if selected in PLAN_DEFINITIONS else TRIAL_PLAN_KEY
 
 
-def get_user_plan_limits(user: User) -> dict:
-    effective_plan_key = get_effective_plan_key(user)
-    plan = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
-    return get_user_plan_limits_from_plan(plan)
+def get_user_plan_limits(user: User, db: Session) -> dict:
+    from app.services.commercial_config_service import active_entitlements
+    return active_entitlements(db, user)
 
 
 def get_user_plan_limits_from_plan(plan: dict) -> dict:
@@ -242,13 +245,16 @@ def apply_credit_cycle_allocation(
     action_type: str = "monthly_refresh",
     description: str | None = None,
     related_order_id: str | None = None,
+    cycle_end: datetime | None = None,
 ) -> dict:
     """Replace expiring plan pools while preserving separately purchased credits."""
     now = now or datetime.utcnow()
     plan_key = plan_key if plan_key in PLAN_DEFINITIONS else TRIAL_PLAN_KEY
-    plan = PLAN_DEFINITIONS[plan_key]
-    total = float(plan.get("monthlyCredits", 0))
-    automatic = float(plan.get("automaticCredits", 0))
+    from app.services.commercial_config_service import create_cycle_snapshot
+    snapshot = create_cycle_snapshot(db, user, plan_key, now, cycle_end)
+    plan_name = settings.plan_config.plans[snapshot.planKey].name
+    total = float(snapshot.monthlyCredits)
+    automatic = float(snapshot.automaticCredits)
     spendable = total - automatic
 
     old_spendable = float(getattr(user, "creditBalance", 0.0) or 0.0)
@@ -283,7 +289,7 @@ def apply_credit_cycle_allocation(
         ownerId=user.id,
         amount=total,
         actionType=action_type,
-        description=description or f"Cycle credit allocation: {plan.get('name', plan_key)} ({total} total; {automatic} automatic)",
+        description=description or f"Cycle credit allocation: {plan_name} ({total} total; {automatic} automatic)",
         relatedOrderId=related_order_id,
         status="completed",
         creditsReserved=automatic,
@@ -292,7 +298,7 @@ def apply_credit_cycle_allocation(
         netCreditChange=(user.creditBalance + automatic) - (old_spendable + old_automatic),
         balanceBefore=old_spendable,
         balanceAfter=user.creditBalance,
-        planName=plan.get("name", plan_key),
+        planName=plan_name,
         creditPool="allocation",
         planCreditsChange=spendable - old_plan,
         automaticCreditsChange=automatic - old_automatic,
@@ -348,6 +354,7 @@ def reset_monthly_credits(db: Session, user: User) -> dict:
     
     return {
         "reset": True,
+        "total_allocation": allocation["total"],
         "new_balance": allocation["creditBalance"],
         "automatic_balance": allocation["automatic"],
         "plan": effective_plan_key,
@@ -388,7 +395,7 @@ def reset_due_credits_for_all_users(db: Session) -> dict:
             result = reset_monthly_credits(db, user)
             if result.get("reset"):
                 reset_count += 1
-                total_credits_reset += PLAN_DEFINITIONS[result["plan"]]["monthlyCredits"]
+                total_credits_reset += result["total_allocation"]
             else:
                 skipped_count += 1
         except Exception as exc:
@@ -484,10 +491,12 @@ def _get_warnings(db: Session, user: User, plan_def: dict) -> list[dict]:
 
 
 def build_usage_snapshot(db: Session, user: User) -> dict:
+    from app.services.commercial_config_service import plan_definitions
     effective_plan_key = get_effective_plan_key(user)
     selected_plan_key = get_plan_key(user)
-    limits = get_user_plan_limits(user)
-    plan_def = PLAN_DEFINITIONS.get(effective_plan_key, PLAN_DEFINITIONS[TRIAL_PLAN_KEY])
+    limits = get_user_plan_limits(user, db)
+    plan_def = limits
+    current_offering = plan_definitions(db).get(effective_plan_key, {})
     is_free = effective_plan_key == TRIAL_PLAN_KEY
 
     subscription = db.scalar(
@@ -497,7 +506,7 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         )
     )
 
-    automatic_allocation = float(plan_def.get("automaticCredits", 0))
+    automatic_allocation = float(limits.get("automaticCredits", 0))
     plan_spendable = float(getattr(user, "planCreditBalance", 0.0) or 0.0)
     purchased = float(getattr(user, "purchasedCreditBalance", 0.0) or 0.0)
     if round(plan_spendable + purchased, 2) != round(float(getattr(user, "creditBalance", 0.0) or 0.0), 2):
@@ -529,8 +538,8 @@ def build_usage_snapshot(db: Session, user: User) -> dict:
         "purchasedCreditsRemaining": round(purchased, 2),
         "automaticReservedAllocation": automatic_allocation,
         "automaticReservedRemaining": round(float(getattr(user, "automaticCreditBalance", 0.0) or 0.0), 2),
-        "base_price_inr": plan_def.get("monthlyPrice", 0),
-        "individual_discount_pct": plan_def.get("individual_discount_pct", 0),
+        "base_price_inr": current_offering.get("monthlyPrice", 0),
+        "individual_discount_pct": current_offering.get("individual_discount_pct", 0),
         "subscriptionStartDate": subscription.startDate.isoformat() if subscription and subscription.startDate else None,
         "subscriptionEndDate": subscription.endDate.isoformat() if subscription and subscription.endDate else None,
         "lastCreditResetAt": user.lastCreditResetAt.isoformat() if getattr(user, "lastCreditResetAt", None) else None,
@@ -575,7 +584,9 @@ def is_upgrade(current_plan: str, target_plan: str) -> bool:
 
 
 def build_downgrade_violations(db: Session, user: User, target_plan_key: str) -> list[dict]:
-    target_limits = get_user_plan_limits_from_plan(PLAN_DEFINITIONS[target_plan_key])
+    from app.services.commercial_config_service import plan_definitions
+    target_plan = plan_definitions(db)[target_plan_key]
+    target_limits = get_user_plan_limits_from_plan(target_plan)
 
     total_keywords = count_user_keywords(db, user.id)
     used_max_competitors = get_user_max_competitors_per_project(db, user.id)
@@ -599,7 +610,7 @@ def build_downgrade_violations(db: Session, user: User, target_plan_key: str) ->
             "remove": used_max_competitors - target_limits["competitorsPerProject"],
         })
 
-    target_domain_limit = PLAN_DEFINITIONS[target_plan_key].get("domain_limit", 0)
+    target_domain_limit = target_plan.get("domain_limit", 0)
     if target_domain_limit > 0 and used_projects > target_domain_limit:
         violations.append({
             "resource": "domain_limit",
@@ -612,8 +623,10 @@ def build_downgrade_violations(db: Session, user: User, target_plan_key: str) ->
 
 
 def validate_plan_change(db: Session, user: User, target_plan_key: str) -> dict:
+    from app.services.commercial_config_service import plan_definitions
+    offerings = plan_definitions(db)
     target_plan_key = (target_plan_key or "").strip().lower()
-    if target_plan_key not in PLAN_DEFINITIONS:
+    if target_plan_key not in offerings:
         raise ApiError(400, "Invalid plan")
 
     current_plan = get_plan_key(user)
@@ -630,12 +643,13 @@ def validate_plan_change(db: Session, user: User, target_plan_key: str) -> dict:
         "targetPlan": target_plan_key,
         "violations": violations,
         "usage": build_usage_snapshot(db, user)["usage"],
-        "limits": PLAN_DEFINITIONS[target_plan_key]["limits"],
+        "limits": offerings[target_plan_key]["limits"],
     }
 
 
-def get_plan_monthly_credits(plan_key: str) -> float:
-    plan = PLAN_DEFINITIONS.get(plan_key, {})
+def get_plan_monthly_credits(db: Session, plan_key: str) -> float:
+    from app.services.commercial_config_service import plan_definitions
+    plan = plan_definitions(db).get(plan_key, {})
     return float(plan.get("monthlyCredits", 0))
 
 
@@ -770,7 +784,6 @@ def reactivate_subscription(db: Session, user_id: str, plan_key: str, order_id: 
     
     now = datetime.utcnow()
     duration_days = 30
-    monthly_credits = float(PLAN_DEFINITIONS.get(plan, {}).get("limits", {}).get("monthlyCredits", 0))
     old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
     
     user.selectedPlan = plan
@@ -866,7 +879,6 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
 
     now = datetime.utcnow()
     duration_days = 30
-    monthly_credits = float(PLAN_DEFINITIONS.get(plan, {}).get("limits", {}).get("monthlyCredits", 0))
     old_balance = float(getattr(user, "creditBalance", 0.0) or 0.0)
 
     user.selectedPlan = plan
@@ -929,7 +941,7 @@ def activate_paid_plan(db: Session, user_id: str, plan_key: str) -> User:
 def ensure_domain_limit(db: Session, user_id: str) -> None:
     user = get_user_or_404(db, user_id)
     ensure_subscription_active(user)
-    limits = get_user_plan_limits(user)
+    limits = get_user_plan_limits(user, db)
     domain_limit = limits.get("domain_limit", 0)
     if domain_limit <= 0:
         return
@@ -942,7 +954,7 @@ def ensure_project_limit(db: Session, user_id: str) -> None:
     user = get_user_or_404(db, user_id)
     ensure_subscription_active(user)
     used = count_user_projects(db, user_id)
-    limits = get_user_plan_limits(user)
+    limits = get_user_plan_limits(user, db)
     domain_limit = limits.get("domain_limit", 0)
     if domain_limit <= 0:
         return
@@ -953,7 +965,7 @@ def ensure_project_limit(db: Session, user_id: str) -> None:
 def ensure_keyword_limit(db: Session, user_id: str) -> None:
     user = get_user_or_404(db, user_id)
     ensure_subscription_active(user)
-    limits = get_user_plan_limits(user)
+    limits = get_user_plan_limits(user, db)
     keyword_limit = limits.get("keywordLimit", 0)
     if keyword_limit <= 0:
         return
@@ -971,7 +983,7 @@ def ensure_keyword_limit(db: Session, user_id: str) -> None:
 def ensure_competitor_limit(db: Session, user_id: str, project_id: str) -> None:
     user = get_user_or_404(db, user_id)
     ensure_subscription_active(user)
-    limits = get_user_plan_limits(user)
+    limits = get_user_plan_limits(user, db)
     used = count_project_competitors(db, project_id)
     allowed = limits["competitorsPerProject"]
     if used >= allowed:
@@ -980,7 +992,7 @@ def ensure_competitor_limit(db: Session, user_id: str, project_id: str) -> None:
 
 def get_user_plan_limits_by_id(db: Session, user_id: str) -> dict:
     user = get_user_or_404(db, user_id)
-    return get_user_plan_limits(user)
+    return get_user_plan_limits(user, db)
 
 
 def activate_keyword(db: Session, user_id: str, keyword_id: str) -> Keyword:

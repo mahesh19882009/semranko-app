@@ -14,7 +14,7 @@ from app.schemas.credit import CreditPurchaseRequest, CreditPurchaseResponse, Cr
 from app.schemas.billing import BillingHistoryItem, BillingHistoryResponse, UsageLogResponse
 from app.services.payment_service import create_order, verify_payment_signature, activate_subscription
 from app.services.credit_service import add_purchased_credits, get_credit_balance, create_pending_ledger_entry, finalize_pending_ledger_entry
-from app.db.models import User, PaymentOrder, CreditLedger
+from app.db.models import User, PaymentOrder, CreditLedger, TopUpPackage
 from app.services import email_service
 from app.services.plan_service import PLAN_DEFINITIONS
 
@@ -163,12 +163,14 @@ async def verify_credit_payment(
 
     # Calculate credits based on multiplier (stored in planId) for credit top-ups
     if payment_order.purchaseType == "CREDIT_TOP_UP":
-        from app.core.config import get_settings
-        settings = get_settings()
-        multiplier = getattr(payment_order, "planId", 0)
-        credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
-        credits_to_add = int(multiplier) * credits_per_unit
-        logger.info(f"[verify-credit-payment] CREDIT_TOP_UP: multiplier={multiplier}, credits_per_unit={credits_per_unit}, credits_to_add={credits_to_add}")
+        package = db.scalar(select(TopUpPackage).where(TopUpPackage.id == payment_order.topUpPackageId)) if payment_order.topUpPackageId else None
+        if package is None:
+            # Historical multiplier orders retain their former interpretation.
+            from app.core.config import get_settings
+            credits_to_add = int(payment_order.planId) * get_settings().CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
+        else:
+            credits_to_add = package.credits
+        logger.info(f"[verify-credit-payment] CREDIT_TOP_UP credits_to_add={credits_to_add}")
     else:
         credits_to_add = payment_order.credit_applied_paise / 100.0 if payment_order.credit_applied_paise else 0
         logger.info(f"[verify-credit-payment] Other payment type: credits_to_add={credits_to_add}")

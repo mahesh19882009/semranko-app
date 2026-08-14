@@ -2,19 +2,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "../lib/navigation";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { ChevronDown, CircleAlert, LogOut, Menu, Settings, X } from 'lucide-react';
 import { getStoredUser, logoutUser } from "../utils/auth";
 import { logoutApi } from '../lib/api';
 import { formatDate } from "../utils/date";
-import {
-  faSearch,
-  faChevronDown,
-  faBars,
-  faRightFromBracket,
-  faGear,
-  faExclamationTriangle,
-  faXmark,
-} from "@fortawesome/free-solid-svg-icons";
 import { setSelectedProjectId } from "../features/projects/projectsSlice";
 import { fetchSubscriptionStatus } from "../features/subscription/subscriptionSlice";
 
@@ -111,7 +102,7 @@ function Topbar({ onToggleSidebar }) {
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <FontAwesomeIcon icon={faExclamationTriangle} className="text-amber-600" />
+              <CircleAlert className="h-4 w-4 text-warning-dark" aria-hidden="true" />
               <p className="text-sm font-medium text-amber-800">{bannerMessage}</p>
             </div>
             <div className="flex items-center gap-3">
@@ -127,9 +118,10 @@ function Topbar({ onToggleSidebar }) {
               </button>
               <button
                 onClick={() => setSubscriptionBannerOpen(false)}
-                className="text-amber-600 hover:text-amber-800"
+                className="rounded-md text-warning-dark hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-warning"
+                aria-label="Dismiss subscription notice"
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <X className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -142,13 +134,14 @@ function Topbar({ onToggleSidebar }) {
           <div className="flex items-center gap-3">
             <button
               onClick={onToggleSidebar}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-surface text-text-secondary focus:outline-none focus:ring-4 focus:ring-brand-100"
+              aria-label="Toggle navigation"
             >
-              <FontAwesomeIcon icon={faBars} />
+              <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
 
             <div>
-              <p className="text-xs uppercase tracking-[0.24em text-slate-900">
+              <p className="text-xs uppercase tracking-[0.24em] text-text-muted">
                 Selected project
               </p>
 
@@ -189,11 +182,7 @@ function Topbar({ onToggleSidebar }) {
                 <p className="text-xs text-slate-500">{userEmail}</p>
               </div>
 
-              <FontAwesomeIcon
-                icon={faChevronDown}
-                className={`hidden text-xs text-slate-400 transition sm:block ${profileOpen ? "rotate-180" : ""
-                  }`}
-              />
+              <ChevronDown className={`hidden h-4 w-4 text-text-muted transition sm:block ${profileOpen ? "rotate-180" : ""}`} aria-hidden="true" />
             </button>
 
             {profileOpen && (
@@ -214,10 +203,7 @@ function Topbar({ onToggleSidebar }) {
                     onClick={handleSettingsClick}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100 hover:text-slate-900"
                   >
-                    <FontAwesomeIcon
-                      icon={faGear}
-                      className="w-4 text-slate-400"
-                    />
+                    <Settings className="h-4 w-4 text-text-muted" aria-hidden="true" />
                     <span>Settings</span>
                   </button>
 
@@ -228,10 +214,7 @@ function Topbar({ onToggleSidebar }) {
                     onClick={handleLogout}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-rose-600 transition hover:bg-rose-50"
                   >
-                    <FontAwesomeIcon
-                      icon={faRightFromBracket}
-                      className="w-4"
-                    />
+                    <LogOut className="h-4 w-4" aria-hidden="true" />
                     <span>Logout</span>
                   </button>
                 </div>

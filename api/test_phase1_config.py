@@ -88,7 +88,8 @@ class TestPlanConfig:
     def test_existing_values_preserved(self):
         starter = settings.plan_config.plans["starter"]
         assert starter.monthly_price_inr == 999
-        assert starter.yearly_price_inr == 10789
+        assert starter.yearly_price_inr == 10989
+        assert starter.yearly_price_inr == starter.monthly_price_inr * 11
         assert starter.domain_limit == 1
         assert starter.keyword_limit == 100
         assert starter.monthly_credits == 8000

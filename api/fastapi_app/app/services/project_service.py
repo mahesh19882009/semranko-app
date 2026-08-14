@@ -1,5 +1,5 @@
 import json
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
@@ -57,7 +57,19 @@ def get_projects(db: Session, user_id: str) -> list[dict]:
     projects = db.scalars(
         select(Project).where(Project.userId == user_id).order_by(desc(Project.createdAt))
     ).all()
-    return [model_to_dict(project) for project in projects]
+    # A grouped aggregate avoids an extra keyword request for every project card.
+    keyword_counts = dict(db.execute(
+        select(Keyword.projectId, func.count(Keyword.id))
+        .where(Keyword.userId == user_id, Keyword.deletedAt.is_(None))
+        .group_by(Keyword.projectId)
+    ).all())
+    return [
+        {
+            **model_to_dict(project),
+            "keywordCount": int(keyword_counts.get(project.id, 0)),
+        }
+        for project in projects
+    ]
 
 
 def get_project_by_id(db: Session, user_id: str, project_id: str) -> dict:

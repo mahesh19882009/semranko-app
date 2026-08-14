@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import AppLayout from '@/src/components/AppLayout'
 import { clearStoredUser, setStoredUser } from '@/src/utils/auth'
 import { apiRequest } from '@/src/lib/api'
+import { LoadingState } from '@/src/components/ui/StateView'
 
 export default function AppLayoutWrapper({ children, params }) {
   use(params)
@@ -45,7 +46,11 @@ export default function AppLayoutWrapper({ children, params }) {
   }, [authChecked, authenticated, user, router])
 
   if (!authChecked || !authenticated) {
-    return null
+    return (
+      <main className="grid min-h-screen place-items-center bg-surface-subtle px-4">
+        <LoadingState title="Opening your workspace" description="Checking your secure session." className="w-full max-w-md" />
+      </main>
+    )
   }
 
   return <AppLayout>{children}</AppLayout>

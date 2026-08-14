@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.services.dataforseo_client import LOCATION_MAP, _log_dataforseo_cost, _build_serp_cache_key, _set_cached_serp
 from app.services.payment_service import razorpay_client
-from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword, RankResult, Project, AsyncTaskQueue, SerpFeature, TrackedKeyword, PendingWebhookCredit, RefreshJob, ProcessingJob
+from app.db.models import User, PaymentOrder, Subscription, CreditLedger, Keyword, RankResult, Project, AsyncTaskQueue, SerpFeature, TrackedKeyword, PendingWebhookCredit, RefreshJob, ProcessingJob, TopUpPackage
 from app.db.session import SessionLocal
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ID_TO_KEY
 from app.services import email_service
@@ -127,9 +127,8 @@ async def razorpay_webhook(request: Request):
             return {"status": "ok"}
 
         if is_credit_top_up:
-            multiplier = getattr(payment_order, "planId", 0)
-            credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
-            credits_to_add = int(multiplier) * credits_per_unit
+            package = db.scalar(select(TopUpPackage).where(TopUpPackage.id == payment_order.topUpPackageId)) if payment_order.topUpPackageId else None
+            credits_to_add = package.credits if package else int(payment_order.planId) * settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
             payment_order.status = "paid"
             payment_order.razorpayPaymentId = payment_id
             db.add(payment_order)

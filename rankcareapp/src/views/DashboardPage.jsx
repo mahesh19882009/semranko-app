@@ -1,316 +1,121 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import {
-  faArrowTrendUp,
-  faChartSimple,
-  faFolderOpen,
-  faWallet,
-} from '@fortawesome/free-solid-svg-icons';
-import StatCard from '../components/StateCard';
+
+import { useCallback, useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
+import { BarChart3, CreditCard, FolderKanban, Gauge, KeyRound, Sparkles } from 'lucide-react';
 import Card from '../components/ui/Card';
-import { useNavigate } from '../lib/navigation';
-import { Chart } from 'primereact/chart';
-import { apiRequest } from '../lib/api';
-import {
-  selectStats,
-  selectRankTrend,
-  selectSelectedProject,
-  selectDashboardLoading,
-  selectDashboardError,
-  selectProjectsList,
-} from '../features/dashboard/dashboardSelectors';
-import {
-  fetchKeywordsByProject,
-  fetchRankingsByProject,
-  resetKeywordsForProjectChange,
-} from '../features/keywords/keywordsSlice';
-import {
-  fetchDashboardByProject,
-  resetDashboard,
-} from '../features/dashboard/dashboardSlice';
+import Button from '../components/ui/Button';
+import { ErrorState } from '../components/ui/StateView';
+import { Link } from '../lib/navigation';
+import { apiRequest, normalizeApiError } from '../lib/api';
+import { formatNumber, formatResetDate } from '../utils/formatters';
 
-function DashboardPage() {
-  const dispatch = useDispatch();
+function MetricCard({ icon: Icon, label, value, hint, loading = false }) {
+  return (
+    <Card padding="p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-secondary">{label}</p>
+          {loading ? <div className="mt-3 h-8 w-20 animate-pulse rounded bg-surface-muted" /> : <p className="mt-3 text-3xl font-bold tracking-tight text-text-primary">{value}</p>}
+          <p className="mt-2 text-sm text-text-muted">{hint}</p>
+        </div>
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700"><Icon className="h-5 w-5" aria-hidden="true" /></div>
+      </div>
+    </Card>
+  );
+}
 
-  const stats = useSelector(selectStats);
-  const trend = useSelector(selectRankTrend);
-  const project = useSelector(selectSelectedProject);
-  const allProjects = useSelector(selectProjectsList)
-  const loading = useSelector(selectDashboardLoading);
-  const error = useSelector(selectDashboardError);
-  const selectedProjectId = useSelector((state) => state.projects.selectedProjectId);
-  const pricingCurrent = useSelector((state) => state.pricing.current);
-  const creditBalance = pricingCurrent?.spendableCreditsRemaining ?? 0;
+function FeatureUsage({ label, usage, loading }) {
+  const value = usage ? `${usage.used} / ${usage.limit}` : '—';
+  return <MetricCard icon={Gauge} label={label} value={value} loading={loading} hint={usage ? `${usage.remaining} remaining this billing cycle` : 'Usage unavailable'} />;
+}
 
+export default function DashboardPage() {
+  const projects = useSelector((state) => state.projects.list || []);
+  const projectsLoading = useSelector((state) => state.projects.loading);
+  const pricing = useSelector((state) => state.pricing.current);
+  const pricingLoading = useSelector((state) => state.pricing.loadingCurrent);
   const [overview, setOverview] = useState(null);
-  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewLoading, setOverviewLoading] = useState(true);
   const [overviewError, setOverviewError] = useState(null);
 
-  useEffect(() => {
-    if (!selectedProjectId) {
-      dispatch(resetKeywordsForProjectChange(null));
-      dispatch(resetDashboard());
-      return;
-    }
-
-    dispatch(resetKeywordsForProjectChange(selectedProjectId));
-    dispatch(fetchKeywordsByProject(selectedProjectId));
-    dispatch(fetchRankingsByProject(selectedProjectId));
-    dispatch(fetchDashboardByProject(selectedProjectId));
-  }, [dispatch, selectedProjectId]);
-
-  useEffect(() => {
-    let cancelled = false;
+  const loadOverview = useCallback(async () => {
     setOverviewLoading(true);
     setOverviewError(null);
-
-    apiRequest('/dashboard/overview')
-      .then((response) => {
-        if (!cancelled) {
-          setOverview(response?.data || null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setOverviewError(err.message || 'Failed to load overview');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setOverviewLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const response = await apiRequest('/dashboard/overview');
+      setOverview(response?.data || null);
+    } catch (error) {
+      setOverviewError(normalizeApiError(error, 'Failed to load your account overview.'));
+    } finally {
+      setOverviewLoading(false);
+    }
   }, []);
 
-  const chartData = useMemo(() => {
-    if (!overview?.chart_data) return null;
+  useEffect(() => { loadOverview(); }, [loadOverview]);
 
-    const { labels, positions, credits } = overview.chart_data;
-
-    const hasPositionData = positions && positions.some(p => p !== null && p !== undefined);
-
-    if (!labels || labels.length === 0) return null;
-
-    const datasets = [];
-
-    if (hasPositionData) {
-      datasets.push({
-        type: 'line',
-        label: 'Average Position',
-        data: positions,
-        borderColor: '#3B82F6',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        yAxisID: 'y',
-        tension: 0,
-        fill: true,
-      });
-    }
-
-    if (credits && credits.some(c => c > 0)) {
-      datasets.push({
-        type: 'line',
-        label: 'Credit Usage',
-        data: credits,
-        yAxisID: 'y1',
-        fill: true,
-        borderColor: '#ffa726cc',
-        tension: 0,
-        backgroundColor: '#ffa72633'
-      });
-    }
-
-    if (datasets.length === 0) return null;
-
-    return {
-      labels,
-      datasets,
-    };
-  }, [overview]);
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      mode: 'index',
-      intersect: false,
-    },
-    plugins: {
-      legend: { position: 'top' },
-      tooltip: {
-        callbacks: {
-          label: function (context) {
-            let label = context.dataset.label || '';
-            if (label) label += ': ';
-            if (context.parsed.y !== null) {
-              label += context.parsed.y;
-              label += context.dataset.yAxisID === 'y' ? ' (Pos)' : ' (Credits)';
-            }
-            return label;
-          }
-        }
-      }
-    },
-    scales: {
-      x: { grid: { display: false } },
-      y: {
-        type: 'linear',
-        display: true,
-        position: 'left',
-        title: { display: true, text: 'Average Position' },
-        reverse: true,
-        grid: { color: 'rgba(0, 0, 0, 0.05)' },
-        min: 0,
-      },
-      y1: {
-        type: 'linear',
-        display: true,
-        position: 'right',
-        title: { display: true, text: 'Credit Usage' },
-        grid: { drawOnChartArea: false },
-        beginAtZero: true,
-      },
-    },
-  };
-
-  const keywordPositionDistribution = useMemo(() => {
-    const keywords = overview?.keywords || [];
-    if (!keywords.length) {
-      return { labels: ['No data'], datasets: [{ data: [1], backgroundColor: ['#E2E8F0'], borderWidth: 0 }] };
-    }
-    const top3 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank <= 3).length;
-    const top10 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 3 && kw.current_rank <= 10).length;
-    const top50 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 10 && kw.current_rank <= 50).length;
-    const top100 = keywords.filter((kw) => kw.current_rank != null && kw.current_rank > 50 && kw.current_rank <= 100).length;
-    const notRanking = keywords.filter((kw) => kw.current_rank == null || kw.current_rank === undefined).length;
-    return {
-      labels: ['Top 3', 'Top 10', '11–50', '51–100', 'Not Ranking'],
-      datasets: [
-        {
-          data: [top3, top10, top50, top100, notRanking],
-          backgroundColor: ['#10B981', '#3B82F6', '#6366F1', '#F59E0B', '#94A3B8'],
-          borderWidth: 0,
-          hoverOffset: 4,
-        },
-      ],
-    };
-  }, [overview]);
-
-  const keywordPositionOptions = useMemo(() => ({
-    cutout: '65%',
-    plugins: {
-      legend: {
-        position: 'bottom',
-        labels: {
-          usePointStyle: true,
-          padding: 16,
-          font: { size: 12 },
-        },
-      },
-      tooltip: {
-        callbacks: {
-          label: (context) => {
-            const total = context.dataset.data.reduce((a, b) => a + b, 0);
-            const value = context.parsed;
-            const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-            return ` ${context.label}: ${value} (${percentage}%)`;
-          },
-        },
-      },
-    },
-    responsive: true,
-    maintainAspectRatio: false,
-  }), []);
+  const usage = pricing?.usage || overview?.usage?.usage || {};
+  const limits = pricing?.limits || overview?.usage?.limits || {};
+  const featureUsage = pricing?.featureUsage || overview?.usage?.featureUsage || {};
+  const projectCount = overview?.projects_count ?? usage.projects ?? projects.length;
+  const keywordCount = overview?.tracked_keywords_count ?? usage.keywords ?? 0;
+  const keywordLimit = limits.keywordLimit;
+  const planName = pricing?.effectivePlan === 'free_trial' ? 'Free' : (pricing?.effectivePlan || pricing?.plan || '—');
+  const spendable = pricing?.spendableCreditsRemaining;
 
   return (
     <div className="space-y-6">
       <Card padding="p-6">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-xl font-bold uppercase text-brand-700">
-              Account overview
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              Monitor your account-level projects, rankings, and credit usage.
-            </p>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-brand-700">Account overview</p>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-text-primary">Your RankCare workspace</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">Account-wide capacity, credits, and the keyword coverage currently available to your team.</p>
           </div>
+          <Link to="/billing"><Button>Manage billing</Button></Link>
         </div>
       </Card>
 
-      {error && (
-        <Card padding="p-6 text-center" border="border-rose-200" className="bg-rose-50/70">
-          <h3 className="text-lg font-semibold text-slate-900">Dashboard failed to load</h3>
-          <p className="mt-2 text-sm text-slate-600">{error?.message || error}</p>
-        </Card>
-      )}
+      {overviewError ? <ErrorState title="Account overview unavailable" description={overviewError.message} onRetry={loadOverview} /> : null}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          title="Total Projects"
-          value={allProjects ? allProjects.length : '-'}
-          hint={overviewLoading ? 'Loading...' : ''}
-          icon={faFolderOpen}
-        />
-        <StatCard
-          title="Tracked keywords"
-          value={(overview?.tracked_keywords_count ?? stats.totalKeywords).toLocaleString('en-US')}
-          hint={overviewLoading ? 'Loading...' : 'Active keywords'}
-          icon={faChartSimple}
-        />
-        <StatCard
-          title="Average rank"
-          value={overview?.average_rank ? `#${overview.average_rank}` : '-'}
-          hint={overview?.average_rank ? 'Current average' : 'No rank data yet'}
-          icon={faArrowTrendUp}
-          tone="green"
-        />
-        <StatCard
-          title="Spendable credits"
-          value={creditBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          hint="For optional actions; automatic tracking is reserved separately"
-          icon={faWallet}
-          tone="purple"
-        />
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Account metrics">
+        <MetricCard icon={FolderKanban} label="Projects" value={`${formatNumber(projectCount)} / ${limits.domain_limit ?? '—'}`} loading={overviewLoading || projectsLoading || pricingLoading} hint="Projects in your account" />
+        <MetricCard icon={KeyRound} label="Tracked keywords" value={keywordLimit != null ? `${formatNumber(keywordCount)} / ${formatNumber(keywordLimit)}` : formatNumber(keywordCount)} loading={overviewLoading || pricingLoading} hint={`${formatNumber(overview?.active_keywords_count ?? usage.activeKeywords ?? 0)} active · ${formatNumber(overview?.inactive_keywords_count ?? 0)} inactive`} />
+        <MetricCard icon={CreditCard} label="Spendable credits" value={spendable != null ? formatNumber(spendable) : '—'} loading={pricingLoading} hint="Optional actions only" />
+        <MetricCard icon={Sparkles} label="AIO coverage" value={formatNumber(overview?.aio_keywords_count ?? 0)} loading={overviewLoading} hint="Tracked keywords with an AI Overview" />
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.5fr,1fr]">
-        <article className="rounded-md border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="flex items-start justify-between gap-4">
+      <section className="grid gap-4 lg:grid-cols-3" aria-label="Paid feature usage">
+        <FeatureUsage label="Manual Refresh" usage={featureUsage.manualRefresh} loading={pricingLoading} />
+        <FeatureUsage label="Keyword Research" usage={featureUsage.keywordResearch} loading={pricingLoading} />
+        <FeatureUsage label="Competitor Spy" usage={featureUsage.competitorSpy} loading={pricingLoading} />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[1.25fr,1fr]">
+        <Card padding="p-6">
+          <div className="flex items-start gap-3">
+            <div className="rounded-xl bg-brand-50 p-2 text-brand-700"><BarChart3 className="h-5 w-5" aria-hidden="true" /></div>
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Position & Credit Tracking</h3>
-              <p className="mt-1 text-sm text-slate-500">Last 7 days activity.</p>
+              <h2 className="text-lg font-semibold text-text-primary">Ranking snapshot</h2>
+              <p className="mt-1 text-sm text-text-secondary">Only current, account-wide ranking data is shown here.</p>
             </div>
           </div>
-          <div className="mt-6">
-            {chartData ? (
-              <Chart type="line" data={chartData} options={chartOptions} />
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-500">
-                <span className="mb-2 text-xl">📉</span>
-                <p>No historical ranking data yet.</p>
-                <p className="text-xs mt-1">Run a tracking job to see trends.</p>
-              </div>
-            )}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl bg-surface-subtle p-4"><p className="text-sm text-text-secondary">Average position</p><p className="mt-2 text-2xl font-bold text-text-primary">{overview?.average_rank ? `#${overview.average_rank}` : '—'}</p></div>
+            <div className="rounded-xl bg-surface-subtle p-4"><p className="text-sm text-text-secondary">Active keyword coverage</p><p className="mt-2 text-2xl font-bold text-text-primary">{formatNumber(overview?.active_keywords_count ?? usage.activeKeywords ?? 0)}</p></div>
           </div>
-        </article>
-        <article className="rounded-md border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Keyword Distribution</h3>
-              <p className="mt-1 text-sm text-slate-500">Ranking positions across all keywords.</p>
-            </div>
-          </div>
-          <div className="mt-6">
-            <Chart type="doughnut" data={keywordPositionDistribution} options={keywordPositionOptions} />
-          </div>
-        </article>
+          <p className="mt-4 text-xs leading-5 text-text-muted">Historical movement is not displayed until a reliable account-level series is available; no derived movement is invented here.</p>
+        </Card>
+        <Card padding="p-6">
+          <h2 className="text-lg font-semibold text-text-primary">Plan & reset</h2>
+          <dl className="mt-5 space-y-4 text-sm">
+            <div className="flex justify-between gap-4"><dt className="text-text-secondary">Current plan</dt><dd className="font-semibold capitalize text-text-primary">{planName}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-text-secondary">Next credit reset</dt><dd className="font-semibold text-text-primary">{pricing?.nextCreditResetAt ? formatResetDate(pricing.nextCreditResetAt) : '—'}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="text-text-secondary">Automatic tracking</dt><dd className="font-semibold text-text-primary">{pricing?.automaticReservedRemaining != null ? `${formatNumber(pricing.automaticReservedRemaining)} reserved` : '—'}</dd></div>
+            {pricing?.pendingPlanChange ? <div className="rounded-lg bg-warning-light px-3 py-2 text-warning-dark">Pending plan change: <span className="font-semibold capitalize">{pricing.pendingPlanChange}</span></div> : null}
+          </dl>
+        </Card>
       </section>
     </div>
   );
 }
-
-export default DashboardPage;

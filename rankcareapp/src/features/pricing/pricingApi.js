@@ -25,14 +25,14 @@ export const changePlanApi = async (plan) => {
 };
 
 // Payment APIs
-export const createPaymentOrderApi = async (planId, amount) => {
-  const response = await apiRequest(`/payments/create-order?plan_id=${planId}&amount=${amount}`, {
+export const createPaymentOrderApi = async (planId, billingCycle = 'monthly', currency = 'INR') => {
+  const response = await apiRequest(`/payments/create-order?plan_id=${planId}&billing_cycle=${encodeURIComponent(billingCycle)}&currency=${encodeURIComponent(currency)}`, {
     method: "POST",
   });
   return response || null;
 };
 
-export const verifyPaymentApi = async (orderId, paymentId, signature, planId, creditApplied = 0) => {
+export const verifyPaymentApi = async (orderId, paymentId, signature, planId, creditApplied = 0, billingCycle = 'monthly') => {
   const response = await apiRequest("/payments/verify-payment", {
     method: "POST",
     body: JSON.stringify({
@@ -41,6 +41,7 @@ export const verifyPaymentApi = async (orderId, paymentId, signature, planId, cr
       razorpay_signature: signature,
       plan_id: planId,
       credit_applied: creditApplied,
+      billing_cycle: billingCycle,
     }),
   });
   return response || null;
@@ -72,8 +73,13 @@ export const createCreditPurchaseOrderApi = async (credits) => {
   return response.data || null;
 };
 
-export const createCreditTopUpOrderApi = async (multiplier) => {
-  const response = await apiRequest(`/payments/create-top-up-order?multiplier=${multiplier}`, {
+export const fetchTopUpPackagesApi = async () => {
+  const response = await apiRequest('/pricing/top-up-packages');
+  return response.data || [];
+};
+
+export const createCreditTopUpOrderApi = async (packageId, currency = 'INR') => {
+  const response = await apiRequest(`/payments/create-top-up-order?package_id=${encodeURIComponent(packageId)}&currency=${currency}`, {
     method: "POST",
   });
   return response || null;

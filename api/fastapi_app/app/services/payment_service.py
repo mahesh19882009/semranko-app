@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.models import User, PaymentOrder, Subscription, CreditLedger
 from app.core.config import get_settings
 from app.services.plan_service import PLAN_DEFINITIONS, PLAN_ORDER, set_plan_anniversary, is_upgrade, is_downgrade, get_plan_key, _record_subscription_ledger, get_user_plan_limits_from_plan, apply_credit_cycle_allocation
+from app.services.commercial_config_service import plan_definitions
 from app.services import email_service
 from datetime import datetime, timedelta
 from sqlalchemy import select
@@ -23,7 +24,7 @@ razorpay_client = razorpay.Client(
 
 def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") -> Optional[Dict[str, Any]]:
     """
-    Get plan details by ID from PLAN_DEFINITIONS
+    Get current Admin-backed plan details by stable plan ID.
     
     Args:
         db: Database session (not used but kept for consistency)
@@ -33,14 +34,12 @@ def get_plan_by_id(db: Session, plan_id: int, billing_cycle: str = "monthly") ->
     Returns:
         Plan details or None if invalid plan_id
     """
-    from app.services.plan_service import PLAN_DEFINITIONS
-    
     plan_keys = ["starter", "pro", "agency", "enterprise"]
     if plan_id < 0 or plan_id >= len(plan_keys):
         return None
     
     plan_key = plan_keys[plan_id]
-    plan = PLAN_DEFINITIONS.get(plan_key)
+    plan = plan_definitions(db).get(plan_key)
     
     if not plan:
         return None
@@ -208,7 +207,7 @@ def activate_subscription(
     if not plan:
         raise Exception("Plan not found")
     
-    user = db.scalar(select(User).where(User.id == user_id))
+    user = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if not user:
         raise Exception("User not found")
 
@@ -225,7 +224,7 @@ def activate_subscription(
                 f"Please cancel the pending change or pay for {pending_plan}."
             )
     
-    order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id))
+    order = db.scalar(select(PaymentOrder).where(PaymentOrder.razorpayOrderId == order_id).with_for_update())
     if order and order.status == "paid":
         existing_subscription = db.scalar(
             select(Subscription).where(
@@ -266,8 +265,6 @@ def activate_subscription(
     effective_plan_key = plan["key"]
     now = datetime.utcnow()
     duration_days = plan["duration_days"]
-    monthly_credits = float(PLAN_DEFINITIONS.get(effective_plan_key, {}).get("limits", {}).get("monthlyCredits", 0))
-    
     current_plan_key = get_plan_key(user)
     is_same_plan = existing_subscription is not None and current_plan_key == effective_plan_key
     is_renewal = is_same_plan
@@ -316,6 +313,7 @@ def activate_subscription(
         db, user, effective_plan_key, now=now, action_type="cycle_allocation",
         description=f"Subscription cycle allocation: {plan['name']} (Order {order_id})",
         related_order_id=order_id,
+        cycle_end=now + timedelta(days=duration_days),
     )
     db.refresh(user)
     

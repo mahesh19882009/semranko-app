@@ -9,8 +9,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
-from app.db.models import FeatureUsage, FeatureUsageReservation, Subscription, User
-from app.services.plan_service import get_effective_plan_key, get_user_or_404, PLAN_DEFINITIONS
+from app.db.models import FeatureUsage, FeatureUsageReservation, Subscription, SubscriptionEntitlementSnapshot, User
+from app.services.plan_service import get_effective_plan_key, get_user_or_404
 
 
 FEATURE_LIMIT_KEYS = {
@@ -23,6 +23,11 @@ UPGRADE_MESSAGE = "This feature is available on paid plans. Upgrade to continue.
 
 
 def _billing_cycle(db: Session, user: User) -> tuple[datetime, datetime]:
+    snapshot = db.scalars(select(SubscriptionEntitlementSnapshot).where(
+        SubscriptionEntitlementSnapshot.userId == user.id,
+    ).order_by(SubscriptionEntitlementSnapshot.cycleStart.desc()).limit(1)).first()
+    if snapshot and snapshot.cycleEnd:
+        return snapshot.cycleStart, snapshot.cycleEnd
     subscription = db.scalar(
         select(Subscription)
         .where(Subscription.userId == user.id, Subscription.isActive == True)
@@ -37,10 +42,10 @@ def _billing_cycle(db: Session, user: User) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=30)
 
 
-def _limit_for(user: User, feature: str) -> tuple[str, int]:
+def _limit_for(db: Session, user: User, feature: str) -> tuple[str, int]:
     plan_key = get_effective_plan_key(user)
-    plan = PLAN_DEFINITIONS.get(plan_key, PLAN_DEFINITIONS["free_trial"])
-    return plan_key, int(plan.get(FEATURE_LIMIT_KEYS[feature], 0) or 0)
+    from app.services.commercial_config_service import active_entitlements
+    return plan_key, int(active_entitlements(db, user).get(FEATURE_LIMIT_KEYS[feature], 0) or 0)
 
 
 def _metadata(usage: FeatureUsage | None, limit: int, reset_at: datetime) -> dict:
@@ -57,7 +62,7 @@ def _metadata(usage: FeatureUsage | None, limit: int, reset_at: datetime) -> dic
 
 def get_feature_usage(db: Session, user_id: str, feature: str) -> dict:
     user = get_user_or_404(db, user_id)
-    _, limit = _limit_for(user, feature)
+    _, limit = _limit_for(db, user, feature)
     cycle_start, cycle_end = _billing_cycle(db, user)
     usage = db.scalar(
         select(FeatureUsage).where(
@@ -71,7 +76,7 @@ def get_feature_usage(db: Session, user_id: str, feature: str) -> dict:
 
 def ensure_feature_available(db: Session, user_id: str, feature: str) -> dict:
     user = get_user_or_404(db, user_id)
-    plan_key, limit = _limit_for(user, feature)
+    plan_key, limit = _limit_for(db, user, feature)
     metadata = get_feature_usage(db, user_id, feature)
     if plan_key == "free_trial" or limit <= 0:
         raise ApiError(403, UPGRADE_MESSAGE, {
@@ -90,7 +95,7 @@ def reserve_feature_usage(db: Session, user_id: str, feature: str, units: int, r
         raise ValueError("Allowance reservation units must be positive")
 
     user = get_user_or_404(db, user_id)
-    plan_key, limit = _limit_for(user, feature)
+    plan_key, limit = _limit_for(db, user, feature)
     cycle_start, cycle_end = _billing_cycle(db, user)
     if plan_key == "free_trial" or limit <= 0:
         raise ApiError(403, UPGRADE_MESSAGE, {
@@ -176,7 +181,7 @@ def finalize_feature_usage(db: Session, reference: str, consumed_units: int) -> 
         raise ApiError(404, "Feature usage reservation not found")
     usage = db.scalar(select(FeatureUsage).where(FeatureUsage.id == reservation.usageId).with_for_update())
     if reservation.status != "pending":
-        return _metadata(usage, _limit_for(get_user_or_404(db, usage.userId), usage.feature)[1], usage.cycleEnd)
+        return _metadata(usage, _limit_for(db, get_user_or_404(db, usage.userId), usage.feature)[1], usage.cycleEnd)
 
     consumed = max(0, min(int(consumed_units), int(reservation.units)))
     usage.reservedUnits = max(0, int(usage.reservedUnits) - int(reservation.units))
@@ -185,7 +190,7 @@ def finalize_feature_usage(db: Session, reference: str, consumed_units: int) -> 
     reservation.status = "completed" if consumed else "released"
     db.add_all([usage, reservation])
     db.commit()
-    limit = _limit_for(get_user_or_404(db, usage.userId), usage.feature)[1]
+    limit = _limit_for(db, get_user_or_404(db, usage.userId), usage.feature)[1]
     return _metadata(usage, limit, usage.cycleEnd)
 
 

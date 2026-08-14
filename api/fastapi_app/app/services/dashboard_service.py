@@ -73,7 +73,7 @@ def build_competitor_summary(competitors: List[Any], keywords: List[Keyword], pr
 
 def get_project_dashboard(db: Session, user_id: str, project_id: str) -> dict:
     user = get_user_or_404(db, user_id)
-    limits = get_user_plan_limits(user)
+    limits = get_user_plan_limits(user, db)
     project = ensure_project_access(db, user_id, project_id)
     keywords = db.scalars(
         select(Keyword).where(Keyword.projectId == project_id)
@@ -108,19 +108,28 @@ def get_dashboard_overview(db: Session, user_id: str) -> dict:
     Get dashboard overview using Keyword data.
     """
     user = get_user_or_404(db, user_id)
+    projects_count = db.scalar(
+        select(func.count(Project.id)).where(Project.userId == user_id)
+    ) or 0
 
     keywords = db.scalars(
         select(Keyword).join(Project, Keyword.projectId == Project.id).where(
-            Project.userId == user_id
+            Project.userId == user_id,
+            Keyword.deletedAt.is_(None),
         )
     ).all()
 
     if not keywords:
         return {
+            "projects_count": int(projects_count),
             "tracked_keywords_count": 0,
+            "active_keywords_count": 0,
+            "inactive_keywords_count": 0,
+            "aio_keywords_count": 0,
             "average_rank": 0,
             "keywords": [],
             "chart_data": {"labels": [], "positions": [], "credits": []},
+            "usage": build_usage_snapshot(db, user),
         }
 
     valid_positions = []
@@ -182,8 +191,17 @@ def get_dashboard_overview(db: Session, user_id: str) -> dict:
         position_data.append(None)
         credit_data.append(daily_credits.get(date_key, 0.0))
 
+    active_keywords_count = sum(1 for keyword in keywords if keyword.isActive)
+    aio_keywords_count = sum(
+        1 for keyword in keywords if keyword.ai_badge == "AIO"
+    )
+
     return {
+        "projects_count": int(projects_count),
         "tracked_keywords_count": len(keywords_data),
+        "active_keywords_count": active_keywords_count,
+        "inactive_keywords_count": len(keywords_data) - active_keywords_count,
+        "aio_keywords_count": aio_keywords_count,
         "average_rank": average_rank,
         "keywords": keywords_data,
         "chart_data": {

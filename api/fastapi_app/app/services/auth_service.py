@@ -70,14 +70,20 @@ def register_user(db: Session, payload: dict) -> dict:
         trialEndsAt=None,
         planAnniversaryAt=free_started_at,
         lastCreditResetAt=free_started_at,
-        creditBalance=100.0,
-        planCreditBalance=100.0,
+        creditBalance=0.0,
+        planCreditBalance=0.0,
         purchasedCreditBalance=0.0,
         automaticCreditBalance=0.0,
         mobileNumber=normalized_mobile,
     )
 
     db.add(user)
+    db.flush()
+    from app.services.commercial_config_service import create_cycle_snapshot
+    free_snapshot = create_cycle_snapshot(db, user, "free_trial", free_started_at, free_started_at + timedelta(days=30))
+    user.planCreditBalance = float(free_snapshot.monthlyCredits - free_snapshot.automaticCredits)
+    user.creditBalance = user.planCreditBalance
+    user.automaticCreditBalance = float(free_snapshot.automaticCredits)
     db.commit()
     db.refresh(user)
 

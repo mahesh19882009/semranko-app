@@ -9,6 +9,7 @@ function ProjectCard({ project }) {
   const dispatch = useDispatch();
   const selectedId = useSelector((state) => state.projects.selectedProjectId);
   const isSelected = selectedId === project.id;
+  const keywordCount = Number(project.keywordCount || 0);
 
   const handleCardClick = (e) => {
     if (e.target.closest('button')) return;
@@ -38,6 +39,12 @@ function ProjectCard({ project }) {
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <p className="text-slate-400">Keywords</p>
+          <p className="mt-1 inline-flex rounded-full bg-surface-muted px-2.5 py-1 text-sm font-semibold text-text-primary">
+            {keywordCount} {keywordCount === 1 ? 'keyword' : 'keywords'}
+          </p>
+        </div>
         <div>
           <p className="text-slate-400">Created</p>
           <p className="mt-1 font-semibold text-slate-900">

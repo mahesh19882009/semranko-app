@@ -3,18 +3,19 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 from app.core.security import get_current_user
 from app.db.session import get_db
-from app.db.models import User, Subscription
+from app.db.models import User, Subscription, TopUpPackage
 from app.services.payment_service import create_order, verify_payment_signature, activate_subscription
 from app.services import email_service
-from app.services.plan_service import PLAN_DEFINITIONS
+from app.services.plan_service import PLAN_DEFINITIONS, build_usage_snapshot, get_plan_key
 from app.services.credit_service import create_pending_ledger_entry, finalize_pending_ledger_entry, add_purchased_credits
-from app.core.config import FREE_PLAN_LIMITS, GST_RATE, get_settings
+from app.core.config import GST_RATE, get_settings
+from app.services.commercial_config_service import ensure_commercial_config, plan_definitions
 
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -25,12 +26,6 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 PLAN_ID_TO_KEY = {0: "starter", 1: "pro", 2: "agency", 3: "enterprise"}
 PLAN_KEY_TO_ID = {v: k for k, v in PLAN_ID_TO_KEY.items()}
 GST_RATE = Decimal(str(GST_RATE))
-PLAN_KEY_PRICES = {
-    "starter": {"monthly": 999, "yearly": 10789},
-    "pro":     {"monthly": 3999, "yearly": 43189},
-    "agency":  {"monthly": 9999, "yearly": 107989},
-}
-
 def _build_invoice(
     order: "PaymentOrder",
     user_name: str,
@@ -96,36 +91,56 @@ async def create_payment_order(
     plan_id: int = Query(..., description="Plan ID to upgrade to"),
     amount: int = Query(0, description="Amount in smallest currency unit (e.g., paise) - server will override with plan price"),
     billing_cycle: str = Query("monthly", description="Billing cycle: monthly or yearly"),
+    currency: str = Query("INR", description="Display/checkout currency requested by the customer"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Create a Razorpay payment order for subscription upgrade.
-    Server calculates discounted INR amount from plan definitions.
+    Server calculates the authoritative amount from plan definitions. The
+    browser-provided amount is intentionally ignored.
     """
     try:
         from app.db.models import PaymentOrder as PO
 
-        logger.info(f"[create-order] user={current_user.id} plan_id={plan_id} billing_cycle={billing_cycle}")
-        
-        plan_key = PLAN_ID_TO_KEY.get(plan_id, "starter")
-        plan_def = PLAN_DEFINITIONS.get(plan_key, {})
-        base_price_inr = float(plan_def.get("monthlyPrice", 0))
-        individual_discount_pct = float(plan_def.get("individual_discount_pct", 0))
+        billing_cycle = str(billing_cycle).strip().lower()
+        currency = str(currency).strip().upper()
+        if billing_cycle not in {"monthly", "yearly"}:
+            raise HTTPException(status_code=400, detail="Invalid billing cycle")
+        if currency not in {"INR", "USD"}:
+            raise HTTPException(status_code=400, detail="Unsupported currency")
 
+        settings = get_settings()
+        ensure_commercial_config(db)
+        if currency == "USD" and not settings.RAZORPAY_USD_CHECKOUT_ENABLED:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "USD_CHECKOUT_UNAVAILABLE", "message": "USD checkout is not available yet. Please choose INR or contact sales."},
+            )
+
+        logger.info(f"[create-order] user={current_user.id} plan_id={plan_id} billing_cycle={billing_cycle} currency={currency}")
+
+        plan_key = PLAN_ID_TO_KEY.get(plan_id)
+        if not plan_key or plan_key == "enterprise":
+            raise HTTPException(status_code=400, detail="Invalid self-service plan")
+        plan_def = plan_definitions(db).get(plan_key, {})
+        price_field = "monthlyPrice" if currency == "INR" else "monthlyPriceUsd"
         if billing_cycle == "yearly":
-            base_price_inr = float(plan_def.get("yearlyPrice", base_price_inr))
+            price_field = "yearlyPrice" if currency == "INR" else "yearlyPriceUsd"
+        base_price = float(plan_def.get(price_field, 0))
+        individual_discount_pct = float(plan_def.get("individual_discount_pct", 0))
+        discounted_price = base_price - (base_price * (individual_discount_pct / 100))
+        # GST handling is unchanged for INR. International tax is intentionally
+        # not inferred until an approved tax policy and USD checkout are enabled.
+        total_price = discounted_price + (discounted_price * float(GST_RATE)) if currency == "INR" else discounted_price
+        amount_in_smallest_unit = int(round(total_price * 100))
 
-        discounted_inr = base_price_inr - (base_price_inr * (individual_discount_pct / 100))
-        amount_in_inr = discounted_inr + (discounted_inr * float(GST_RATE))
-        amount_in_paise = int(round(amount_in_inr * 100))
+        logger.info(f"[create-order] plan_key={plan_key} base_price={base_price} currency={currency} final_amount={amount_in_smallest_unit}")
 
-        logger.info(f"[create-order] plan_key={plan_key} base_price={base_price_inr} discount={individual_discount_pct}% final_amount={amount_in_paise}")
-
-        if amount_in_paise <= 0:
+        if amount_in_smallest_unit <= 0:
             raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
 
-        if amount_in_paise == 0:
+        if amount_in_smallest_unit == 0:
             pay_id = f"pay_credit_{uuid.uuid4().hex[:8]}"
             order_id = f"order_credit_{uuid.uuid4().hex[:16]}"
 
@@ -137,6 +152,7 @@ async def create_payment_order(
                 amount=0,
                 credit_applied_paise=0,
                 currency="INR",
+                billingCycle=billing_cycle,
                 status="paid",
             )
             db.add(credit_order)
@@ -167,10 +183,9 @@ async def create_payment_order(
                 "credit_applied": 0
             }
 
-        settings = get_settings()
         force_mock = getattr(settings, "RAZORPAY_FORCE_MOCK", False)
         
-        order = create_order(amount=amount_in_paise, currency="INR", force_mock=force_mock)
+        order = create_order(amount=amount_in_smallest_unit, currency=currency, force_mock=force_mock)
 
         plan_name = plan_def.get("name", "Unknown")
 
@@ -178,9 +193,10 @@ async def create_payment_order(
             userId=current_user.id,
             razorpayOrderId=order["id"],
             planId=plan_id,
-            amount=amount_in_paise,
+            amount=amount_in_smallest_unit,
             credit_applied_paise=0,
             currency=order["currency"],
+            billingCycle=billing_cycle,
             status="created",
             purchaseType="SUBSCRIPTION_UPGRADE",
         )
@@ -188,14 +204,14 @@ async def create_payment_order(
         db.flush()
         db.commit()
 
-        logger.info(f"[create-order] Created payment order: order_id={order['id']} plan_id={plan_id} amount={amount_in_paise}")
+        logger.info(f"[create-order] Created payment order: order_id={order['id']} plan_id={plan_id} amount={amount_in_smallest_unit}")
 
         return {
             "order_id": order["id"],
-            "amount": amount_in_paise,
+            "amount": amount_in_smallest_unit,
             "prorated_discount": 0,
-            "amount_after_proration": amount_in_paise,
-            "net_amount": amount_in_paise / 100.0,
+            "amount_after_proration": amount_in_smallest_unit,
+            "net_amount": amount_in_smallest_unit / 100.0,
             "currency": order["currency"],
             "key_id": order["key"],
             "plan_id": plan_id,
@@ -212,50 +228,61 @@ async def create_payment_order(
 
 @router.post("/create-top-up-order")
 async def create_top_up_order(
-    multiplier: int = Query(..., ge=1, description="Multiplier of 600 credits to purchase (1=600, 2=1200, etc.)"),
+    package_id: Optional[str] = Query(None, description="Active commercial top-up package identifier"),
+    multiplier: Optional[int] = Query(None, ge=1, description="Deprecated legacy selector; clients must submit package_id"),
+    currency: str = Query("INR", description="INR or USD when provider support is enabled"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Create a Razorpay payment order for credit top-up.
-    1 multiplier = 600 credits at flat ₹100 per 600 credits.
-    No bulk discount.
+    Create a Razorpay payment order from an active, server-authoritative package.
     """
     try:
         from app.db.models import PaymentOrder as PO
         from app.core.config import get_settings
 
         settings = get_settings()
-        credits_per_unit = settings.CREDIT_TOP_UP_CONFIG.get("credits_per_100_inr", 600)
-        base_price_inr = settings.CREDIT_TOP_UP_CONFIG.get("base_price_inr", 100)
-
-        total_credits = multiplier * credits_per_unit
-        total_inr = multiplier * base_price_inr  # Base price excluding GST
+        ensure_commercial_config(db)
+        currency = str(currency).strip().upper()
+        if currency not in {"INR", "USD"}:
+            raise HTTPException(status_code=400, detail="Unsupported currency")
+        if currency == "USD" and not settings.RAZORPAY_USD_CHECKOUT_ENABLED:
+            raise HTTPException(status_code=409, detail={"error": "USD_CHECKOUT_UNAVAILABLE", "message": "USD checkout is not available yet."})
+        if not package_id and multiplier:
+            # Transitional compatibility for the existing protected billing page;
+            # it still resolves a real active package before calculating money.
+            package = db.scalar(select(TopUpPackage).where(TopUpPackage.credits == multiplier * 600, TopUpPackage.isActive.is_(True)))
+        else:
+            package = db.scalar(select(TopUpPackage).where(TopUpPackage.id == package_id, TopUpPackage.isActive.is_(True)))
+        if not package:
+            raise HTTPException(status_code=404, detail="Active top-up package not found")
+        total_credits = package.credits
+        base_price = package.priceInr if currency == "INR" else package.priceUsd
 
         individual_discount_pct = float(getattr(current_user, "individual_discount_pct", 0.0) or 0.0)
-        discounted_inr = total_inr - (total_inr * (individual_discount_pct / 100.0))
+        discounted_price = base_price - (base_price * (individual_discount_pct / 100.0))
         
         # Add GST (18%) to the final amount
-        gst_inr = discounted_inr * 0.18
-        total_with_gst = discounted_inr + gst_inr
-        amount_in_paise = int(round(total_with_gst * 100))
+        total_with_tax = discounted_price * 1.18 if currency == "INR" else discounted_price
+        amount_in_paise = int(round(total_with_tax * 100))
 
         if amount_in_paise <= 0:
             raise HTTPException(status_code=400, detail="Calculated amount must be greater than 0")
 
         settings = get_settings()
         force_mock = getattr(settings, "RAZORPAY_FORCE_MOCK", False)
-        order = create_order(amount=amount_in_paise, currency="INR", force_mock=force_mock)
+        order = create_order(amount=amount_in_paise, currency=currency, force_mock=force_mock)
 
         credit_order = PO(
             userId=current_user.id,
             razorpayOrderId=order["id"],
-            planId=multiplier,
+            planId=0,
             amount=amount_in_paise,
             credit_applied_paise=total_credits,  # Store credits in paise equivalent for tracking
             currency=order["currency"],
             status="created",
             purchaseType="CREDIT_TOP_UP",
+            topUpPackageId=package.id,
         )
         db.add(credit_order)
         db.flush()
@@ -266,24 +293,23 @@ async def create_top_up_order(
             owner_id=current_user.id,
             amount=float(total_credits),
             action_type="CREDIT_TOP_UP",
-            description=f"Credit top-up: {total_credits} credits ({multiplier}x{credits_per_unit})",
+            description=f"Credit top-up: {total_credits} credits ({package.name})",
             related_order_id=order["id"],
             plan_name="Credit Top-Up",
         )
 
         db.commit()
 
-        logger.info(f"[create-top-up-order] Created order: order_id={order['id']}, multiplier={multiplier}, total_credits={total_credits}, amount_in_paise={amount_in_paise}")
+        logger.info(f"[create-top-up-order] Created order: order_id={order['id']}, package_id={package.id}, amount_in_paise={amount_in_paise}")
 
         return {
             "order_id": order["id"],
             "amount": amount_in_paise,
             "currency": order["currency"],
             "key_id": order["key"],
-            "multiplier": multiplier,
-            "credits_per_unit": credits_per_unit,
+            "package_id": package.id,
             "total_credits": total_credits,
-            "price_per_unit_inr": base_price_inr,
+            "base_price": base_price,
             "is_mock": order.get("mock", False),
         }
     except HTTPException:
@@ -342,6 +368,10 @@ async def verify_payment(
 
         if payment_order.userId != current_user.id:
             raise HTTPException(status_code=403, detail="Not your payment order")
+
+        if payment_order.planId != plan_id:
+            raise HTTPException(status_code=400, detail="Payment plan does not match the order")
+        billing_cycle = payment_order.billingCycle
 
         if getattr(payment_order, "purchaseType", None) == "CREDIT_TOP_UP":
             payment_order.status = "paid"
@@ -414,28 +444,20 @@ async def get_current_plan(
         Subscription.isActive == True
     ).first()
     
-    if not subscription:
-        return ok("Free plan", {
-            "plan_name": "Free",
-            "plan_id": None,
-            "status": "free",
-            "limits": FREE_PLAN_LIMITS
-        })
-    
-    # Return basic plan info.
-    return ok("Current plan", {
-        "plan_name": "Pro", 
-        "plan_id": subscription.id, 
-        "status": subscription.status,
-        "current_period_start": subscription.startDate,
-        "current_period_end": subscription.endDate,
-        "limits": {
-            "projects": 10, 
-            "keywords": 500,
-            "competitors": 10,
-            "reports": 20
-        }
-    })
+    snapshot = build_usage_snapshot(db, current_user)
+    plan_key = get_plan_key(current_user)
+    plan_name = get_settings().plan_config.plans.get(plan_key)
+    payload = {
+        "plan_name": plan_name.name if plan_name else plan_key,
+        "plan_id": subscription.id if subscription else None,
+        "status": subscription.status if subscription else "free",
+        "current_period_start": subscription.startDate if subscription else None,
+        "current_period_end": subscription.endDate if subscription else None,
+        # Customer-facing limits always describe the active immutable cycle,
+        # not the currently advertised commercial offering.
+        "limits": snapshot["limits"],
+    }
+    return ok("Current plan" if subscription else "Free plan", payload)
 
 @router.post("/cancel-subscription")
 async def cancel_subscription(

@@ -672,6 +672,7 @@ function KeywordsPage() {
       </section>
 
       <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
+        <div className="overflow-x-auto" aria-label="Keyword table. Scroll horizontally to view all columns.">
         <DataTable
           value={filteredData}
           paginator
@@ -753,14 +754,15 @@ function KeywordsPage() {
             </TippyTooltip>
           } body={actionBodyTemplate} style={{ width: '5rem' }} />
         </DataTable>
+        </div>
 
         {selectedIds.length > 0 && (
-          <div className="border-t border-slate-200 bg-rose-50 px-5 py-3 flex items-center justify-between">
-            <span className="text-sm font-medium text-rose-700">{selectedIds.length} selected</span>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => handleBulkStatus(true)} disabled={bulkActionLoading}>Activate</Button>
-              <Button variant="outline" onClick={() => handleBulkStatus(false)} disabled={bulkActionLoading}>Deactivate</Button>
-              <Button variant="outline" onClick={handleManualRefresh} disabled={bulkActionLoading || manualLocked || (manualUsage?.remaining ?? 0) < selectedIds.length} title={manualLocked ? 'This feature is available on paid plans. Upgrade to continue.' : '20 spendable credits per keyword'}>
+          <div className="flex flex-col gap-3 border-t border-slate-200 bg-surface-subtle px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm font-medium text-text-primary">{selectedIds.length} selected</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={() => handleBulkStatus(true)} loading={bulkActionLoading} disabled={bulkActionLoading}>Activate</Button>
+              <Button variant="outline" onClick={() => handleBulkStatus(false)} loading={bulkActionLoading} disabled={bulkActionLoading}>Deactivate</Button>
+              <Button variant="outline" onClick={handleManualRefresh} loading={bulkActionLoading} disabled={bulkActionLoading || manualLocked || (manualUsage?.remaining ?? 0) < selectedIds.length} title={manualLocked ? 'This feature is available on paid plans. Upgrade to continue.' : '20 spendable credits per keyword'}>
                 Manual Refresh ({manualRefreshCost != null ? selectedIds.length * manualRefreshCost : '—'} credits)
               </Button>
               <Button variant="danger" onClick={handleDeleteSelected}

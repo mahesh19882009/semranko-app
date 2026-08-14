@@ -65,6 +65,24 @@ const CODE_MESSAGES = {
   PAYMENT_PLAN_MISMATCH: 'This payment does not match the selected plan. No subscription changes were made.',
 };
 
+function rateLimitMessage(endpoint) {
+  if (endpoint === '/auth/register') return 'Too many registration attempts. Please try again later.';
+  if (endpoint === '/auth/login') return 'Too many login attempts. Please try again shortly.';
+  if (endpoint === '/auth/forgot-password') return 'Too many password reset requests. Please try again later.';
+  if (endpoint === '/auth/send-otp' || endpoint === '/auth/resend-otp') {
+    return 'Too many OTP requests. Please wait before trying again.';
+  }
+  return 'Too many requests. Please try again later.';
+}
+
+function retryAfterMessage(retryAfter) {
+  const seconds = Number(retryAfter);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return ` Try again in about ${Math.ceil(seconds)} seconds.`;
+  const minutes = Math.ceil(seconds / 60);
+  return ` Try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+}
+
 function inferLegacyCode(message, status) {
   const text = String(message || '').toLowerCase();
   if (text.includes('insufficient credit')) return 'INSUFFICIENT_CREDITS';
@@ -136,13 +154,21 @@ export function normalizeApiError(error, fallback = 'Request failed') {
   if (error && error.__normalizedApiError) return error;
   const payload = error?.responseData || error?.payload || error || {};
   const structured = payload?.data && typeof payload.data === 'object' ? payload.data : {};
+  const detailData = payload?.detail && typeof payload.detail === 'object' && !Array.isArray(payload.detail)
+    ? payload.detail
+    : {};
   const validation = normalizeValidationErrors(payload?.detail);
   const status = Number(error?.status ?? payload?.status ?? 0) || 0;
-  const code = error?.code || structured.error || payload.error
+  const retryAfter = error?.retryAfter ?? structured.retryAfter ?? detailData.retryAfter ?? payload?.retryAfter ?? null;
+  const code = error?.code || structured.error || detailData.error || payload.error
+    || (status === 429 ? 'RATE_LIMITED' : null)
     || inferLegacyCode(error?.message || getApiErrorMessage(payload, fallback), status);
   let message = CODE_MESSAGES[code]
     || error?.message
     || getApiErrorMessage(payload, fallback);
+  if (status === 429 && code !== 'feature_limit_exceeded') {
+    message = `${rateLimitMessage(error?.endpoint || '')}${retryAfterMessage(retryAfter)}`;
+  }
   if (!status && (error instanceof TypeError || /failed to fetch|networkerror/i.test(message || ''))) {
     message = "We couldn't connect to RankCare. Check your connection and try again.";
   } else if (error?.name === 'AbortError' || code === 'REQUEST_TIMEOUT') {
@@ -168,6 +194,7 @@ export function normalizeApiError(error, fallback = 'Request failed') {
     upgradeRequired: Boolean(structured.upgrade_required || code === 'upgrade_required'),
     resetAt: usage.resetAt || structured.resetAt || null,
     remaining: usage.remaining ?? structured.remaining ?? null,
+    retryAfter: Number.isFinite(Number(retryAfter)) ? Number(retryAfter) : null,
   };
 }
 
@@ -413,6 +440,8 @@ export const apiRequest = async (endpoint, options = {}) => {
       responseData: data,
       code,
       message: getApiErrorMessage(data, response.status >= 500 ? 'Server error' : 'Request failed'),
+      endpoint,
+      retryAfter: response.headers.get('retry-after'),
     });
     const publicAuthRoute = endpoint.startsWith('/auth/') && endpoint !== '/auth/logout';
     if (response.status === 401 && !publicAuthRoute) {

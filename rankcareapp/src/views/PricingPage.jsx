@@ -1,417 +1,475 @@
-'use client'
-import { useEffect, useMemo, useState } from "react";
+"use client";
+
+import { useEffect, useState } from "react";
+import { Check, X, ArrowRight } from "lucide-react";
+
 import { Link, useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
-import { initRazorpayCheckout, apiRequest } from "../lib/api";
-import { createPaymentOrderApi, verifyPaymentApi } from "../features/pricing/pricingApi";
-import { useSelector, useDispatch } from "react-redux";
+import { apiRequest, initRazorpayCheckout } from "../lib/api";
+import {
+  createPaymentOrderApi,
+  verifyPaymentApi,
+} from "../features/pricing/pricingApi";
+import { useDispatch, useSelector } from "react-redux";
 import Alert from "../components/ui/Alert";
-import { fetchCurrentPricing, fetchPricingPlans } from "../features/pricing/pricingSlice";
+import Button from "../components/ui/Button";
+import Card from "../components/ui/Card";
+import {
+  fetchCurrentPricing,
+  fetchPricingPlans,
+} from "../features/pricing/pricingSlice";
 
-const PLAN_ORDER = {
-  free_trial: 0,
-  starter: 1,
-  pro: 2,
-  agency: 3,
-  enterprise: 4,
-};
-
-const PLAN_ID_MAP = {
-  starter: 0,
-  pro: 1,
-  agency: 2,
-};
+const ORDER = { free_trial: 0, starter: 1, pro: 2, agency: 3 };
+const PLAN_IDS = { starter: 0, pro: 1, agency: 2 };
 
 export default function PricingPage() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const [authenticated, setAuthenticated] = useState(false);
-
+  const [currency, setCurrency] = useState("INR");
+  const [period, setPeriod] = useState("monthly");
+  const [loadingPlan, setLoadingPlan] = useState(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const plans = useSelector((state) => state.pricing.plans).filter((plan) =>
+    ["free_trial", "starter", "pro", "agency"].includes(plan.key),
+  );
+  const loading = useSelector((state) => state.pricing.loadingPlans);
+  const current = useSelector((state) => state.pricing.current);
+  const currentPlan = current?.effectivePlan || current?.plan;
   useEffect(() => {
+    const signedIn = isAuthenticated();
+    setAuthenticated(signedIn);
     dispatch(fetchPricingPlans());
-    setAuthenticated(isAuthenticated());
-    if (isAuthenticated()) {
-      dispatch(fetchCurrentPricing());
-    }
+    if (signedIn) dispatch(fetchCurrentPricing());
   }, [dispatch]);
 
-  const [loadingPlan, setLoadingPlan] = useState(null);
-  const [paymentError, setPaymentError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState(null);
-  const [faqs, setFaqs] = useState([]);
-  const [loadingFaqs, setLoadingFaqs] = useState(true);
-  const [openFaq, setOpenFaq] = useState(null);
-
-  const pricingCurrent = useSelector((state) => state.pricing.current);
-  const pricingLoading = useSelector((state) => state.pricing.loading);
-  const pricingPlans = useSelector((state) => state.pricing.plans);
-
-  const currentPlan = pricingCurrent?.plan || null;
-  const currentCreditBalance = pricingCurrent?.spendableCreditsRemaining;
-
-  const plans = (pricingPlans || []).filter((plan) => ['free_trial', 'starter', 'pro', 'agency'].includes(plan.key));
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingFaqs(true);
-    fetch("/api/marketing/pricing-faqs")
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled && Array.isArray(data)) {
-          setFaqs(data);
-        }
-      })
-      .catch(() => { })
-      .finally(() => {
-        if (!cancelled) setLoadingFaqs(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleSelectPlan = async (planKey) => {
-    setPaymentError(null);
-    setSuccessMessage(null);
-
-    if (planKey === "enterprise") {
-      window.location.href = "mailto:sales@rankcare.com?subject=Enterprise Plan Inquiry";
+  const choosePlan = async (plan) => {
+    setError("");
+    setSuccess("");
+    if (plan.key === "free_trial") {
+      navigate(authenticated ? "/dashboard" : "/register");
       return;
     }
-
     if (!authenticated) {
       navigate("/register");
       return;
     }
-
-    const plan = plans.find((p) => p.key === planKey);
-    if (!plan) return;
-
-    if (planKey === "free_trial") {
-      navigate("/dashboard");
+    if (currency === "USD") {
+      setError(
+        "USD checkout is not available yet. Please choose INR or contact sales.",
+      );
       return;
     }
-
-    setLoadingPlan(planKey);
+    setLoadingPlan(plan.key);
     try {
-      const planId = PLAN_ID_MAP[planKey];
-      const amount = plan.monthlyPrice * 100;
-      const order = await createPaymentOrderApi(planId, amount);
-
+      const order = await createPaymentOrderApi(
+        PLAN_IDS[plan.key],
+        period,
+        currency,
+      );
       await initRazorpayCheckout({
         order_id: order.order_id,
         amount: order.amount,
-        currency: order.currency || "INR",
+        currency: order.currency,
         key_id: order.key_id,
-        prefill: {
-          name: "",
-          email: "",
-        },
+        prefill: {},
         onPaymentSuccess: async (response) => {
           try {
-            const verifyResult = await verifyPaymentApi(
+            const verified = await verifyPaymentApi(
               response.razorpay_order_id,
               response.razorpay_payment_id,
               response.razorpay_signature,
-              planId,
-              0
+              PLAN_IDS[plan.key],
+              0,
+              period,
             );
-            if (verifyResult?.success) {
-              setSuccessMessage(`Successfully upgraded to ${plan.name}!`);
-              dispatch(fetchCurrentPricing());
-              setTimeout(() => navigate("/dashboard"), 1500);
-            } else {
-              setPaymentError("Payment verification failed. Please contact support.");
-            }
-          } catch (err) {
-            setPaymentError(err.message || "Payment verification failed");
+            if (!verified?.success)
+              throw new Error("Payment verification failed.");
+            setSuccess(`Successfully updated to ${plan.name}.`);
+            dispatch(fetchCurrentPricing());
+          } catch (paymentError) {
+            setError(paymentError.message || "Payment verification failed.");
           } finally {
             setLoadingPlan(null);
           }
         },
-        onPaymentError: async (error) => {
-          setPaymentError(error?.description || "Payment failed. Please try again.");
+        onPaymentError: async (paymentError) => {
+          setError(
+            paymentError?.description || "Payment failed. Please try again.",
+          );
           setLoadingPlan(null);
-
           try {
-            if (order?.order_id) {
-              await apiRequest("/payments/mark-failed", {
-                method: "POST",
-                body: JSON.stringify({ razorpay_order_id: order.order_id }),
-              });
-            }
-          } catch {
-            // Best-effort provider reconciliation; the original payment error is already visible.
-          }
+            await apiRequest("/payments/mark-failed", {
+              method: "POST",
+              body: JSON.stringify({ razorpay_order_id: order.order_id }),
+            });
+          } catch {}
         },
       });
-    } catch (err) {
-      setPaymentError(err.message || "Failed to initiate payment");
+    } catch (requestError) {
+      setError(requestError.message || "Unable to start checkout.");
       setLoadingPlan(null);
     }
   };
-
-  const toggleFaq = (index) => {
-    setOpenFaq(openFaq === index ? null : index);
+  const amount = (plan) => {
+    if (plan.key === "free_trial") return 0;
+    const field =
+      currency === "INR"
+        ? period === "yearly"
+          ? "yearlyPrice"
+          : "monthlyPrice"
+        : period === "yearly"
+          ? "yearlyPriceUsd"
+          : "monthlyPriceUsd";
+    return Number(plan[field] || 0);
   };
-
-  const displayedCreditBalance = useMemo(() => {
-    if (currentCreditBalance !== null && currentCreditBalance !== undefined) {
-      return currentCreditBalance;
-    }
-    return pricingLoading ? null : 0;
-  }, [currentCreditBalance, pricingLoading]);
-
-  const renderPlanFeatures = (plan) => {
-    const limits = plan.limits || {};
-    const features = [];
-    features.push(`${(plan.domain_limit || 0).toLocaleString('en-US')} project${plan.domain_limit === 1 ? '' : 's'}`);
-    features.push(`${(limits.keywordLimit || 0).toLocaleString('en-US')} keywords`);
-    features.push(`${(limits.monthlyCredits || 0).toLocaleString('en-US')} total monthly credits`);
-    if ((limits.automaticCredits || 0) > 0) {
-      features.push(`${limits.automaticCredits.toLocaleString('en-US')} reserved for automatic tracking`);
-      features.push(`${(limits.spendableCredits || 0).toLocaleString('en-US')} spendable credits`);
-    }
-    if (limits.competitorsPerProject) {
-      features.push(`${limits.competitorsPerProject} competitors per project`);
-    }
-    features.push(limits.weeklyTrackingEnabled ? 'Weekly rank refresh included' : 'No weekly or monthly automatic tracking');
-    features.push(`Manual Refresh: ${limits.manualRefreshLimit || 0} keywords / cycle`);
-    features.push(`Keyword Research: ${limits.keywordResearchLimit || 0} reports / cycle`);
-    features.push(`Competitor Spy: ${limits.competitorSpyLimit || 0} reports / cycle`);
-    return features;
-  };
-
   return (
-    <div className="bg-slate-50">
-      <div className="mx-auto max-w-7xl px-6 py-16">
-        {/* Trial Banner / Current Plan Banner */}
+    <div className="bg-surface-subtle">
+      <section className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl text-center">
-          {authenticated && currentPlan ? (
-            <div className="inline-flex items-center gap-3 rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
-              <span>Current Plan: {currentPlan === 'free_trial' ? 'Free' : currentPlan.charAt(0).toUpperCase() + currentPlan.slice(1)}</span>
-              <span className="text-emerald-400">|</span>
-              <span>
-                Credits: {displayedCreditBalance !== null ? displayedCreditBalance.toLocaleString('en-US') : '...'}
-              </span>
-            </div>
-          ) : (
-            <Link
-              to="/register"
-              className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-            >
-              Start Free — No credit card required
-            </Link>
-          )}
-        </div>
-
-        {/* Pricing Header */}
-        <div className="mx-auto max-w-3xl text-center mt-12">
-          <h1 className="text-4xl font-bold tracking-tight text-slate-900 md:text-5xl">
-            Simple plans for growing SEO workflows
+          <p className="text-sm font-semibold uppercase tracking-[.18em] text-brand-700">
+            Pricing
+          </p>
+          <h1 className="mt-3 text-4xl font-bold tracking-tight text-text-primary sm:text-5xl">
+            Plans that make limits clear.
           </h1>
-          <p className="mt-4 text-lg text-slate-600">
-            Start free and choose the plan that fits your SEO workflow. Paid prices exclude 18% GST.
+          <p className="mt-5 text-lg leading-8 text-text-secondary">
+            Start with Free, choose paid allowances when your workflow needs
+            them, or talk to us about a tailored setup. INR prices exclude
+            applicable GST.
           </p>
+          <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Toggle
+              label="Currency"
+              value={currency}
+              onChange={setCurrency}
+              options={["INR", "USD"]}
+            />
+            <Toggle
+              label="Billing"
+              value={period}
+              onChange={setPeriod}
+              options={["monthly", "yearly"]}
+            />
+          </div>
+          {period === "yearly" ? (
+            <p className="mt-3 text-sm font-semibold text-success-dark">
+              Annual billing: 12 months for the price of 11.
+            </p>
+          ) : null}
+          {currency === "USD" ? (
+            <p className="mt-3 text-sm text-text-muted">
+              USD prices are displayed for planning. USD checkout is currently
+              unavailable.
+            </p>
+          ) : null}
         </div>
-
-        {/* Pricing Grid */}
-        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3 justify-center">
-          {plans.map((plan) => {
-            const isEnterprise = plan.key === "enterprise";
-            const discountPct = plan.individual_discount_pct || 0;
-            const basePrice = plan.monthlyPrice;
-            const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
-            const cleanDisplayPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
-            const priceDisplay = isEnterprise
-              ? "Custom"
-              : `₹${cleanDisplayPrice.toLocaleString('en-US')}`;
-            const isCurrentPlan = authenticated && currentPlan === plan.key;
-            const currentPlanOrder = currentPlan ? PLAN_ORDER[currentPlan] : -1;
-            const planOrder = PLAN_ORDER[plan.key];
-            const isLowerTier = currentPlanOrder > -1 && planOrder < currentPlanOrder;
-            const isHigherTier = currentPlanOrder > -1 && planOrder > currentPlanOrder;
-
-            return (
-              <div
+        {error ? (
+          <Alert
+            className="mx-auto mt-8 max-w-3xl"
+            variant="error"
+            message={error}
+            onDismiss={() => setError("")}
+          />
+        ) : null}
+        {success ? (
+          <Alert
+            className="mx-auto mt-8 max-w-3xl"
+            variant="success"
+            message={success}
+            onDismiss={() => setSuccess("")}
+          />
+        ) : null}
+        <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+          {loading ? (
+            <PricingSkeleton />
+          ) : (
+            plans.map((plan) => (
+              <PlanCard
                 key={plan.key}
-                className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${isCurrentPlan
-                  ? "border-emerald-500 ring-1 ring-emerald-500"
-                  : plan.highlighted
-                    ? "border-indigo-600 ring-1 ring-indigo-600"
-                    : "border-slate-200"
-                  }`}
-              >
-                {isCurrentPlan && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white">
-                      Current Plan
-                    </span>
-                  </div>
-                )}
-                {isLowerTier && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="rounded-full bg-slate-400 px-3 py-1 text-xs font-semibold text-white">
-                      Managed Plan
-                    </span>
-                  </div>
-                )}
-                {plan.highlighted && !isCurrentPlan && !isLowerTier && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white">
-                      Best Value
-                    </span>
-                  </div>
-                )}
-
-                <div className="mb-4">
-                  <h3 className="text-lg font-semibold text-slate-900">{plan.name}</h3>
-                  <p className="mt-1 text-sm text-slate-500">{plan.description}</p>
-                </div>
-
-                <div className="mb-6">
-                  {discountPct > 0 && !isEnterprise ? (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-sm text-slate-400 line-through">
-                        ₹{basePrice.toLocaleString('en-US')}
-                      </span>
-                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
-                      <span className="text-xs font-medium text-emerald-600">
-                        Save {discountPct}%
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="text-3xl font-bold text-slate-900">{priceDisplay}</span>
-                      {!isEnterprise && (
-                        <span className="text-sm text-slate-500">/ month</span>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                <div className="mb-6 rounded-xl bg-slate-50 p-4">
-                  <p className="text-sm font-medium text-slate-700">
-                    {plan.limits?.monthlyCredits ? `${plan.limits.monthlyCredits.toLocaleString('en-US')} Monthly Credits` : 'Custom Credits'}
-                  </p>
-                  <ul className="mt-3 space-y-2 text-sm text-slate-600">
-                    {renderPlanFeatures(plan).map((feature, idx) => {
-                      const isDisabled =
-                        feature.startsWith("No ") ||
-                        feature.includes(": 0 ");
-
-                      return (
-                        <li key={idx} className="flex items-center gap-2">
-                          <span
-                            className={
-                              isDisabled
-                                ? "text-red-500"
-                                : "text-indigo-600"
-                            }
-                          >
-                            {isDisabled ? "✕" : "✓"}
-                          </span>
-
-                          {feature}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-
-                {isCurrentPlan ? (
-                  <button
-                    disabled
-                    className="w-full rounded-xl px-4 py-3 text-sm font-semibold cursor-default bg-emerald-50 text-emerald-700"
-                  >
-                    Current Plan
-                  </button>
-                ) : isLowerTier ? (
-                  <button
-                    disabled
-                    className="w-full rounded-xl px-4 py-3 text-sm font-semibold cursor-default bg-slate-100 text-slate-500"
-                  >
-                    Managed Plan
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleSelectPlan(plan.key)}
-                    disabled={loadingPlan !== null}
-                    className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${plan.highlighted
-                      ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
-                      : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
-                      }`}
-                  >
-                    {loadingPlan === plan.key
-                      ? "Processing..."
-                      : !authenticated
-                        ? (plan.key === "free_trial" ? "Start Free" : "Get Started")
-                        : isHigherTier
-                          ? `Upgrade to ${plan.name}`
-                          : plan.cta
-                    }
-                  </button>
-                )}
-              </div>
-            );
-          })}
+                plan={plan}
+                amount={amount(plan)}
+                currency={currency}
+                period={period}
+                authenticated={authenticated}
+                currentPlan={currentPlan}
+                loading={loadingPlan === plan.key}
+                onSelect={() => choosePlan(plan)}
+              />
+            ))
+          )}
+          <CustomCard />
         </div>
-
-        {/* FAQ Section */}
-        <div className="mt-20">
-          <h2 className="text-center text-2xl font-bold text-slate-900">Pricing FAQs</h2>
-          <p className="mt-2 text-center text-sm text-slate-500">
-            Everything you need to know about credits and billing.
+        <Comparison plans={plans} />
+        <div className="mx-auto mt-12 max-w-4xl rounded-2xl border border-border bg-surface p-6 text-sm leading-6 text-text-secondary">
+          <p>
+            <strong className="text-text-primary">
+              Credits and automatic tracking:
+            </strong>{" "}
+            monthly plan credits include a protected automatic-tracking
+            allocation where a plan provides it. Remaining spendable credits are
+            for eligible optional actions. Purchased top-up credits are tracked
+            separately.
           </p>
-
-          <div className="mx-auto mt-8 max-w-3xl">
-            {loadingFaqs ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-200" />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {faqs.map((faq, index) => (
-                  <div
-                    key={index}
-                    className="rounded-xl border border-slate-200 bg-white"
-                  >
-                    <button
-                      onClick={() => toggleFaq(index)}
-                      className="flex w-full items-center justify-between px-5 py-4 text-left"
-                    >
-                      <span className="text-sm font-semibold text-slate-900">{faq.q}</span>
-                      <span className="ml-4 text-slate-400 transition-transform">
-                        {openFaq === index ? "−" : "+"}
-                      </span>
-                    </button>
-                    {openFaq === index && (
-                      <div className="px-5 pb-4">
-                        <p className="text-sm text-slate-600">{faq.a}</p>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <p className="mt-3">
+            <strong className="text-text-primary">GST:</strong> INR checkout
+            applies the existing GST calculation. USD checkout is disabled
+            pending payment-provider and international tax readiness.
+          </p>
         </div>
+      </section>
+    </div>
+  );
+}
 
-        {/* Alerts */}
-        {paymentError && (
-          <div className="mx-auto mt-8 max-w-3xl">
-            <Alert variant="error" message={paymentError} />
-          </div>
-        )}
-        {successMessage && (
-          <div className="mx-auto mt-8 max-w-3xl">
-            <Alert variant="success" message={successMessage} />
-          </div>
+function Toggle({ label, value, onChange, options }) {
+  return (
+    <fieldset className="inline-flex rounded-xl border border-border bg-surface p-1">
+      <legend className="sr-only">{label}</legend>
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+          className={`rounded-lg px-3 py-2 text-sm font-semibold capitalize focus:outline-none focus:ring-4 focus:ring-brand-100 ${value === option ? "bg-brand-600 text-white" : "text-text-secondary hover:bg-surface-muted"}`}
+        >
+          {option === "yearly" ? "Annually" : option}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+function PlanCard({
+  plan,
+  amount,
+  currency,
+  period,
+  authenticated,
+  currentPlan,
+  loading,
+  onSelect,
+}) {
+  const limits = plan.limits || {};
+  const isCurrent = currentPlan === plan.key;
+  const above = (ORDER[plan.key] ?? -1) > (ORDER[currentPlan] ?? -1);
+  return (
+    <Card
+      padding="p-6"
+      className={`flex min-h-[34rem] flex-col ${plan.highlighted ? "border-brand-500 ring-1 ring-brand-500" : ""}`}
+    >
+      <div>
+        <p className="text-lg font-bold text-text-primary">{plan.name}</p>
+        <p className="mt-2 min-h-12 text-sm leading-5 text-text-secondary">
+          {plan.description}
+        </p>
+        <div className="mt-5">
+          <span className="text-3xl font-bold text-text-primary">
+            {currency === "INR" ? "₹" : "$"}
+            {amount.toLocaleString("en-IN")}
+          </span>
+          <span className="ml-1 text-sm text-text-muted">
+            {amount === 0 ? "" : period === "yearly" ? "/ year" : "/ month"}
+          </span>
+          {period === "yearly" && amount > 0 ? (
+            <p className="mt-1 text-xs text-success-dark">1 month free</p>
+          ) : null}
+        </div>
+      </div>
+      <ul className="mt-6 space-y-3 text-sm">
+        <Feature
+          text={`${plan.domain_limit} project${plan.domain_limit === 1 ? "" : "s"}`}
+        />
+        <Feature text={`${limits.keywordLimit || 0} keywords`} />
+        <Feature text={`${limits.monthlyCredits || 0} monthly credits`} />
+        <Feature
+          text={
+            limits.automaticCredits
+              ? `${limits.automaticCredits} automatic tracking credits`
+              : "Automatic tracking unavailable"
+          }
+          available={Boolean(limits.automaticCredits)}
+        />
+        <Feature
+          text={
+            limits.manualRefreshLimit
+              ? `Manual Refresh: ${limits.manualRefreshLimit} keywords / cycle`
+              : "Manual Refresh unavailable"
+          }
+          available={Boolean(limits.manualRefreshLimit)}
+        />
+        <Feature
+          text={
+            limits.keywordResearchLimit
+              ? `Keyword Research: ${limits.keywordResearchLimit} reports / cycle`
+              : "Keyword Research unavailable"
+          }
+          available={Boolean(limits.keywordResearchLimit)}
+        />
+        <Feature
+          text={
+            limits.competitorSpyLimit
+              ? `Competitor Spy: ${limits.competitorSpyLimit} reports / cycle`
+              : "Competitor Spy unavailable"
+          }
+          available={Boolean(limits.competitorSpyLimit)}
+        />
+      </ul>
+      <div className="mt-auto pt-6">
+        {isCurrent ? (
+          <Button className="w-full" variant="outline" disabled>
+            Current plan
+          </Button>
+        ) : (
+          <Button
+            className="w-full"
+            variant={plan.highlighted ? "primary" : "outline"}
+            loading={loading}
+            onClick={onSelect}
+          >
+            {plan.key === "free_trial"
+              ? "Start Free"
+              : !authenticated
+                ? "Get started"
+                : above
+                  ? `Choose ${plan.name}`
+                  : `Switch to ${plan.name}`}
+          </Button>
         )}
       </div>
-    </div>
+    </Card>
+  );
+}
+function Feature({ text, available = true }) {
+  const Icon = available ? Check : X;
+  return (
+    <li
+      className={`flex gap-2 ${available ? "text-text-secondary" : "text-text-muted"}`}
+    >
+      <Icon
+        className={`mt-0.5 h-4 w-4 shrink-0 ${available ? "text-success-dark" : "text-text-muted"}`}
+        aria-hidden="true"
+      />
+      <span>{text}</span>
+    </li>
+  );
+}
+function CustomCard() {
+  return (
+    <Card
+      padding="p-6"
+      className="flex min-h-[34rem] flex-col bg-surface-subtle"
+    >
+      <div>
+        <p className="text-lg font-bold text-text-primary">Custom</p>
+        <p className="mt-2 min-h-12 text-sm leading-5 text-text-secondary">
+          Need higher limits or a tailored setup? Contact us to discuss your
+          requirements.
+        </p>
+        <p className="mt-5 text-3xl font-bold text-text-primary">
+          Custom pricing
+        </p>
+      </div>
+      <ul className="mt-6 space-y-3 text-sm text-text-secondary">
+        <Feature text="Sales-assisted plan" />
+        <Feature text="Limits agreed with your team" />
+        <Feature text="No self-service checkout" available={false} />
+      </ul>
+      <div className="mt-auto pt-6">
+        <Link to="/contact">
+          <Button
+            className="w-full"
+            rightIcon={<ArrowRight className="h-4 w-4" />}
+          >
+            Contact sales
+          </Button>
+        </Link>
+      </div>
+    </Card>
+  );
+}
+function Comparison({ plans }) {
+  const rows = [
+    ["Projects", (p) => p.domain_limit],
+    ["Keywords", (p) => p.limits?.keywordLimit || 0],
+    [
+      "Automatic tracking",
+      (p) => (p.limits?.automaticCredits ? "Included" : "Unavailable"),
+    ],
+    [
+      "Manual Refresh",
+      (p) =>
+        p.limits?.manualRefreshLimit
+          ? `${p.limits.manualRefreshLimit} / cycle`
+          : "Unavailable",
+    ],
+    [
+      "Keyword Research",
+      (p) =>
+        p.limits?.keywordResearchLimit
+          ? `${p.limits.keywordResearchLimit} / cycle`
+          : "Unavailable",
+    ],
+    [
+      "Competitor Spy",
+      (p) =>
+        p.limits?.competitorSpyLimit
+          ? `${p.limits.competitorSpyLimit} / cycle`
+          : "Unavailable",
+    ],
+    ["Monthly credits", (p) => p.limits?.monthlyCredits || 0],
+  ];
+  return (
+    <section className="mt-16">
+      <h2 className="text-2xl font-bold tracking-tight text-text-primary">
+        Compare plan allowances
+      </h2>
+      <div className="mt-6 overflow-x-auto rounded-xl border border-border bg-surface">
+        <table className="min-w-[46rem] w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-border bg-surface-subtle">
+              <th className="px-4 py-3 font-semibold text-text-primary">
+                Feature
+              </th>
+              {plans.map((p) => (
+                <th
+                  key={p.key}
+                  className="px-4 py-3 font-semibold text-text-primary"
+                >
+                  {p.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, get]) => (
+              <tr key={label} className="border-b border-border last:border-0">
+                <th className="px-4 py-3 font-medium text-text-secondary">
+                  {label}
+                </th>
+                {plans.map((p) => (
+                  <td key={p.key} className="px-4 py-3 text-text-primary">
+                    {get(p)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+function PricingSkeleton() {
+  return (
+    <>
+      {[1, 2, 3, 4].map((n) => (
+        <Card key={n} padding="p-6" className="min-h-[34rem]">
+          <div className="h-6 w-24 animate-pulse rounded bg-surface-muted" />
+          <div className="mt-5 h-10 w-32 animate-pulse rounded bg-surface-muted" />
+        </Card>
+      ))}
+    </>
   );
 }

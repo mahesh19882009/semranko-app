@@ -6,17 +6,10 @@ import { initRazorpayCheckout } from "../lib/api";
 import {
   createCreditTopUpOrderApi,
   fetchCreditBalanceApi,
+  fetchTopUpPackagesApi,
   verifyCreditPaymentApi,
 } from "../features/pricing/pricingApi";
 import Alert from "../components/ui/Alert";
-
-const TOP_UP_MULTIPLIERS = [
-  { multiplier: 1, credits: 600, priceInr: 100, popular: false },
-  { multiplier: 2, credits: 1200, priceInr: 200, popular: false },
-  { multiplier: 3, credits: 1800, priceInr: 300, popular: true },
-  { multiplier: 5, credits: 3000, priceInr: 500, popular: false },
-  { multiplier: 10, credits: 6000, priceInr: 1000, popular: false },
-];
 
 export default function CreditManagementPage() {
   const navigate = useNavigate();
@@ -26,6 +19,7 @@ export default function CreditManagementPage() {
   const [loadingMultiplier, setLoadingMultiplier] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [packages, setPackages] = useState([]);
 
   useEffect(() => {
     if (!authenticated) {
@@ -33,6 +27,7 @@ export default function CreditManagementPage() {
       return;
     }
     loadBalance();
+    fetchTopUpPackagesApi().then(setPackages).catch((err) => setError(err.message || "Failed to load top-up packages"));
   }, [authenticated]);
 
   const loadBalance = async () => {
@@ -53,10 +48,10 @@ export default function CreditManagementPage() {
   const handlePurchase = async (pack) => {
     setError(null);
     setSuccess(null);
-    setLoadingMultiplier(pack.multiplier);
+    setLoadingMultiplier(pack.id);
 
     try {
-      const order = await createCreditTopUpOrderApi(pack.multiplier);
+      const order = await createCreditTopUpOrderApi(pack.id);
 
       await initRazorpayCheckout({
         order_id: order.order_id,
@@ -144,16 +139,16 @@ export default function CreditManagementPage() {
           </p>
 
           <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
-            {TOP_UP_MULTIPLIERS.map((pack) => {
+            {packages.map((pack) => {
               const perCredit = pack.priceInr / pack.credits;
               return (
                 <div
-                  key={pack.multiplier}
+                  key={pack.id}
                   className={`relative flex flex-col rounded-2xl border bg-white p-6 shadow-sm ${
-                    pack.popular ? "border-indigo-600 ring-1 ring-indigo-600" : "border-slate-200"
+                    pack.displayOrder === 3 ? "border-indigo-600 ring-1 ring-indigo-600" : "border-slate-200"
                   }`}
                 >
-                  {pack.popular && (
+                  {pack.displayOrder === 3 && (
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                       <span className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white">
                         Best Value
@@ -177,14 +172,14 @@ export default function CreditManagementPage() {
 
                   <button
                     onClick={() => handlePurchase(pack)}
-                    disabled={loadingMultiplier === pack.multiplier}
+                    disabled={loadingMultiplier === pack.id}
                     className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                      pack.popular
+                      pack.displayOrder === 3
                         ? "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
                         : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
                     }`}
                   >
-                    {loadingMultiplier === pack.multiplier ? "Processing..." : "Top Up"}
+                    {loadingMultiplier === pack.id ? "Processing..." : "Top Up"}
                   </button>
                 </div>
               );

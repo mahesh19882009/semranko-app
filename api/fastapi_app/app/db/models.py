@@ -34,6 +34,7 @@ class User(Base):
     mobileVerificationExpiresAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
     mobileOtpAttempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     mobileOtpLastSentAt: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    isAdmin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     selectedPlan: Mapped[str] = mapped_column(String, nullable=False, default="free_trial", server_default="free_trial")
     subscriptionStatus: Mapped[str] = mapped_column(String, nullable=False, default="free", server_default="free")
@@ -252,8 +253,10 @@ class PaymentOrder(Base):
     amount: Mapped[int] = mapped_column(Integer, nullable=False)  # in paise, net amount actually paid
     credit_applied_paise: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # in paise
     currency: Mapped[str] = mapped_column(String, nullable=False, default="INR")
+    billingCycle: Mapped[str] = mapped_column(String, nullable=False, default="monthly", server_default="monthly")
     status: Mapped[str] = mapped_column(String, nullable=False, default="created", server_default="created")
     purchaseType: Mapped[str] = mapped_column(String, nullable=False, default="SUBSCRIPTION_UPGRADE", server_default="SUBSCRIPTION_UPGRADE")  # SUBSCRIPTION_UPGRADE or CREDIT_TOP_UP
+    topUpPackageId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("TopUpPackage.id", ondelete="SET NULL"), nullable=True)
     createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
     updatedAt: Mapped[datetime] = mapped_column(
         DateTime(timezone=False),
@@ -270,6 +273,71 @@ class PaymentOrder(Base):
         Index("PaymentOrder_razorpayOrderId_idx", "razorpayOrderId"),
     )
 
+
+class PlanCommercialConfig(Base):
+    """Runtime commercial values. Stable plan keys retain their application meaning."""
+    __tablename__ = "PlanCommercialConfig"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    planKey: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    monthlyPriceInr: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    monthlyPriceUsd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    projectLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    keywordLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    monthlyCredits: Mapped[int] = mapped_column(Integer, nullable=False)
+    automaticCredits: Mapped[int] = mapped_column(Integer, nullable=False)
+    manualRefreshLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    keywordResearchLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    competitorSpyLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint('"monthlyPriceInr" >= 0', name="plan_commercial_inr_non_negative"),
+        CheckConstraint('"monthlyPriceUsd" >= 0', name="plan_commercial_usd_non_negative"),
+        CheckConstraint('"projectLimit" >= 0', name="plan_commercial_projects_non_negative"),
+        CheckConstraint('"keywordLimit" >= 0', name="plan_commercial_keywords_non_negative"),
+        CheckConstraint('"monthlyCredits" >= 0', name="plan_commercial_monthly_credits_non_negative"),
+        CheckConstraint('"automaticCredits" >= 0 AND "automaticCredits" <= "monthlyCredits"', name="plan_commercial_automatic_credits_valid"),
+        CheckConstraint('"manualRefreshLimit" >= 0', name="plan_commercial_manual_non_negative"),
+        CheckConstraint('"keywordResearchLimit" >= 0', name="plan_commercial_research_non_negative"),
+        CheckConstraint('"competitorSpyLimit" >= 0', name="plan_commercial_spy_non_negative"),
+    )
+
+
+class TopUpPackage(Base):
+    __tablename__ = "TopUpPackage"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    credits: Mapped[int] = mapped_column(Integer, nullable=False)
+    priceInr: Mapped[float] = mapped_column(Float, nullable=False)
+    priceUsd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    isActive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    displayOrder: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint('"credits" > 0', name="topup_credits_positive"),
+        CheckConstraint('"priceInr" >= 0', name="topup_inr_non_negative"),
+        CheckConstraint('"priceUsd" >= 0', name="topup_usd_non_negative"),
+    )
+
+
+class CommercialConfigAudit(Base):
+    __tablename__ = "CommercialConfigAudit"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    adminUserId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="RESTRICT"), nullable=False)
+    entityType: Mapped[str] = mapped_column(String, nullable=False)
+    entityId: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    before: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
 
 class Subscription(Base):
     __tablename__ = "Subscription"
@@ -297,6 +365,30 @@ class Subscription(Base):
     __table_args__ = (
         Index("Subscription_userId_idx", "userId"),
         Index("Subscription_status_idx", "status"),
+    )
+
+
+class SubscriptionEntitlementSnapshot(Base):
+    """Immutable editable-commercial entitlement values for one user billing cycle."""
+    __tablename__ = "SubscriptionEntitlementSnapshot"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
+    userId: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"), nullable=False)
+    planKey: Mapped[str] = mapped_column(String, nullable=False)
+    cycleStart: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    cycleEnd: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=False), nullable=True)
+    projectLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    keywordLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    monthlyCredits: Mapped[int] = mapped_column(Integer, nullable=False)
+    automaticCredits: Mapped[int] = mapped_column(Integer, nullable=False)
+    manualRefreshLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    keywordResearchLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    competitorSpyLimit: Mapped[int] = mapped_column(Integer, nullable=False)
+    createdAt: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("entitlement_snapshot_user_cycle_key", "userId", "cycleStart", unique=True),
+        CheckConstraint('"automaticCredits" >= 0 AND "automaticCredits" <= "monthlyCredits"', name="snapshot_automatic_valid"),
     )
 
 

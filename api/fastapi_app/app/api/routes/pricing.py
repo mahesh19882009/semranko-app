@@ -9,16 +9,26 @@ from app.services.plan_service import (
     get_user_or_404,
     is_in_grace_period,
     get_grace_period_end,
-    list_available_plans,
+    get_credit_costs,
     validate_plan_change,
 )
+from app.services.commercial_config_service import plan_definitions, serialize_top_up, list_top_up_packages
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
 
 @router.get("/plans")
-def get_plans() -> dict:
-    return ok("Plans fetched", list_available_plans())
+def get_plans(db: Session = Depends(db_session)) -> dict:
+    plans = plan_definitions(db)
+    return ok("Plans fetched", [
+        {**plan, "limits": plan["limits"], "creditCosts": get_credit_costs()}
+        for plan in plans.values() if plan["key"] != "enterprise"
+    ])
+
+
+@router.get("/top-up-packages")
+def get_top_up_packages(db: Session = Depends(db_session)) -> dict:
+    return ok("Top-up packages fetched", [serialize_top_up(package) for package in list_top_up_packages(db)])
 
 
 @router.get("/current")

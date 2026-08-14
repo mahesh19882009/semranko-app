@@ -24,7 +24,7 @@ def test_migration_graph_has_one_head_and_unique_revisions():
     revision_ids = [revision.revision for revision in revisions]
 
     assert len(revision_ids) == len(set(revision_ids))
-    assert script.get_heads() == ["phase17_permanent_free_defaults"]
+    assert script.get_heads() == ["phase20_entitlement_snapshots"]
     assert script.get_revision("phase10_queue_refresh").down_revision == (
         "e5f6a7b8c9d0",
         "drop_unused_tables_phase7e",

@@ -9,6 +9,8 @@ class PlanDefinition(BaseModel):
     name: str
     monthly_price_inr: float
     yearly_price_inr: float
+    monthly_price_usd: float = 0
+    yearly_price_usd: float = 0
     domain_limit: int
     keyword_limit: int
     competitor_spy_limit: int
@@ -86,6 +88,9 @@ class Settings(BaseSettings):
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
     AUTH_COOKIE_SAMESITE: str = "lax"
     TURNSTILE_SECRET_KEY: Optional[str] = None
+    # Comma-separated emergency/bootstrap allow-list. Durable administrator
+    # assignment is User.isAdmin and should be managed through controlled ops.
+    ADMIN_EMAILS: str = ""
 
     @model_validator(mode='after')
     def validate_production_secrets(self):
@@ -156,6 +161,9 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
     RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
+    # Display pricing may be shown in USD, but checkout remains disabled until
+    # the Razorpay account has been approved for international USD payments.
+    RAZORPAY_USD_CHECKOUT_ENABLED: bool = False
     
     # SERP / DataForSEO
     SERP_API_LOGIN: Optional[str] = None
@@ -171,6 +179,8 @@ class Settings(BaseSettings):
                 name="Free",
                 monthly_price_inr=0,
                 yearly_price_inr=0,
+                monthly_price_usd=0,
+                yearly_price_usd=0,
                 domain_limit=1,
                 keyword_limit=5,
                 competitor_spy_limit=0,
@@ -191,7 +201,9 @@ class Settings(BaseSettings):
                 key="starter",
                 name="Starter",
                 monthly_price_inr=999,
-                yearly_price_inr=10789,
+                yearly_price_inr=10989,
+                monthly_price_usd=14,
+                yearly_price_usd=154,
                 domain_limit=1,
                 keyword_limit=100,
                 competitor_spy_limit=3,
@@ -212,7 +224,9 @@ class Settings(BaseSettings):
                 key="pro",
                 name="Pro",
                 monthly_price_inr=3999,
-                yearly_price_inr=43189,
+                yearly_price_inr=43989,
+                monthly_price_usd=52,
+                yearly_price_usd=572,
                 domain_limit=5,
                 keyword_limit=500,
                 competitor_spy_limit=10,
@@ -233,7 +247,9 @@ class Settings(BaseSettings):
                 key="agency",
                 name="Agency",
                 monthly_price_inr=9999,
-                yearly_price_inr=107989,
+                yearly_price_inr=109989,
+                monthly_price_usd=130,
+                yearly_price_usd=1430,
                 domain_limit=20,
                 keyword_limit=1500,
                 competitor_spy_limit=25,
@@ -255,6 +271,8 @@ class Settings(BaseSettings):
                 name="Enterprise",
                 monthly_price_inr=0,
                 yearly_price_inr=0,
+                monthly_price_usd=0,
+                yearly_price_usd=0,
                 domain_limit=999,
                 keyword_limit=999999,
                 competitor_spy_limit=5000,

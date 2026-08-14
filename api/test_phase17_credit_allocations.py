@@ -96,8 +96,8 @@ def test_final_plan_allocations_and_limits(plan, total, automatic, spendable, pr
     assert user.planCreditBalance == spendable
     assert user.creditBalance == spendable
     assert user.automaticCreditBalance == automatic
-    assert get_user_plan_limits(user)["domain_limit"] == projects
-    assert get_user_plan_limits(user)["keywordLimit"] == keywords
+    assert get_user_plan_limits(user, db)["domain_limit"] == projects
+    assert get_user_plan_limits(user, db)["keywordLimit"] == keywords
 
 
 def test_new_registration_receives_permanent_free_without_trial_expiry():
@@ -137,8 +137,8 @@ def test_historical_expired_trial_resolves_to_permanent_free_access():
 
     assert get_subscription_status(user) == "free"
     ensure_subscription_active(user)
-    assert get_user_plan_limits(user)["domain_limit"] == 1
-    assert get_user_plan_limits(user)["keywordLimit"] == 5
+    assert get_user_plan_limits(user, db)["domain_limit"] == 1
+    assert get_user_plan_limits(user, db)["keywordLimit"] == 5
     for feature in ("manual_refresh", "keyword_research", "competitor_spy"):
         with pytest.raises(ApiError) as error:
             ensure_feature_available(db, user.id, feature)

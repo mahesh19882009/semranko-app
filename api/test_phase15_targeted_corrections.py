@@ -108,7 +108,7 @@ def test_real_cache_wrappers_write_and_read_with_ttls():
 def test_configured_domain_limits_are_enforced(plan, domain_limit):
     db = make_db()
     user = make_user(db, plan=plan)
-    assert get_user_plan_limits(user)["domain_limit"] == domain_limit
+    assert get_user_plan_limits(user, db)["domain_limit"] == domain_limit
     for index in range(domain_limit):
         db.add(Project(id=f"p{index}", name="P", domain=f"{index}.example.com", userId=user.id))
     db.commit()
