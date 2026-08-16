@@ -5,7 +5,7 @@ import { Check, X, ArrowRight } from "lucide-react";
 
 import { Link, useNavigate } from "../lib/navigation";
 import { isAuthenticated } from "../utils/auth";
-import { apiRequest, initRazorpayCheckout } from "../lib/api";
+import { apiRequest, initRazorpayCheckout, normalizeApiError } from "../lib/api";
 import {
   createPaymentOrderApi,
   verifyPaymentApi,
@@ -89,7 +89,7 @@ export default function PricingPage() {
             setSuccess(`Successfully updated to ${plan.name}.`);
             dispatch(fetchCurrentPricing());
           } catch (paymentError) {
-            setError(paymentError.message || "Payment verification failed.");
+            setError(normalizeApiError(paymentError, "Payment verification failed.").message);
           } finally {
             setLoadingPlan(null);
           }
@@ -108,7 +108,7 @@ export default function PricingPage() {
         },
       });
     } catch (requestError) {
-      setError(requestError.message || "Unable to start checkout.");
+      setError(normalizeApiError(requestError, "Unable to start checkout.").message);
       setLoadingPlan(null);
     }
   };
@@ -257,10 +257,14 @@ function PlanCard({
   return (
     <Card
       padding="p-6"
-      className={`flex min-h-[34rem] flex-col ${plan.highlighted ? "border-brand-500 ring-1 ring-brand-500" : ""}`}
+      className={`flex min-h-[34rem] flex-col ${plan.highlighted ? "border-brand-500 ring-1 ring-brand-500" : ""} ${isCurrent ? "border-brand-300 bg-brand-50/50" : ""}`}
     >
       <div>
-        <p className="text-lg font-bold text-text-primary">{plan.name}</p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-lg font-bold text-text-primary">{plan.name}</p>
+          {plan.key === "pro" && <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">Most Popular</span>}
+          {isCurrent && <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-xs font-semibold text-text-primary">Current Plan</span>}
+        </div>
         <p className="mt-2 min-h-12 text-sm leading-5 text-text-secondary">
           {plan.description}
         </p>

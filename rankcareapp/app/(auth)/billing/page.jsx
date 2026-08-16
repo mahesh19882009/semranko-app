@@ -1,4 +1,4 @@
-import CreditManagementPage from '@/src/views/CreditManagementPage'
+import BillingPage from '@/src/views/BillingPage'
 
 export const metadata = {
   title: 'Billing & Credits - RankCare',
@@ -6,5 +6,5 @@ export const metadata = {
 }
 
 export default function Page() {
-  return <CreditManagementPage />
+  return <BillingPage />
 }

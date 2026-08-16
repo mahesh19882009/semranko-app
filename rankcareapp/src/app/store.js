@@ -6,6 +6,7 @@ import keywordsReducer from '../features/keywords/keywordsSlice';
 import pricingReducer from '../features/pricing/pricingSlice';
 import subscriptionReducer from '../features/subscription/subscriptionSlice';
 import settingsReducer from '../features/settings/settingsSlice';
+import authReducer from '../features/auth/authSlice';
 
 export const store = configureStore({
   reducer: {
@@ -15,5 +16,6 @@ export const store = configureStore({
     pricing: pricingReducer,
     subscription: subscriptionReducer,
     settings: settingsReducer,
+    auth: authReducer,
   }
 });
