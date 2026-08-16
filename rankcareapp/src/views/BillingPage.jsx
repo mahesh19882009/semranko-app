@@ -10,6 +10,7 @@ import {
   downloadInvoiceApi,
   createCreditTopUpOrderApi,
   fetchCreditBalanceApi,
+  fetchTopUpPackagesApi,
 } from "../features/pricing/pricingApi";
 import { useSelector, useDispatch } from "react-redux";
 import { fetchCurrentPricing, updateCreditBalance } from "../features/pricing/pricingSlice";
@@ -61,10 +62,13 @@ export default function BillingPage() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [historyError, setHistoryError] = useState(null);
 
+  const [packages, setPackages] = useState([]);
+  const [loadingPackages, setLoadingPackages] = useState(true);
+  const [packagesError, setPackagesError] = useState(null);
+  const [selectedPackageId, setSelectedPackageId] = useState(null);
   const [loadingPack, setLoadingPack] = useState(null);
   const [paymentError, setPaymentError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
-  const [multiplier, setMultiplier] = useState(1);
   const [topUpError, setTopUpError] = useState("");
 
   useEffect(() => {
@@ -74,6 +78,7 @@ export default function BillingPage() {
     }
     loadHistory();
     loadCreditBalance();
+    loadPackages();
     dispatch(fetchCurrentPricing());
   }, [authenticated, dispatch]);
 
@@ -101,25 +106,33 @@ export default function BillingPage() {
     }
   };
 
-  const handleCustomPurchase = async () => {
+  const loadPackages = async () => {
+    setLoadingPackages(true);
+    setPackagesError(null);
+    try {
+      const data = await fetchTopUpPackagesApi();
+      const items = Array.isArray(data) ? data : [];
+      setPackages(items);
+      if (items.length > 0 && !selectedPackageId) {
+        setSelectedPackageId(items[0].id);
+      }
+    } catch (err) {
+      setPackagesError(err.message || "Failed to load top-up packages");
+    } finally {
+      setLoadingPackages(false);
+    }
+  };
+
+  const selectedPackage = packages.find((pkg) => pkg.id === selectedPackageId) || null;
+
+  const handlePurchase = async (pack) => {
     setTopUpError("");
     setPaymentError(null);
     setSuccessMessage(null);
-
-    if (multiplier < 1) {
-      setTopUpError("Minimum multiplier is 1 (600 credits).");
-      return;
-    }
-
-    const basePrice = multiplier * 100;
-    const discountPct = pricingCurrent?.individual_discount_pct || 0;
-    const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
-    const cleanPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
-
-    setLoadingPack(multiplier);
+    setLoadingPack(pack.id);
 
     try {
-      const order = await createCreditTopUpOrderApi(multiplier);
+      const order = await createCreditTopUpOrderApi(pack.id);
 
       await initRazorpayCheckout({
         order_id: order.order_id,
@@ -138,10 +151,10 @@ export default function BillingPage() {
               response.razorpay_signature
             );
             if (verifyResult?.success) {
-              const added = verifyResult.data?.credits_added || (multiplier * 600);
+              const added = verifyResult.data?.credits_added || pack.credits;
               const newBalance = verifyResult.data?.new_balance;
               setSuccessMessage(`Successfully topped up ${added.toLocaleString()} credits!`);
-              setMultiplier(1);
+              setSelectedPackageId(pack.id);
 
               if (newBalance !== undefined) {
                 dispatch(updateCreditBalance(newBalance));
@@ -317,104 +330,56 @@ export default function BillingPage() {
           )}
         </Card>
 
-        {/* Razorpay Tier Grid */}
-        < div >
+        {/* Purchase Credits */}
+        <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-900">Purchase Credits</h2>
 
-          <div className="mt-4 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-            <p className="font-semibold">💡 Credit Top-Up: 600 credits per ₹100. All payments processed with 18% GST applied at payment time.</p>
-          </div>
+          <p className="font-semibold">
+            💡 Need more credits? Choose a Top-Up package below. 18% GST will be applied at payment time.
+          </p>
 
-          {/* Credit Top-Up Form */}
-          <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Credit Top-Up</h3>
-
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="multiplier-input" className="block text-sm font-medium text-slate-700 mb-2">
-                  Select Credit Pack (each pack = 600 credits)
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    id="multiplier-input"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={multiplier}
-                    onChange={(e) => setMultiplier(Math.max(1, parseInt(e.target.value) || 1))}
-                    disabled={loadingPack}
-                    className="w-24 rounded-xl border border-slate-300 px-4 py-3 text-center text-sm outline-none focus:border-slate-900 disabled:bg-slate-50 disabled:cursor-not-allowed"
-                  />
-                  <span className="text-sm text-slate-500">pack(s) = {(multiplier * 600).toLocaleString()} credits</span>
-                </div>
-                {topUpError && (
-                  <p className="mt-2 text-sm font-medium text-rose-600">{topUpError}</p>
-                )}
-              </div>
-
-              {/* Live Price Calculator */}
-              {multiplier >= 1 && (
-                <div className="rounded-lg bg-slate-50 px-4 py-3">
-                  {(() => {
-                    const basePrice = multiplier * 100;
-                    const discountPct = pricingCurrent?.individual_discount_pct || 0;
-                    const discountedPrice = discountPct > 0 ? basePrice * (1 - discountPct / 100) : basePrice;
-                    const cleanPrice = Number.isInteger(discountedPrice) ? discountedPrice : Math.round(discountedPrice);
-                    const gstAmount = cleanPrice * 0.18;
-                    const totalWithGst = cleanPrice + gstAmount;
-                    return (
-                      <>
-                        {discountPct > 0 ? (
-                          <div className="space-y-1">
-                            <p className="text-sm text-slate-400 line-through">
-                              Base Price: ₹{basePrice.toLocaleString('en-US')}
-                            </p>
-                            <p className="text-sm font-semibold text-slate-900">
-                              Your Price: ₹{cleanPrice.toLocaleString('en-US')} ({discountPct}% off)
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              GST (18%): ₹{gstAmount.toFixed(2)}
-                            </p>
-                            <p className="text-sm font-bold text-slate-900">
-                              Total: ₹{totalWithGst.toFixed(2)}
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              {(multiplier * 600).toLocaleString()} credits
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <p className="text-sm text-slate-600">
-                              Base Price: ₹{cleanPrice.toLocaleString('en-US')}
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              GST (18%): ₹{gstAmount.toFixed(2)}
-                            </p>
-                            <p className="text-sm font-bold text-slate-900">
-                              Total: ₹{totalWithGst.toFixed(2)}
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              {(multiplier * 600).toLocaleString()} credits
-                            </p>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-
-              <Button
-                onClick={() => handleCustomPurchase()}
-                disabled={loadingPack || multiplier < 1}
-                loading={loadingPack}
-                fullWidth
-              >
-                {loadingPack ? "Processing..." : "Proceed to Payment"}
-              </Button>
+          {packagesError && (
+            <div className="mt-4">
+              <Alert variant="error" message={packagesError} />
             </div>
+          )}
+
+          {/* Predefined Package Cards */}
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {loadingPackages
+              ? [1, 2, 3, 4, 5].map((n) => (
+                <div key={n} className="h-40 animate-pulse rounded-2xl bg-slate-200" />
+              ))
+              : packages.map((pack) => (
+                <div
+                  key={pack.id}
+                  className={`relative flex flex-col rounded-2xl border bg-white p-5 shadow-sm ${selectedPackageId === pack.id ? "border-brand-500 ring-1 ring-brand-500" : "border-slate-200"
+                    }`}
+                >
+                  <div className="mb-3">
+                    <p className="text-2xl font-bold text-slate-900">{pack.credits.toLocaleString('en-US')}</p>
+                    <p className="text-sm text-slate-500">credits</p>
+                  </div>
+                  <div className="mb-4">
+                    <span className="text-xl font-bold text-slate-900">₹{pack.priceInr.toLocaleString('en-US')}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedPackageId(pack.id);
+                      handlePurchase(pack);
+                    }}
+                    disabled={loadingPack === pack.id}
+                    className={`w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition ${selectedPackageId === pack.id
+                        ? "bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60"
+                        : "bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60"
+                      }`}
+                  >
+                    {loadingPack === pack.id ? "Processing..." : "Buy Now"}
+                  </button>
+                </div>
+              ))}
           </div>
-        </div >
+        </div>
 
         {/* Alerts */}
         {
