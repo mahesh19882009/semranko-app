@@ -122,7 +122,11 @@ start_worker_supervisor() {
   while true; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RQ worker..." >> /tmp/rq-worker.log
 
-    "$PROJECT_DIR/.venv/bin/rq" worker rank-check >> /tmp/rq-worker.log 2>&1
+    "$PROJECT_DIR/.venv/bin/rq" worker \
+      --url "redis://127.0.0.1:6379/0" \
+      --worker-ttl 3600 \
+      --maintenance-interval 60 \
+      rank-check >> /tmp/rq-worker.log 2>&1
     WORKER_EXIT_CODE=$?
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] RQ worker exited with code $WORKER_EXIT_CODE" >> /tmp/rq-worker.log
