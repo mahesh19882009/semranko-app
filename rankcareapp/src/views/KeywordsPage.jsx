@@ -430,8 +430,42 @@ function KeywordsPage() {
           ? addKeywordToProject.fulfilled.match(resultAction)
           : bulkAddKeywords.fulfilled.match(resultAction))
       ) {
+        setProcessingJobs((current) => {
+          const existing = new Map(
+            current.map((job) => [
+              String(job.keyword || '').trim().toLowerCase(),
+              job,
+            ])
+          );
+
+          for (const keyword of parsed) {
+            const key = String(keyword).trim().toLowerCase();
+
+            existing.set(key, {
+              id: `processing:${key}`,
+              keyword,
+              status: 'processing',
+              position: null,
+              check_url: null,
+              ai_badge: null,
+              volume: null,
+              kd: null,
+              cpc: null,
+              competition: null,
+              backlinks: null,
+              referring_domains: null,
+              intent: null,
+            });
+          }
+
+          return Array.from(existing.values());
+        });
+
         setKeywordText('');
         setIsAddModalOpen(false);
+
+        // Fetch the DB row once after creation.
+        // SSE will fetch again when processing actually completes.
         setTimeout(fetchTableData, 500);
       }
     } finally {
@@ -470,6 +504,37 @@ function KeywordsPage() {
       );
 
       if (bulkAddKeywords.fulfilled.match(resultAction)) {
+        setProcessingJobs((current) => {
+          const existing = new Map(
+            current.map((job) => [
+              String(job.keyword || '').trim().toLowerCase(),
+              job,
+            ])
+          );
+
+          for (const keyword of csvPreview) {
+            const key = String(keyword).trim().toLowerCase();
+
+            existing.set(key, {
+              id: `processing:${key}`,
+              keyword,
+              status: 'processing',
+              position: null,
+              check_url: null,
+              ai_badge: null,
+              volume: null,
+              kd: null,
+              cpc: null,
+              competition: null,
+              backlinks: null,
+              referring_domains: null,
+              intent: null,
+            });
+          }
+
+          return Array.from(existing.values());
+        });
+
         setCsvPreview([]);
         setTimeout(fetchTableData, 500);
       }
