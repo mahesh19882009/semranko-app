@@ -115,6 +115,9 @@ function KeywordsPage() {
   const [deactivatingId, setDeactivatingId] = useState(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
+  const [processingJobs, setProcessingJobs] = useState([]);
+  const [processingPolling, setProcessingPolling] = useState(null);
+  const [tableKey, setTableKey] = useState(0);
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -167,8 +170,57 @@ function KeywordsPage() {
     dispatch(fetchSubscriptionStatus());
   }, [dispatch]);
 
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setProcessingJobs([]);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const json = await apiRequest(`/keywords/${selectedProjectId}/processing`);
+        if (json.success) {
+          setProcessingJobs(json.data || []);
+          const stillProcessing = (json.data || []).some((job) => job.status === 'pending' || job.status === 'processing');
+          if (!stillProcessing) {
+            clearInterval(pollingRef.current);
+            setTableKey((k) => k + 1);
+            fetchTableData();
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+    const pollingRef = { current: setInterval(poll, 3000) };
+    poll();
+    return () => clearInterval(pollingRef.current);
+  }, [selectedProjectId, dispatch]);
+
   const filteredData = useMemo(() => {
     let rows = [...tableData];
+    const existingIds = new Set(rows.map((r) => r.id));
+    for (const job of processingJobs) {
+      if (!existingIds.has(job.id) && job.keyword) {
+        rows.push({
+          id: job.id,
+          keyword: job.keyword,
+          position: job.position,
+          check_url: job.check_url,
+          hasAIOverview: job.ai_badge === 'AIO',
+          ai_description: null,
+          volume: job.volume,
+          kd: job.kd,
+          cpc: job.cpc,
+          competition: job.competition,
+          backlinks: job.backlinks,
+          domains: job.referring_domains,
+          intent: job.intent,
+          visibility: job.position != null ? (job.position <= 10 ? Math.round((1 - (job.position - 1) * 0.1) * 100) / 100 : 0.05) : 0,
+          is_active: true,
+          status: 'processing',
+        });
+      }
+    }
     if (globalFilter.trim()) {
       const q = globalFilter.toLowerCase();
       rows = rows.filter((r) => r.keyword.toLowerCase().includes(q));
@@ -177,7 +229,7 @@ function KeywordsPage() {
     if (rankFilter === 'top10') rows = rows.filter((r) => r.position !== null && r.position <= 10);
     if (rankFilter === 'not-ranking') rows = rows.filter((r) => r.position === null || r.position === undefined);
     return rows;
-  }, [tableData, globalFilter, rankFilter]);
+  }, [tableData, processingJobs, globalFilter, rankFilter]);
 
   const aioCount = useMemo(() => {
     return tableData.filter((r) => r.hasAIOverview).length;
@@ -461,7 +513,7 @@ function KeywordsPage() {
       setActionMessage(`${data.updated || 0} keyword(s) refreshed; ${data.skipped || 0} skipped.`);
       setSelectedIds([]);
       dispatch(fetchSubscriptionStatus());
-      await fetchTableData();
+      setTableKey((k) => k + 1);
     } catch (err) {
       setTableError(err.message || 'Manual refresh failed');
     } finally {
@@ -673,87 +725,87 @@ function KeywordsPage() {
 
       <section className="rounded-xs border border-slate-200 bg-white shadow-soft">
         <div className="overflow-x-auto" aria-label="Keyword table. Scroll horizontally to view all columns.">
-        <DataTable
-          value={filteredData}
-          paginator
-          rows={10}
-          rowsPerPageOptions={[10, 20, 50, 100]}
-          selection={selectedIds}
-          onSelectionChange={(e) => setSelectedIds(e.value)}
-          selectionMode="multiple"
-          sortField="keyword"
-          sortOrder={1}
-          removableSort
-          dataKey="id"
-          header={headerTemplate}
-          emptyMessage="No keywords found. Add keywords to get started."
-          loading={tableLoading}
-          tableStyle={{ minWidth: '60rem', width: '100%' }}
-          className="compact-datatable"
-          scrollable
-          scrollHeight="flex"
-          frozenWidth="18rem"
-        >
-          <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
-          <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
-          <Column header="Status" body={statusBodyTemplate} style={{ width: '8rem' }} />
-          <Column field="volume" header="Volume" sortable style={{ width: '8rem' }} />
-          <Column field="kd" header={
-            <TippyTooltip content="Keyword Difficulty (0-100) — how hard it is to rank" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>KD</span>
-            </TippyTooltip>
-          } sortable style={{ width: '6rem' }} />
-          <Column field="cpc" header={
-            <TippyTooltip content="Cost per click in INR" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>CPC</span>
-            </TippyTooltip>
-          } sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
-          <Column field="competition" header={
-            <TippyTooltip content="Competition level (0-1) for paid search" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Competition</span>
-            </TippyTooltip>
-          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
-          <Column field="backlinks" header={
-            <TippyTooltip content="Total backlinks pointing to this page" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Backlinks</span>
-            </TippyTooltip>
-          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
-          <Column field="domains" header={
-            <TippyTooltip content="Number of referring domains" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Domains</span>
-            </TippyTooltip>
-          } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
-          <Column field="intent" header={
-            <TippyTooltip content="Search intent: informational, navigational, commercial, transactional" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Intent</span>
-            </TippyTooltip>
-          } style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
-          <Column field="position" header={
-            <TippyTooltip content="Current organic rank position (1 = top)" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>
-            </TippyTooltip>
-          } sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
-          <Column field="visibility" header={
-            <TippyTooltip content="Estimated visibility score based on rank position" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Visibility</span>
-            </TippyTooltip>
-          } sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
-          <Column header={
-            <TippyTooltip content="URL where this keyword ranks" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Ranking URL</span>
-            </TippyTooltip>
-          } style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
-          <Column header={
-            <TippyTooltip content="AI Overview presence and description" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>AI Overview</span>
-            </TippyTooltip>
-          } style={{ width: '8rem' }} body={aiBodyTemplate} />
-          <Column header={
-            <TippyTooltip content="Keyword actions" placement="top" appendTo={document.body}>
-              <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Actions</span>
-            </TippyTooltip>
-          } body={actionBodyTemplate} style={{ width: '5rem' }} />
-        </DataTable>
+          <DataTable
+            value={filteredData}
+            paginator
+            rows={10}
+            rowsPerPageOptions={[10, 20, 50, 100]}
+            selection={selectedIds}
+            onSelectionChange={(e) => setSelectedIds(e.value)}
+            selectionMode="multiple"
+            sortField="keyword"
+            sortOrder={1}
+            removableSort
+            dataKey="id"
+            header={headerTemplate}
+            emptyMessage="No keywords found. Add keywords to get started."
+            loading={tableLoading}
+            tableStyle={{ minWidth: '60rem', width: '100%' }}
+            className="compact-datatable"
+            scrollable
+            scrollHeight="flex"
+            frozenWidth="18rem"
+          >
+            <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
+            <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
+            <Column header="Status" body={statusBodyTemplate} style={{ width: '8rem' }} />
+            <Column field="volume" header="Volume" sortable style={{ width: '8rem' }} />
+            <Column field="kd" header={
+              <TippyTooltip content="Keyword Difficulty (0-100) — how hard it is to rank" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>KD</span>
+              </TippyTooltip>
+            } sortable style={{ width: '6rem' }} />
+            <Column field="cpc" header={
+              <TippyTooltip content="Cost per click in INR" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>CPC</span>
+              </TippyTooltip>
+            } sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
+            <Column field="competition" header={
+              <TippyTooltip content="Competition level (0-1) for paid search" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Competition</span>
+              </TippyTooltip>
+            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
+            <Column field="backlinks" header={
+              <TippyTooltip content="Total backlinks pointing to this page" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Backlinks</span>
+              </TippyTooltip>
+            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
+            <Column field="domains" header={
+              <TippyTooltip content="Number of referring domains" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Domains</span>
+              </TippyTooltip>
+            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
+            <Column field="intent" header={
+              <TippyTooltip content="Search intent: informational, navigational, commercial, transactional" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Intent</span>
+              </TippyTooltip>
+            } style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
+            <Column field="position" header={
+              <TippyTooltip content="Current organic rank position (1 = top)" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>
+              </TippyTooltip>
+            } sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
+            <Column field="visibility" header={
+              <TippyTooltip content="Estimated visibility score based on rank position" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Visibility</span>
+              </TippyTooltip>
+            } sortable style={{ width: '8rem' }} body={visibilityBodyTemplate} />
+            <Column header={
+              <TippyTooltip content="URL where this keyword ranks" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Ranking URL</span>
+              </TippyTooltip>
+            } style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
+            <Column header={
+              <TippyTooltip content="AI Overview presence and description" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>AI Overview</span>
+              </TippyTooltip>
+            } style={{ width: '8rem' }} body={aiBodyTemplate} />
+            <Column header={
+              <TippyTooltip content="Keyword actions" placement="top" appendTo={document.body}>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Actions</span>
+              </TippyTooltip>
+            } body={actionBodyTemplate} style={{ width: '5rem' }} />
+          </DataTable>
         </div>
 
         {selectedIds.length > 0 && (
@@ -770,10 +822,11 @@ function KeywordsPage() {
             </div>
           </div>
         )}
-
-        {manualLocked && <Alert variant="warning" message="Manual Refresh is available on paid plans. Upgrade to continue. Automatic tracking is not included on Free." />}
-        {actionMessage && <Alert variant="success" message={actionMessage} />}
-        {tableError && <Alert variant="error" message={tableError} />}
+        <div className="p-2">
+          {manualLocked && <Alert variant="warning" message="Manual Refresh is available on paid plans. Upgrade to continue. Automatic tracking is not included on Free." />}
+          {actionMessage && <Alert variant="success" message={actionMessage} />}
+          {tableError && <Alert variant="error" message={tableError} />}
+        </div>
       </section>
 
       <Modal

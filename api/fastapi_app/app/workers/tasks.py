@@ -1,4 +1,5 @@
 import random
+import logging
 from datetime import datetime
 from typing import Optional
 import requests
@@ -54,13 +55,36 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict], u
 
     refresh_cost = 10
     try:
-        rank_map = DataForSEOClient.get_rank_batch(keywords, domain, aio_keyword_texts=aio_keyword_texts)
-    except Exception as exc:
+        rank_map = DataForSEOClient.get_rank_batch(
+            keywords,
+            domain,
+            aio_keyword_texts=aio_keyword_texts,
+        )
+    except Exception:
         if user_id and reference:
+            refund_db = SessionLocal()
+
             try:
-                refund_reserved(db, user_id, reference, float(len(keywords) * refresh_cost), description=f"Refund: rank check failed for project {project_id}", project_id=project_id)
-            except Exception:
-                pass
+                refund_reserved(
+                    refund_db,
+                    user_id,
+                    reference,
+                    float(len(keywords) * refresh_cost),
+                    description=f"Refund: rank check failed for project {project_id}",
+                    project_id=project_id,
+                )
+            except Exception as refund_exc:
+                logging.getLogger(__name__).error(
+                    "Failed to refund rank-check reservation "
+                    "user=%s project=%s reference=%s: %s",
+                    user_id,
+                    project_id,
+                    reference,
+                    refund_exc,
+                )
+            finally:
+                refund_db.close()
+
         raise
 
     rows = []
@@ -105,6 +129,23 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict], u
                 kw_obj.updatedAt = datetime.utcnow()
 
         db.commit()
+
+        if user_id and reference:
+            try:
+                consume_reserved(
+                    db,
+                    user_id,
+                    reference,
+                    float(len(keywords) * refresh_cost),
+                    action_type="charge",
+                    description=f"Rank check: {len(keywords)} keyword(s) for project {project_id}",
+                    project_id=project_id,
+                )
+            except Exception:
+                # Ranking result is already valid and persisted.
+                # Credit reservation finalization must not delete the result.
+                pass
+
         return {"inserted": len(rows)}
 
     except Exception:
@@ -112,20 +153,6 @@ def process_rank_check_job(project_id: str, domain: str, keywords: list[dict], u
         raise
     finally:
         db.close()
-
-    if user_id and reference:
-        try:
-            consume_reserved(
-                db,
-                user_id,
-                reference,
-                float(len(keywords) * refresh_cost),
-                action_type="charge",
-                description=f"Rank check: {len(keywords)} keyword(s) for project {project_id}",
-                project_id=project_id,
-            )
-        except Exception as exc:
-            logger.error(f"Failed to consume reserved credits for rank check: {exc}")
 
 
 def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: list[str], keywords: list[dict]) -> dict:
@@ -209,3 +236,13 @@ def process_competitor_rank_job(project_id: str, domain: str, competitor_ids: li
         raise
     finally:
         db.close()
+
+
+def process_refresh_jobs() -> dict:
+    """
+    RQ entrypoint for processing pending ProcessingJob records.
+    Reuses the existing refresh worker logic in a background RQ worker.
+    """
+    from app.workers.refresh_worker import run_refresh_worker
+
+    return run_refresh_worker()

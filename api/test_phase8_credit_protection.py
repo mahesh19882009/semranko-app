@@ -23,7 +23,22 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
 
-from app.db.models import Base, User, Project, Keyword, CreditLedger, PendingWebhookCredit, AsyncTaskQueue, Competitor, CompetitorRank, RankResult, DataForSEOCost
+from app.db.models import (
+    Base,
+    User,
+    Project,
+    Keyword,
+    CreditLedger,
+    PendingWebhookCredit,
+    AsyncTaskQueue,
+    Competitor,
+    CompetitorRank,
+    RankResult,
+    DataForSEOCost,
+    RefreshJob,
+    ProcessingJob,
+)
+from app.services.async_tracking_service import submit_user_tracking_job
 from app.services.credit_service import reserve_credits, consume_reserved, refund_reserved, check_credits, deduct_credits
 from app.services.dataforseo_client import DataForSEOClient, _log_dataforseo_cost, _estimate_dataforseo_cost
 from app.services.profitability_reporting_service import calculate_plan_profitability, get_profitability_summary
@@ -232,55 +247,144 @@ class TestWebhookIdempotency:
     def teardown_method(self):
         self.db.close()
 
-    def test_webhook_does_not_double_charge_on_retry(self):
-        user = make_user(self.db, user_id="user-9", credit_balance=20.0)
-        project = Project(id="p9", name="Test9", domain="test.com", userId=user.id)
-        keyword = Keyword(id="k9", projectId=project.id, userId=user.id, keyword="test kw", location="Ghaziabad", isActive=True)
-        async_task = AsyncTaskQueue(
-            id="task-1",
-            taskType="rank_tracking",
-            status="processing",
-            keywordsJson='[{"keyword": "test kw", "location": "India"}]',
-            userId=user.id,
-            projectId=project.id,
-            resultJson=json.dumps({"dataforseo_task_ids": ["task-1"], "processed_task_ids": [], "charged_keyword_ids": []}),
+    def test_duplicate_webhook_reuses_existing_processing_job(self):
+        user = make_user(
+            self.db,
+            user_id="user-9",
+            credit_balance=200.0,
         )
-        self.db.add_all([user, project, keyword, async_task])
+
+        project = Project(
+            id="p9",
+            name="Test9",
+            domain="example.com",
+            userId=user.id,
+        )
+
+        keyword = Keyword(
+            id="k9",
+            projectId=project.id,
+            userId=user.id,
+            keyword="test kw",
+            location="India",
+            device="desktop",
+            isActive=True,
+        )
+
+        self.db.add_all([project, keyword])
         self.db.commit()
 
+        mock_response = {
+            "tasks": [{
+                "id": "task-1",
+                "data": {"keyword": "test kw"},
+                "cost": 0.0,
+                "status_code": 20000,
+            }]
+        }
+
+        with patch(
+            "app.services.dataforseo_client.requests.post",
+            return_value=MagicMock(
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                json=MagicMock(return_value=mock_response),
+            ),
+        ), patch(
+            "app.services.async_tracking_service._get_cached_serp",
+            return_value=None,
+        ):
+            submit_user_tracking_job(
+                db=self.db,
+                user_id=user.id,
+                project_id=project.id,
+                keywords=[{"keyword": "test kw"}],
+                domain=project.domain,
+                action="add_keyword",
+                location_code=2840,
+                depth=100,
+                cost_per_keyword=20,
+            )
+
+        refresh_job = self.db.scalar(
+            select(RefreshJob).where(
+                RefreshJob.jobType == "add_keyword"
+            )
+        )
+
+        assert refresh_job is not None
+        refresh_job_id = refresh_job.id
+
+        processing_jobs = self.db.scalars(
+            select(ProcessingJob).where(
+                ProcessingJob.refreshJobId == refresh_job_id
+            )
+        ).all()
+
+        assert len(processing_jobs) == 1
+
         from app.api.routes.webhooks import dataforseo_webhook
+        from fastapi import Request
+        import app.api.routes.webhooks as webhooks_mod
 
-        class FakeRequest:
-            async def json(self):
-                return {
-                    "task_id": "task-1",
-                    "tasks": [{
-                        "data": {"keyword": "test kw", "location_code": 2356},
-                        "result": [{
-                            "items": [{"type": "organic", "url": "https://example.com", "rank_group": 5}]
-                        }]
+        webhook_payload = {
+            "task_id": "task-1",
+            "tasks": [{
+                "data": {
+                    "keyword": "test kw",
+                    "location_code": 2840,
+                },
+                "result": [{
+                    "items": [{
+                        "type": "organic",
+                        "url": "https://example.com",
+                        "domain": "example.com",
+                        "rank_group": 5,
                     }]
-                }
-            def __init__(self):
-                self.query_params = MagicMock()
-                self.query_params.get.return_value = None
+                }]
+            }]
+        }
 
-        mock_request = FakeRequest()
+        def make_request():
+            request = Request({
+                "type": "http",
+                "method": "POST",
+                "headers": [
+                    (b"content-type", b"application/json"),
+                ],
+                "query_string": b"",
+            })
+            request._body = json.dumps(webhook_payload).encode("utf-8")
+            return request
 
-        with patch("app.api.routes.webhooks.SessionLocal") as MockSessionLocal, \
-             patch("app.services.credit_service.settings") as mock_settings:
-            MockSessionLocal.return_value = self.db
-            mock_settings.plan_config.credit_costs = {"weekly_refresh_per_keyword": 10}
-            
-            result = asyncio.run(dataforseo_webhook(mock_request))
-            
-            assert result["created"] == 1
-            assert result["skipped"] == 0
+        original_sessionlocal = webhooks_mod.SessionLocal
+        webhooks_mod.SessionLocal = lambda: self.db
 
-            result2 = asyncio.run(dataforseo_webhook(mock_request))
-            assert result2.get("created", 0) == 0
-            assert "already processed" in result2.get("message", "")
+        try:
+            result1 = asyncio.run(
+                dataforseo_webhook(make_request())
+            )
 
+            result2 = asyncio.run(
+                dataforseo_webhook(make_request())
+            )
+
+            assert result1.get("updated") == 1
+            assert result1.get("skipped") == 0
+
+            assert result2.get("updated") == 1
+            assert result2.get("skipped") == 0
+
+            jobs = self.db.scalars(
+                select(ProcessingJob).where(
+                    ProcessingJob.refreshJobId == refresh_job_id
+                )
+            ).all()
+
+            assert len(jobs) == 1
+
+        finally:
+            webhooks_mod.SessionLocal = original_sessionlocal
 
 class TestDFSCostInstrumentation:
     """Test DFS cost logging."""

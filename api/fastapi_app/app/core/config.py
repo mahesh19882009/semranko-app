@@ -54,6 +54,14 @@ class PlanConfig(BaseModel):
     plans: dict[str, PlanDefinition]
     credit_costs: dict[str, float]
     dataforseo_costs: dict[str, float]
+    serp_priorities: dict[str, int | None] = {
+        "add_keyword": None,
+        "bulk_add": None,
+        "manual_refresh": None,
+        "automatic": None,
+        "weekly": None,
+        "monthly": None,
+    }
     top_up: TopUpConfig
     conversion: ConversionConfig
     billing: BillingConfig

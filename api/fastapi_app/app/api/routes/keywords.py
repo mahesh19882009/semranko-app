@@ -13,6 +13,7 @@ from app.db.models import Keyword, Project, RankResult
 from app.services.keyword_table_service import get_enriched_keywords
 from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
 from app.services.credit_service import deduct_credits, refund_credits, reserve_credits, consume_reserved
+from app.services.async_tracking_service import submit_user_tracking_job, get_user_processing_jobs
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
 from app.services.plan_service import (
     get_user_or_404,
@@ -328,14 +329,26 @@ def create_keyword(
     db.flush()
 
     try:
-        logger.info("CREATE_KEYWORD: calling _apply_day_one_tracking for keyword=%s", normalized_keyword)
+        logger.info("CREATE_KEYWORD: calling submit_user_tracking_job for keyword=%s", normalized_keyword)
         single_cost = settings.plan_config.credit_costs.get("add_keyword", 20)
-        tracked = _apply_day_one_tracking(db, user["userId"], normalized_keyword, location_code, project.domain, cost=single_cost)
-        if not tracked:
+        tracking = submit_user_tracking_job(
+            db=db,
+            user_id=user["userId"],
+            project_id=project_id,
+            keywords=[{"keyword": normalized_keyword}],
+            domain=project.domain,
+            action="add_keyword",
+            location_code=location_code,
+            language_code="en",
+            device=payload.get("device") or "desktop",
+            depth=100,
+            cost_per_keyword=single_cost,
+        )
+        if not tracking.get("refresh_job_id"):
             db.rollback()
-            raise ApiError(502, f"Day-one tracking returned no data for \"{normalized_keyword}\". Keyword was not added.")
+            raise ApiError(502, f"Tracking job was not created for \"{normalized_keyword}\". Keyword was not added.")
         db.refresh(keyword)
-        logger.info("CREATE_KEYWORD: day-one tracking completed for keyword=%s", normalized_keyword)
+        logger.info("CREATE_KEYWORD: tracking job submitted for keyword=%s", normalized_keyword)
     except ApiError:
         raise
     except Exception as exc:
@@ -360,6 +373,8 @@ def create_keyword(
         "isActive": keyword.isActive,
         "createdAt": keyword.createdAt.isoformat() if keyword.createdAt else None,
         "updatedAt": keyword.updatedAt.isoformat() if keyword.updatedAt else None,
+        "refresh_job_id": tracking.get("refresh_job_id"),
+        "status": "tracking",
     }
     return JSONResponse(status_code=201, content={"success": True, "message": "Keyword added", "data": response_data})
 
@@ -454,34 +469,37 @@ def bulk_create_keywords(
     processed = 0
     failed_tracking = 0
     tracking_errors = []
-    for kw_text in added:
+
+    if added:
+        bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
         try:
-            bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
-            tracked = _apply_day_one_tracking(db, user["userId"], kw_text, location_code, project.domain, cost=bulk_cost)
-            if not tracked:
+            tracking = submit_user_tracking_job(
+                db=db,
+                user_id=user["userId"],
+                project_id=project_id,
+                keywords=[{"keyword": kw} for kw in added],
+                domain=project.domain,
+                action="bulk_add",
+                location_code=location_code,
+                language_code="en",
+                device=device,
+                depth=100,
+                cost_per_keyword=bulk_cost,
+            )
+            processed = len(added)
+        except ApiError:
+            raise
+        except Exception as exc:
+            failed_tracking = len(added)
+            tracking_errors = [{"keyword": kw, "error": str(exc)} for kw in added]
+            logger.warning("Bulk day-one tracking failed for %s: %s", added, exc)
+            for kw_text in added:
                 failed_keyword = db.scalar(
                     select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
                 )
                 if failed_keyword:
                     db.delete(failed_keyword)
                     db.commit()
-                failed_tracking += 1
-                tracking_errors.append({"keyword": kw_text, "error": "No data returned from DataForSEO"})
-                logger.warning("Day-one tracking returned no data for %s", kw_text)
-                continue
-            processed += 1
-        except ApiError:
-            raise
-        except Exception as exc:
-            failed_tracking += 1
-            tracking_errors.append({"keyword": kw_text, "error": str(exc)})
-            logger.warning("Day-one tracking failed for %s: %s", kw_text, exc)
-            failed_keyword = db.scalar(
-                select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
-            )
-            if failed_keyword:
-                db.delete(failed_keyword)
-                db.commit()
 
     message = f"Added {processed} keywords"
     if skipped_count := len(normalized_keywords) - len(added):
@@ -513,15 +531,71 @@ def refresh_project_keywords(
     user: dict = Depends(get_current_user),
     db: Session = Depends(db_session),
 ) -> JSONResponse:
-    from app.services.keyword_update_service import refresh_keyword_data
+    from app.services.keyword_service import get_project_keywords
 
     keyword_ids = (payload or {}).get("keyword_ids")
     force = (payload or {}).get("force", False)
-    result = refresh_keyword_data(db, user["userId"], project_id, keyword_ids, force=force)
-    if not result.get("success"):
-        status = 402 if result.get("error") == "INSUFFICIENT_CREDITS" else 400
-        return JSONResponse(status_code=status, content=result)
-    return JSONResponse(status_code=200, content={"success": True, "data": result})
+
+    project = db.scalar(select(Project).where(Project.id == project_id, Project.userId == user["userId"]))
+    if not project:
+        raise ApiError(404, "Project not found")
+
+    if keyword_ids:
+        requested_keywords = db.scalars(
+            select(Keyword).where(
+                Keyword.projectId == project_id,
+                Keyword.id.in_(keyword_ids),
+                Keyword.isActive == True,
+            )
+        ).all()
+    else:
+        requested_keywords = db.scalars(
+            select(Keyword).where(
+                Keyword.projectId == project_id,
+                Keyword.isActive == True,
+            )
+        ).all()
+
+    if not requested_keywords:
+        return JSONResponse(status_code=200, content={"success": True, "data": {"updated": 0, "skipped": 0, "failed": 0}})
+
+    keyword_texts = [kw.keyword for kw in requested_keywords]
+    keywords_payload = [{"keyword": kw.keyword} for kw in requested_keywords]
+
+    manual_cost = settings.plan_config.credit_costs.get("manual_refresh_per_keyword", 20)
+    tracking = submit_user_tracking_job(
+        db=db,
+        user_id=user["userId"],
+        project_id=project_id,
+        keywords=keywords_payload,
+        domain=project.domain,
+        action="manual_refresh",
+        location_code=project.locationCode or LOCATION_MAP.get(project.location or "India", 2840),
+        language_code="en",
+        device="desktop",
+        depth=100,
+        cost_per_keyword=manual_cost,
+    )
+
+    return JSONResponse(status_code=200, content={
+        "success": True,
+        "data": {
+            "updated": len(keyword_texts),
+            "skipped": 0,
+            "refresh_job_id": tracking.get("refresh_job_id"),
+            "task_ids": tracking.get("task_ids", []),
+        },
+    })
+
+
+@router.get("/{project_id}/processing")
+def get_project_processing_jobs(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    jobs = get_user_processing_jobs(db, user["userId"], project_id)
+    return {"success": True, "data": jobs}
 
 
 @router.post("/{keyword_id}/activate")

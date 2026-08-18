@@ -1,3 +1,4 @@
+from sqlalchemy.orm import mapped_collection
 import logging
 import json
 import re
@@ -72,7 +73,7 @@ def recover_stale_processing_jobs(db: Session, timeout_hours: int = PROCESSING_T
     Uses atomic state transition to prevent duplicate recovery.
     """
     now = datetime.utcnow()
-    cutoff = now - timedelta(hours=timeout_hours)
+    cutoff = now
     
     result = db.execute(
         update(ProcessingJob)
@@ -135,14 +136,24 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         task_id = payload.get("task_id")
         location_code = payload.get("location_code", 2840)
         first_block = payload.get("first_block")
+        project_id = payload.get("project_id")
+        action = payload.get("action")
+        language_code = payload.get("language_code", "en")
+        device = payload.get("device", "desktop")
+        depth = payload.get("depth", 100)
         
-        keyword_rows = db.scalars(
-            select(Keyword).where(
-                Keyword.keyword == job.keywordText,
-                Keyword.location == job.location,
-                Keyword.isActive == True,
+        keyword_query = select(Keyword).where(
+            Keyword.keyword == job.keywordText,
+            Keyword.location == job.location,
+            Keyword.isActive == True,
+        )
+
+        if project_id:
+            keyword_query = keyword_query.where(
+                Keyword.projectId == project_id
             )
-        ).all()
+
+        keyword_rows = db.scalars(keyword_query).all()
         
         if not keyword_rows:
             job.status = "failed"
@@ -151,34 +162,112 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
             db.commit()
             return False
         
+        if first_block is None:
+            now = datetime.utcnow()
+
+            for keyword_row in keyword_rows:
+                keyword_row.weeklyRefreshStatus = "failed"
+                keyword_row.processingTimeoutAt = None
+                keyword_row.updatedAt = now
+                db.add(keyword_row)
+
+            job.status = "failed"
+            job.processingTimeoutAt = None
+            job.updatedAt = now
+            db.add(job)
+            db.commit()
+
+            logger.warning(
+                "ProcessingJob failed because DataForSEO result is missing: "
+                "job=%s keyword=%s task_id=%s",
+                job.id,
+                job.keywordText,
+                task_id,
+            )
+
+            return False
+
         now = datetime.utcnow()
         for keyword_row in keyword_rows:
             user_id = keyword_row.project.userId if keyword_row.project else None
-            if user_id and job.refreshJobId:
+            payload_data = json.loads(job.payload or "{}")
+            action = payload_data.get("action")
+            credit_reference = payload_data.get("credit_reference")
+            cost_per_keyword = payload_data.get("cost_per_keyword")
+
+            if user_id:
                 try:
-                    consume_automatic_reserved(
-                        db=db,
-                        user_id=user_id,
-                        reference=f"auto:weekly:{job.refreshJobId}:{user_id}",
-                        amount=settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10),
-                        description=f"Weekly tracking: {job.keywordText}",
-                        project_id=keyword_row.projectId,
-                        keyword_id=keyword_row.id,
-                        task_id=task_id,
-                    )
+                    if action in ("weekly_serp", "monthly_metrics", "automatic"):
+                        reference = f"auto:weekly:{job.refreshJobId}:{user_id}" if job.refreshJobId else credit_reference
+                        consume_automatic_reserved(
+                            db=db,
+                            user_id=user_id,
+                            reference=reference,
+                            amount=settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", cost_per_keyword or 10),
+                            description=f"Weekly tracking: {job.keywordText}",
+                            project_id=keyword_row.projectId,
+                            keyword_id=keyword_row.id,
+                            task_id=task_id,
+                        )
+                    elif action in ("add_keyword", "bulk_add", "manual_refresh", "weekly"):
+                        consume_reserved(
+                            db=db,
+                            user_id=user_id,
+                            reference=credit_reference or f"user:{action}:{job.id}:{user_id}",
+                            amount=cost_per_keyword or settings.plan_config.credit_costs.get("manual_refresh_per_keyword", 20),
+                            action_type="charge",
+                            description=f"{action.replace('_', ' ').title()}: {job.keywordText}",
+                            project_id=keyword_row.projectId,
+                            keyword_id=keyword_row.id,
+                            task_id=task_id,
+                        )
+                    else:
+                        if job.refreshJobId:
+                            consume_automatic_reserved(
+                                db=db,
+                                user_id=user_id,
+                                reference=f"auto:weekly:{job.refreshJobId}:{user_id}",
+                                amount=settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10),
+                                description=f"Weekly tracking: {job.keywordText}",
+                                project_id=keyword_row.projectId,
+                                keyword_id=keyword_row.id,
+                                task_id=task_id,
+                            )
+                        else:
+                            cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
+                            deduct_credits(
+                                db=db,
+                                user_id=user_id,
+                                amount=cost,
+                                action_type="charge",
+                                description=f"Weekly tracking: {job.keywordText}",
+                                project_id=keyword_row.projectId,
+                                keyword_id=keyword_row.id,
+                                task_id=task_id,
+                            )
                 except Exception as credit_exc:
-                    logger.error("Skipping weekly result without automatic credits keyword=%s user=%s: %s", job.keywordText, user_id, credit_exc)
+                    logger.error("Skipping result without credits keyword=%s user=%s: %s", job.keywordText, user_id, credit_exc)
                     continue
 
             keyword_row.position = position
+            keyword_row.check_url = url
             keyword_row.visibility = _dfs_visibility(position)
             keyword_row.ai_badge = has_aio_badge
+
             if isinstance(ai_description, str):
-                ai_description = re.sub(r'\.{3}\s*Read more$', '', ai_description.strip()) or None
+                ai_description = re.sub(
+                    r'\.{3}\s*Read more$',
+                    '',
+                    ai_description.strip(),
+                ) or None
+
             keyword_row.ai_description = ai_description
             keyword_row.updatedAt = now
-            keyword_row.lastWeeklyRefreshAt = now
-            keyword_row.weeklyRefreshStatus = "success"
+
+            if action in ("weekly_serp", "weekly", "automatic"):
+                keyword_row.lastWeeklyRefreshAt = now
+                keyword_row.weeklyRefreshStatus = "success"
+
             keyword_row.processingTimeoutAt = None
             db.add(keyword_row)
             
@@ -187,30 +276,12 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
                 keywordText=job.keywordText,
                 position=position,
                 url=url,
-                device="desktop",
+                device=device,
                 location=job.location,
                 checkedAt=now,
                 keywordId=keyword_row.id,
             )
             db.add(rank_result)
-            
-            if user_id and not job.refreshJobId:
-                user = db.scalar(select(User).where(User.id == user_id))
-                if user and user.subscriptionStatus == "active":
-                    try:
-                        cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
-                        deduct_credits(
-                            db=db,
-                            user_id=user_id,
-                            amount=cost,
-                            action_type="charge",
-                            description=f"Weekly tracking: {job.keywordText}",
-                            project_id=keyword_row.projectId,
-                            keyword_id=keyword_row.id,
-                            task_id=task_id,
-                        )
-                    except Exception as credit_exc:
-                        logger.error(f"Worker credit deduction failed for keyword={job.keywordText} user={user_id}: {credit_exc}")
             
             tracked_aio = db.scalar(
                 select(TrackedKeyword).where(
@@ -225,12 +296,12 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
             _log_dataforseo_cost(
                 db=db,
                 user_id=user_id,
-                task_type="weekly_serp",
+                task_type=action or "weekly_serp",
                 endpoint="/serp/google/organic/task_post",
                 method="POST",
                 keyword_count=1,
                 priority=1,
-                depth=10,
+                depth=depth,
                 expand_ai_overview=expand_ai_overview,
                 cache_hit=False,
                 success=True,
@@ -242,10 +313,10 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
             cache_key = _build_serp_cache_key(
                 job.keywordText,
                 location_code,
-                "en",
-                "desktop",
+                language_code,
+                device,
                 "unknown",
-                10,
+                depth,
                 expand_ai_overview,
             )
             organic_items = [i for i in (first_block.get("items", []) or []) if i.get("type") == "organic"] if first_block else []
@@ -260,7 +331,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
             _set_cached_serp(cache_key, {
                 "keyword": job.keywordText,
                 "location": job.location,
-                "device": "desktop",
+                "device": device,
                 "items": first_block.get("items", []) or [] if first_block else [],
                 "organic_items": organic_items,
                 "featured_snippet": None,
@@ -285,6 +356,72 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         db.commit()
         return False
 
+def finalize_refresh_jobs(db: Session, refresh_job_ids: set[str]) -> None:
+    """
+    Finalize parent RefreshJob records once all child ProcessingJobs
+    have reached a terminal state.
+    """
+    if not refresh_job_ids:
+        return
+
+    now = datetime.utcnow()
+
+    for refresh_job_id in refresh_job_ids:
+        processing_jobs = db.scalars(
+            select(ProcessingJob).where(
+                ProcessingJob.refreshJobId == refresh_job_id
+            )
+        ).all()
+
+        if not processing_jobs:
+            continue
+
+        active_jobs = [
+            job
+            for job in processing_jobs
+            if job.status in ("pending", "processing", "retry")
+        ]
+
+        if active_jobs:
+            continue
+
+        success_count = sum(
+            1 for job in processing_jobs if job.status == "success"
+        )
+        failed_count = sum(
+            1 for job in processing_jobs if job.status == "failed"
+        )
+
+        refresh_job = db.scalar(
+            select(RefreshJob).where(
+                RefreshJob.id == refresh_job_id
+            )
+        )
+
+        if not refresh_job:
+            continue
+
+        try:
+            result_summary = json.loads(
+                refresh_job.resultSummary or "{}"
+            )
+        except Exception:
+            result_summary = {}
+
+        result_summary["processed_count"] = success_count
+        result_summary["failed_count"] = failed_count
+
+        refresh_job.resultSummary = json.dumps(result_summary)
+        refresh_job.completedAt = now
+
+        if failed_count == len(processing_jobs):
+            refresh_job.status = "failed"
+        else:
+            refresh_job.status = "success"
+
+        db.add(refresh_job)
+
+    db.commit()
 
 def process_pending_processing_jobs(db: Session) -> dict:
     """
@@ -298,14 +435,23 @@ def process_pending_processing_jobs(db: Session) -> dict:
     
     processed = 0
     failed = 0
-    
+    refresh_job_ids = set()
+
     for job in claimed_jobs:
+        refresh_job_ids.add(job.refreshJobId)
+
         if process_processing_job(db, job):
             processed += 1
         else:
             failed += 1
-    
-    return {"status": "completed", "processed": processed, "failed": failed}
+
+    finalize_refresh_jobs(db, refresh_job_ids)
+
+    return {
+        "status": "completed",
+        "processed": processed,
+        "failed": failed,
+    }
 
 
 def run_refresh_worker() -> dict:

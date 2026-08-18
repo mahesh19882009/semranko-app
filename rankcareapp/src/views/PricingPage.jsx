@@ -104,7 +104,7 @@ export default function PricingPage() {
               method: "POST",
               body: JSON.stringify({ razorpay_order_id: order.order_id }),
             });
-          } catch {}
+          } catch { }
         },
       });
     } catch (requestError) {
@@ -181,7 +181,7 @@ export default function PricingPage() {
             onDismiss={() => setSuccess("")}
           />
         ) : null}
-        <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {loading ? (
             <PricingSkeleton />
           ) : (
@@ -256,13 +256,13 @@ function PlanCard({
   const above = (ORDER[plan.key] ?? -1) > (ORDER[currentPlan] ?? -1);
   return (
     <Card
-      padding="p-6"
+      padding="p-5"
       className={`flex min-h-[34rem] flex-col ${plan.highlighted ? "border-brand-500 ring-1 ring-brand-500" : ""} ${isCurrent ? "border-brand-300 bg-brand-50/50" : ""}`}
     >
       <div>
         <div className="flex items-start justify-between gap-2">
           <p className="text-lg font-bold text-text-primary">{plan.name}</p>
-          {plan.key === "pro" && <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">Most Popular</span>}
+          {plan.key === "pro" && <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700">Most Purchased</span>}
           {isCurrent && <span className="shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-xs font-semibold text-text-primary">Current Plan</span>}
         </div>
         <p className="mt-2 min-h-12 text-sm leading-5 text-text-secondary">

@@ -40,6 +40,8 @@ from app.services.credit_service import (
     deduct_automatic_credits, reserve_automatic_credits,
     consume_automatic_reserved, refund_automatic_reserved,
 )
+from app.services.dataforseo_client import DataForSEOClient, get_serp_priority
+from app.services.async_tracking_service import _build_postback_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -338,7 +340,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     Submit weekly SERP refresh to DataForSEO async endpoint.
     """
     location_code = 2840
-    pingback_url = f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
+    pingback_url = _build_postback_url()
     if settings.DATAFORSEO_WEBHOOK_SECRET:
         pingback_url = f"{pingback_url}?secret={settings.DATAFORSEO_WEBHOOK_SECRET}"
     
@@ -418,6 +420,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     
     from app.services.dataforseo_client import check_dfs_cost_ceiling
     from app.db.models import Keyword as KwModel
+    weekly_priority = get_serp_priority("weekly")
     
     keyword_user_map = {}
     for kw_text in uncached_keywords:
@@ -502,7 +505,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                 "device": "desktop",
                 "depth": 10,
                 "pingback_url": pingback_url,
-                "priority": 1,
+                "priority": weekly_priority,
                 "expand_ai_overview": kw in aio_keyword_texts,
             }
             serp_payload.append(task_payload)
@@ -582,7 +585,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
             endpoint="/serp/google/organic/task_post",
             method="POST",
             keyword_count=len(uncached_keywords),
-            priority=1,
+            priority=weekly_priority,
             depth=10,
             expand_ai_overview=True,
             cache_hit=False,
@@ -1095,7 +1098,7 @@ def submit_bulk_to_dataforseo(
             return False
         
         location_code = task.locationCode or 2840
-        pingback_url = f"{settings.FRONTEND_URL}/api/webhooks/dataforseo"
+        pingback_url = _build_postback_url()
         if settings.DATAFORSEO_WEBHOOK_SECRET:
             pingback_url = f"{pingback_url}?secret={settings.DATAFORSEO_WEBHOOK_SECRET}"
         
@@ -1135,7 +1138,7 @@ def submit_bulk_to_dataforseo(
                 endpoint="/serp/google/organic/task_post",
                 method="GET",
                 keyword_count=cached_count,
-                priority=1,
+                priority=weekly_priority,
                 depth=10,
                 expand_ai_overview=True,
                 cache_hit=True,
@@ -1179,6 +1182,7 @@ def submit_bulk_to_dataforseo(
         auth = (settings.effective_serp_login, settings.effective_serp_key)
         all_task_ids = []
         failed_chunks = 0
+        weekly_priority = get_serp_priority("weekly")
         
         for chunk in chunks:
             serp_payload = []
@@ -1190,7 +1194,7 @@ def submit_bulk_to_dataforseo(
                     "device": "desktop",
                     "depth": 10,
                     "pingback_url": pingback_url,
-                    "priority": 1,
+                    "priority": weekly_priority,
                     "expand_ai_overview": kw in aio_keyword_texts,
                 }
                 serp_payload.append(task_payload)
@@ -1262,7 +1266,7 @@ def submit_bulk_to_dataforseo(
                 endpoint="/serp/google/organic/task_post",
                 method="POST",
                 keyword_count=len(uncached_keywords),
-                priority=1,
+                priority=weekly_priority,
                 depth=10,
                 expand_ai_overview=True,
                 cache_hit=False,

@@ -327,7 +327,8 @@ class TestCreditReservation:
             "Test reservation",
             reference="test-008",
         )
-        consume_reserved(
+
+        balance1 = consume_reserved(
             self.db,
             self.user.id,
             reference="test-008",
@@ -335,15 +336,75 @@ class TestCreditReservation:
             action_type="charge",
             description="Full consume",
         )
-        with pytest.raises(Exception):
-            consume_reserved(
+
+        balance2 = consume_reserved(
+            self.db,
+            self.user.id,
+            reference="test-008",
+            amount=10.0,
+            action_type="charge",
+            description="Duplicate consume",
+        )
+
+        assert balance1 == 70.0
+        assert balance2 == 70.0
+
+    def test_bulk_partial_consume_reserved(self):
+        reserve_credits(
+            self.db,
+            self.user.id,
+            100.0,
+            "test_reserve",
+            "Bulk keyword reservation",
+            reference="bulk-test-001",
+        )
+
+        expected_consumed = [20.0, 40.0, 60.0, 80.0, 100.0]
+
+        for index, expected in enumerate(expected_consumed, start=1):
+            balance = consume_reserved(
                 self.db,
                 self.user.id,
-                reference="test-008",
-                amount=10.0,
+                reference="bulk-test-001",
+                amount=20.0,
                 action_type="charge",
-                description="Duplicate consume",
+                description=f"Keyword {index}",
             )
+
+            ledger = self.db.scalar(
+                select(CreditLedger).where(
+                    CreditLedger.description.like("%[ref:bulk-test-001]")
+                )
+            )
+
+            assert balance == 0.0
+            assert float(ledger.creditsConsumed or 0.0) == expected
+
+            if index < 5:
+                assert ledger.status == "pending"
+                assert ledger.actionType == "reservation"
+            else:
+                assert ledger.status == "completed"
+                assert ledger.actionType == "charge"
+
+        # A sixth attempt must not consume anything again.
+        balance = consume_reserved(
+            self.db,
+            self.user.id,
+            reference="bulk-test-001",
+            amount=20.0,
+            action_type="charge",
+            description="Duplicate sixth consume",
+        )
+
+        ledger = self.db.scalar(
+            select(CreditLedger).where(
+                CreditLedger.description.like("%[ref:bulk-test-001]")
+            )
+        )
+
+        assert balance == 0.0
+        assert float(ledger.creditsConsumed or 0.0) == 100.0
 
     def test_duplicate_refund_idempotent(self):
         reserve_credits(

@@ -309,29 +309,49 @@ def consume_reserved(
         return get_credit_balance(db, user_id)
 
     ledger = db.scalar(
-        select(CreditLedger).where(
-            CreditLedger.actionType == "reservation",
+        select(CreditLedger)
+        .where(
             CreditLedger.description.like(f"%[ref:{reference}]"),
             CreditLedger.userId == user_id,
-            CreditLedger.status == "pending",
         )
+        .with_for_update()
     )
     if not ledger:
-        raise HTTPException(status_code=404, detail="Reservation not found or already processed")
+        raise HTTPException(status_code=404, detail="Reservation not found")
 
-    remaining = float(ledger.creditsReserved or 0.0) - float(ledger.creditsConsumed or 0.0) - float(ledger.creditsRefunded or 0.0)
+    remaining = (
+        float(ledger.creditsReserved or 0.0)
+        - float(ledger.creditsConsumed or 0.0)
+        - float(ledger.creditsRefunded or 0.0)
+    )
     actual_consume = min(float(amount), remaining)
+
     if actual_consume <= 0:
         return get_credit_balance(db, user_id)
 
-    ledger.creditsConsumed = float(ledger.creditsConsumed or 0.0) + actual_consume
-    ledger.actionType = action_type
+    ledger.creditsConsumed = (
+        float(ledger.creditsConsumed or 0.0)
+        + actual_consume
+    )
+
+    remaining_after = (
+        float(ledger.creditsReserved or 0.0)
+        - float(ledger.creditsConsumed or 0.0)
+        - float(ledger.creditsRefunded or 0.0)
+    )
+
     ledger.relatedOrderId = related_order_id or ledger.relatedOrderId
     ledger.projectId = project_id or ledger.projectId
     ledger.keywordId = keyword_id or ledger.keywordId
     ledger.taskId = task_id or ledger.taskId
     ledger.requestId = request_id or ledger.requestId
-    ledger.status = "completed"
+
+    if remaining_after <= 0:
+        ledger.actionType = action_type
+        ledger.status = "completed"
+    else:
+        ledger.actionType = "reservation"
+        ledger.status = "pending"
 
     db.add(ledger)
     db.flush()
