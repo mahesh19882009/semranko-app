@@ -137,6 +137,8 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         payload = json.loads(job.payload or "{}")
         position = payload.get("position")
         url = payload.get("url")
+        local_pack_position = payload.get("local_pack_position")
+        local_pack_url = payload.get("local_pack_url")
         has_aio_badge = payload.get("has_aio_badge")
         ai_description = payload.get("ai_description")
         task_id = payload.get("task_id")
@@ -313,6 +315,8 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
 
             keyword_row.position = position
             keyword_row.check_url = url
+            keyword_row.localPackPosition = local_pack_position
+            keyword_row.localPackUrl = local_pack_url
             keyword_row.visibility = _dfs_visibility(position)
             keyword_row.ai_badge = has_aio_badge
 

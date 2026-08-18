@@ -385,6 +385,8 @@ async def dataforseo_webhook(request: Request):
 
             detected_position = None
             detected_url = None
+            local_pack_position = None
+            local_pack_url = None
             has_aio_badge = None
             ai_description = None
             first_block = None
@@ -397,7 +399,7 @@ async def dataforseo_webhook(request: Request):
                 serp_items = first_block.get("items") or []
 
                 if isinstance(serp_items, list):
-                    # Rank must belong to the project's target domain.
+                    # Organic rank must belong to the project's target domain.
                     for item in serp_items:
                         if not isinstance(item, dict):
                             continue
@@ -417,6 +419,30 @@ async def dataforseo_webhook(request: Request):
                             detected_url = item.get("url")
                             break
 
+                    # Local Pack rank must belong to the project's target domain.
+                    for item in serp_items:
+                        if not isinstance(item, dict):
+                            continue
+
+                        if item.get("type") not in (
+                            "local_pack",
+                            "map",
+                            "local_services",
+                        ):
+                            continue
+
+                        if _domain_matches(
+                            target_domain,
+                            item.get("domain") or "",
+                            item.get("url") or "",
+                        ):
+                            local_pack_position = (
+                                item.get("rank_group")
+                                or item.get("rank_absolute")
+                            )
+                            local_pack_url = item.get("url")
+                            break
+
                     # AIO must also cite the target domain.
                     for item in serp_items:
                         if not isinstance(item, dict):
@@ -424,6 +450,17 @@ async def dataforseo_webhook(request: Request):
 
                         if item.get("type") != "ai_overview":
                             continue
+
+                        if _aio_cites_target_domain(
+                            target_domain,
+                            item,
+                        ):
+                            has_aio_badge = "AIO"
+                            ai_description = (
+                                item.get("description")
+                                or item.get("content")
+                            )
+                            break
 
                         if _aio_cites_target_domain(
                             target_domain,
@@ -450,11 +487,18 @@ async def dataforseo_webhook(request: Request):
             existing_payload.update({
                 "position": position_int,
                 "url": detected_url,
+                "local_pack_position": (
+                    int(float(local_pack_position))
+                    if local_pack_position is not None
+                    else None
+                ),
+                "local_pack_url": local_pack_url,
                 "has_aio_badge": has_aio_badge,
                 "ai_description": ai_description,
                 "task_id": task_id,
                 "location_code": location_code,
                 "first_block": first_block,
+                
             })
 
             existing_tracking_job.payload = json.dumps(existing_payload)

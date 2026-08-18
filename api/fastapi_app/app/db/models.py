@@ -168,6 +168,8 @@ class Keyword(Base):
     referring_domains: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     intent: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    localPackPosition: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    localPackUrl: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ai_badge: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     ai_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     check_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)

@@ -446,6 +446,8 @@ function KeywordsPage() {
               keyword,
               status: 'processing',
               position: null,
+              localPackPosition: null,
+              localPackUrl: null,
               check_url: null,
               ai_badge: null,
               volume: null,
@@ -520,6 +522,8 @@ function KeywordsPage() {
               keyword,
               status: 'processing',
               position: null,
+              localPackPosition: null,
+              localPackUrl: null,
               check_url: null,
               ai_badge: null,
               volume: null,
@@ -687,6 +691,22 @@ function KeywordsPage() {
     return (
       <span title={`Ranked at position #${rowData.position}`}>
         #{rowData.position}
+      </span>
+    );
+  };
+
+  const localPackPositionBodyTemplate = (rowData) => {
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width="w-12" />;
+    }
+
+    if (!rowData.localPackPosition) {
+      return <span title="Not ranking in Local Pack">—</span>;
+    }
+
+    return (
+      <span title={`Local Pack position #${rowData.localPackPosition}`}>
+        #{rowData.localPackPosition}
       </span>
     );
   };
@@ -1059,6 +1079,13 @@ function KeywordsPage() {
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>
               </TippyTooltip>
             } sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
+            <Column
+              field="localPackPosition"
+              header="Local Pack"
+              sortable
+              body={localPackPositionBodyTemplate}
+              style={{ width: '8rem' }}
+            />
             <Column field="visibility" header={
               <TippyTooltip content="Estimated visibility score based on rank position" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Visibility</span>

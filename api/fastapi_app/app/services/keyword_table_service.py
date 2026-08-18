@@ -126,6 +126,8 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "domains": kw.referring_domains,
             "intent": kw.intent,
             "position": kw.position,
+            "localPackPosition": kw.localPackPosition,
+            "localPackUrl": kw.localPackUrl,
             "url": rank_info.get("url"),
             "check_url": kw.check_url,
             "rankCheckedAt": rank_info.get("checkedAt"),
