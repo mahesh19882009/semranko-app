@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional
 from sqlalchemy import delete, select, func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import re
+import asyncio
+from redis.asyncio import Redis as AsyncRedis
 
 from app.api.deps import db_session, get_current_user
 from app.core.rate_limiter import rate_limit
@@ -23,6 +25,7 @@ from app.services.plan_service import (
 )
 from app.core.config import get_settings
 from app.core.errors import ApiError
+from app.services.keyword_update_events import keyword_update_channel
 
 import logging
 from datetime import datetime
@@ -586,6 +589,94 @@ def refresh_project_keywords(
             "task_ids": tracking.get("task_ids", []),
         },
     })
+
+
+@router.get("/{project_id}/events")
+async def stream_keyword_updates(
+    project_id: str,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    """
+    SSE stream for completed keyword updates.
+
+    This endpoint does not call DataForSEO.
+    It only notifies the frontend that committed keyword data
+    is ready to be fetched from PostgreSQL.
+    """
+    project = db.scalar(
+        select(Project).where(
+            Project.id == project_id,
+            Project.userId == user["userId"],
+        )
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    channel = keyword_update_channel(user["userId"], project_id)
+
+    async def event_stream():
+        redis = AsyncRedis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+        )
+        pubsub = redis.pubsub()
+
+        try:
+            await pubsub.subscribe(channel)
+
+            yield (
+                "event: connected\n"
+                'data: {"success": true}\n\n'
+            )
+
+            while True:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=15.0,
+                )
+
+                if message and message.get("type") == "message":
+                    data = message.get("data")
+
+                    yield (
+                        "event: keyword_updated\n"
+                        f"data: {data}\n\n"
+                    )
+                else:
+                    yield ": keepalive\n\n"
+
+                await asyncio.sleep(0.1)
+
+        except asyncio.CancelledError:
+            raise
+
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+            except Exception:
+                pass
+
+            try:
+                await pubsub.aclose()
+            except Exception:
+                pass
+
+            try:
+                await redis.aclose()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{project_id}/processing")

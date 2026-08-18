@@ -470,7 +470,7 @@ async def dataforseo_webhook(request: Request):
         if updated_count > 0:
             queue = get_rank_check_queue()
             queue.enqueue(
-                "fastapi_app.app.workers.tasks.process_refresh_jobs",
+                "app.workers.tasks.process_refresh_jobs",
                 job_timeout="600",
             )
 

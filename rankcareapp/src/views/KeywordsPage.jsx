@@ -36,7 +36,7 @@ import {
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
 import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
-import { apiRequest } from '../lib/api';
+import { apiRequest, API_BASE_URL} from '../lib/api';
 import { Card } from '../components/ui';
 
 const rankOptions = [
@@ -116,7 +116,6 @@ function KeywordsPage() {
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [processingJobs, setProcessingJobs] = useState([]);
-  const [processingPolling, setProcessingPolling] = useState(null);
   const [tableKey, setTableKey] = useState(0);
 
   const fetchTableData = async () => {
@@ -175,26 +174,55 @@ function KeywordsPage() {
       setProcessingJobs([]);
       return;
     }
-    const poll = async () => {
+
+    let closed = false;
+
+    const eventsUrl = `${API_BASE_URL}/keywords/${selectedProjectId}/events`;
+
+    console.log("[RankCare SSE] connecting:", eventsUrl);
+
+    const eventSource = new EventSource(eventsUrl, {
+      withCredentials: true,
+    });
+
+    const handleKeywordUpdated = async () => {
+      if (closed) return;
+
       try {
-        const json = await apiRequest(`/keywords/${selectedProjectId}/processing`);
-        if (json.success) {
-          setProcessingJobs(json.data || []);
-          const stillProcessing = (json.data || []).some((job) => job.status === 'pending' || job.status === 'processing');
-          if (!stillProcessing) {
-            clearInterval(pollingRef.current);
-            setTableKey((k) => k + 1);
-            fetchTableData();
-          }
-        }
-      } catch {
-        // ignore polling errors
+        await fetchTableData();
+
+        // PostgreSQL now contains the completed SERP result.
+        setProcessingJobs([]);
+        setTableKey((key) => key + 1);
+      } catch (error) {
+        console.warn(
+          'Failed to refresh keyword table after update:',
+          error
+        );
       }
     };
-    const pollingRef = { current: setInterval(poll, 3000) };
-    poll();
-    return () => clearInterval(pollingRef.current);
-  }, [selectedProjectId, dispatch]);
+
+    eventSource.addEventListener(
+      'keyword_updated',
+      handleKeywordUpdated
+    );
+
+    eventSource.onerror = () => {
+      // EventSource automatically reconnects.
+      // No polling and no DataForSEO request is triggered here.
+    };
+
+    return () => {
+      closed = true;
+
+      eventSource.removeEventListener(
+        'keyword_updated',
+        handleKeywordUpdated
+      );
+
+      eventSource.close();
+    };
+  }, [selectedProjectId]);
 
   const filteredData = useMemo(() => {
     let rows = [...tableData];

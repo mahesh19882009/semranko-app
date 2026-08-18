@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.models import ProcessingJob, Keyword, RankResult, SerpFeature, User, Project, RefreshJob, TrackedKeyword
 from app.services.credit_service import consume_reserved, deduct_credits, consume_automatic_reserved
+from app.services.keyword_update_events import publish_keyword_update
 from app.services.dataforseo_client import _build_serp_cache_key, _set_cached_serp, _log_dataforseo_cost
 from app.core.config import get_settings
 from app.db.session import SessionLocal
@@ -137,6 +138,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         location_code = payload.get("location_code", 2840)
         first_block = payload.get("first_block")
         project_id = payload.get("project_id")
+        payload_user_id = payload.get("user_id")
         action = payload.get("action")
         language_code = payload.get("language_code", "en")
         device = payload.get("device", "desktop")
@@ -345,6 +347,14 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         job.updatedAt = datetime.utcnow()
         db.add(job)
         db.commit()
+
+        publish_keyword_update(
+            user_id=payload_user_id,
+            project_id=project_id,
+            keyword=job.keywordText,
+            status="success",
+        )
+
         return True
         
     except Exception as exc:
