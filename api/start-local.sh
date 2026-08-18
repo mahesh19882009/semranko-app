@@ -76,13 +76,21 @@ echo ""
 cleanup() {
   echo ""
   echo "Stopping all services..."
-  if [ ! -z "$FASTAPI_PID" ]; then
-    kill $FASTAPI_PID 2>/dev/null || true
+
+  SHUTTING_DOWN=1
+
+  if [ -n "${FASTAPI_PID:-}" ]; then
+    kill "$FASTAPI_PID" 2>/dev/null || true
   fi
-  if [ ! -z "$WORKER_PID" ]; then
-    kill $WORKER_PID 2>/dev/null || true
+
+  if [ -n "${WORKER_SUPERVISOR_PID:-}" ]; then
+    kill "$WORKER_SUPERVISOR_PID" 2>/dev/null || true
   fi
-  # Don't stop Redis as it might be used by other applications
+
+  # Kill any RQ worker started by this local project.
+  pkill -f "$PROJECT_DIR/.venv/bin/rq worker rank-check" 2>/dev/null || true
+
+  # Redis is intentionally left running.
   echo "Services stopped."
   exit 0
 }
@@ -104,20 +112,42 @@ if ! kill -0 $FASTAPI_PID 2>/dev/null; then
 fi
 echo "✓ FastAPI server started (PID: $FASTAPI_PID)"
 
-# Start RQ worker in background
-echo "Starting RQ worker..."
+# Start supervised RQ worker
+echo "Starting supervised RQ worker..."
+
 export PYTHONPATH="$PROJECT_DIR:$PROJECT_DIR/fastapi_app:$PYTHONPATH"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
-"$PROJECT_DIR/.venv/bin/rq" worker rank-check > /tmp/rq-worker.log 2>&1 &
-WORKER_PID=$!
-sleep 1
 
-# Check if worker started successfully
-if ! kill -0 $WORKER_PID 2>/dev/null; then
-  echo "✗ Failed to start RQ worker"
+start_worker_supervisor() {
+  while true; do
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RQ worker..." >> /tmp/rq-worker.log
+
+    "$PROJECT_DIR/.venv/bin/rq" worker rank-check >> /tmp/rq-worker.log 2>&1
+    WORKER_EXIT_CODE=$?
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] RQ worker exited with code $WORKER_EXIT_CODE" >> /tmp/rq-worker.log
+
+    # Do not restart while the main script is shutting down.
+    if [ "${SHUTTING_DOWN:-0}" = "1" ]; then
+      break
+    fi
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Restarting RQ worker in 2 seconds..." >> /tmp/rq-worker.log
+    sleep 2
+  done
+}
+
+start_worker_supervisor &
+WORKER_SUPERVISOR_PID=$!
+
+sleep 2
+
+if ! kill -0 "$WORKER_SUPERVISOR_PID" 2>/dev/null; then
+  echo "✗ Failed to start RQ worker supervisor"
   exit 1
 fi
-echo "✓ RQ worker started (PID: $WORKER_PID)"
+
+echo "✓ RQ worker supervisor started (PID: $WORKER_SUPERVISOR_PID)"
 
 echo ""
 echo "=========================================="
@@ -126,6 +156,7 @@ echo "=========================================="
 echo "FastAPI: http://localhost:4000"
 echo "API Docs: http://localhost:4000/docs"
 echo "Server logs: /tmp/uvicorn.log"
+echo "RQ worker: supervised with automatic restart"
 echo "Worker logs: /tmp/rq-worker.log"
 echo ""
 echo "Press Ctrl+C to stop all services"

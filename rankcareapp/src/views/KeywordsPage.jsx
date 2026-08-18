@@ -10,6 +10,7 @@ import tippy from 'tippy.js';
 
 import { Chart } from 'primereact/chart';
 import Button from '../components/ui/Button';
+import Shimmer from '../components/ui/Shimmer';
 import StatCard from '../components/StateCard';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -179,8 +180,6 @@ function KeywordsPage() {
 
     const eventsUrl = `${API_BASE_URL}/keywords/${selectedProjectId}/events`;
 
-    console.log("[RankCare SSE] connecting:", eventsUrl);
-
     const eventSource = new EventSource(eventsUrl, {
       withCredentials: true,
     });
@@ -225,37 +224,99 @@ function KeywordsPage() {
   }, [selectedProjectId]);
 
   const filteredData = useMemo(() => {
-    let rows = [...tableData];
-    const existingIds = new Set(rows.map((r) => r.id));
-    for (const job of processingJobs) {
-      if (!existingIds.has(job.id) && job.keyword) {
-        rows.push({
-          id: job.id,
-          keyword: job.keyword,
-          position: job.position,
-          check_url: job.check_url,
-          hasAIOverview: job.ai_badge === 'AIO',
-          ai_description: null,
-          volume: job.volume,
-          kd: job.kd,
-          cpc: job.cpc,
-          competition: job.competition,
-          backlinks: job.backlinks,
-          domains: job.referring_domains,
-          intent: job.intent,
-          visibility: job.position != null ? (job.position <= 10 ? Math.round((1 - (job.position - 1) * 0.1) * 100) / 100 : 0.05) : 0,
-          is_active: true,
-          status: 'processing',
-        });
+    const processingByKeyword = new Map(
+      processingJobs
+        .filter((job) => job.keyword)
+        .map((job) => [
+          String(job.keyword).trim().toLowerCase(),
+          job,
+        ])
+    );
+
+    let rows = tableData.map((row) => {
+      const key = String(row.keyword || '').trim().toLowerCase();
+      const processingJob = processingByKeyword.get(key);
+
+      if (!processingJob) {
+        return row;
       }
+
+      const isProcessing =
+        processingJob.status === 'pending' ||
+        processingJob.status === 'processing' ||
+        processingJob.status === 'retry';
+
+      return {
+        ...row,
+        status: isProcessing ? 'processing' : row.status,
+      };
+    });
+
+    const existingKeywords = new Set(
+      rows.map((row) =>
+        String(row.keyword || '').trim().toLowerCase()
+      )
+    );
+
+    for (const job of processingJobs) {
+      const key = String(job.keyword || '').trim().toLowerCase();
+
+      if (!key || existingKeywords.has(key)) {
+        continue;
+      }
+
+      rows.push({
+        id: job.id,
+        keyword: job.keyword,
+        position: job.position,
+        check_url: job.check_url,
+        hasAIOverview: job.ai_badge === 'AIO',
+        ai_description: null,
+        volume: job.volume,
+        kd: job.kd,
+        cpc: job.cpc,
+        competition: job.competition,
+        backlinks: job.backlinks,
+        domains: job.referring_domains,
+        intent: job.intent,
+        visibility:
+          job.position != null
+            ? job.position <= 10
+              ? Math.round((1 - (job.position - 1) * 0.1) * 100) / 100
+              : 0.05
+            : 0,
+        is_active: true,
+        status: 'processing',
+      });
     }
+
     if (globalFilter.trim()) {
       const q = globalFilter.toLowerCase();
-      rows = rows.filter((r) => r.keyword.toLowerCase().includes(q));
+      rows = rows.filter((r) =>
+        r.keyword.toLowerCase().includes(q)
+      );
     }
-    if (rankFilter === 'top3') rows = rows.filter((r) => r.position !== null && r.position <= 3);
-    if (rankFilter === 'top10') rows = rows.filter((r) => r.position !== null && r.position <= 10);
-    if (rankFilter === 'not-ranking') rows = rows.filter((r) => r.position === null || r.position === undefined);
+
+    if (rankFilter === 'top3') {
+      rows = rows.filter(
+        (r) => r.position !== null && r.position <= 3
+      );
+    }
+
+    if (rankFilter === 'top10') {
+      rows = rows.filter(
+        (r) => r.position !== null && r.position <= 10
+      );
+    }
+
+    if (rankFilter === 'not-ranking') {
+      rows = rows.filter(
+        (r) =>
+          r.position === null ||
+          r.position === undefined
+      );
+    }
+
     return rows;
   }, [tableData, processingJobs, globalFilter, rankFilter]);
 
@@ -550,8 +611,19 @@ function KeywordsPage() {
   };
 
   const positionBodyTemplate = (rowData) => {
-    if (!rowData.position) return <span title="Not ranking">—</span>;
-    return <span title={`Ranked at position #${rowData.position}`}>#{rowData.position}</span>;
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width="w-12" />;
+    }
+
+    if (!rowData.position) {
+      return <span title="Not ranking">—</span>;
+    }
+
+    return (
+      <span title={`Ranked at position #${rowData.position}`}>
+        #{rowData.position}
+      </span>
+    );
   };
 
   const actionBodyTemplate = (rowData) => {
@@ -578,6 +650,23 @@ function KeywordsPage() {
     );
   };
 
+  const isRowProcessing = (rowData) => rowData.status === 'processing';
+
+  const valueOrShimmer = (
+    rowData,
+    value,
+    formatter = (v) => v,
+    width = 'w-12'
+  ) => {
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width={width} />;
+    }
+
+    return value !== null && value !== undefined && value !== ''
+      ? formatter(value)
+      : '—';
+  };
+
   const statusBodyTemplate = (rowData) => {
     if (rowData.deletedAt) return <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">Deleted</span>;
     if (rowData.is_active === false) return <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">Inactive</span>;
@@ -585,13 +674,23 @@ function KeywordsPage() {
   };
 
   const aiBodyTemplate = (rowData) => {
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width="w-10" />;
+    }
+
     const hasAI = rowData.hasAIOverview;
     const description = rowData.ai_description;
+
     if (!hasAI) {
       return <span className="text-slate-400 text-xs">—</span>;
     }
+
     return (
-      <TippyTooltip content={description || 'AI Overview'} placement="left" appendTo={document.body}>
+      <TippyTooltip
+        content={description || 'AI Overview'}
+        placement="left"
+        appendTo={document.body}
+      >
         <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700 cursor-pointer">
           AIO
         </span>
@@ -600,17 +699,46 @@ function KeywordsPage() {
   };
 
   const visibilityBodyTemplate = (rowData) => {
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width="w-14" />;
+    }
+
     const vis = rowData.visibility;
-    if (vis === null || vis === undefined) return <span title="No visibility data">—</span>;
-    return <span title={`${(vis * 100).toFixed(0)}% visibility score`}>{(vis * 100).toFixed(0)}%</span>;
+
+    if (vis === null || vis === undefined) {
+      return <span title="No visibility data">—</span>;
+    }
+
+    return (
+      <span title={`${(vis * 100).toFixed(0)}% visibility score`}>
+        {(vis * 100).toFixed(0)}%
+      </span>
+    );
   };
 
   const checkUrlBodyTemplate = (rowData) => {
-    if (!rowData.check_url) return <span title="No ranking URL">—</span>;
+    if (isRowProcessing(rowData)) {
+      return <Shimmer width="w-24" />;
+    }
+
+    if (!rowData.check_url) {
+      return <span title="No ranking URL">—</span>;
+    }
+
     return (
-      <a href={rowData.check_url} target="_blank" rel="noreferrer" title={rowData.check_url} className="text-blue-600 hover:underline truncate block max-w-[200px]">
+      <TippyTooltip
+        content={rowData.check_url}
+        placement="left"
+        appendTo={document.body}
+      ><a
+        href={rowData.check_url}
+        target="_blank"
+        rel="noreferrer"
+        title={rowData.check_url}
+        className="text-blue-600 hover:underline truncate block max-w-[200px]"
+      >
         {rowData.check_url}
-      </a>
+      </a></TippyTooltip>
     );
   };
 
@@ -777,37 +905,90 @@ function KeywordsPage() {
             <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
             <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
             <Column header="Status" body={statusBodyTemplate} style={{ width: '8rem' }} />
-            <Column field="volume" header="Volume" sortable style={{ width: '8rem' }} />
+            <Column
+              field="volume"
+              header="Volume"
+              sortable
+              style={{ width: '8rem' }}
+              body={(rowData) =>
+                valueOrShimmer(
+                  rowData,
+                  rowData.volume,
+                  (value) => Number(value).toLocaleString('en-US')
+                )
+              }
+            />
             <Column field="kd" header={
               <TippyTooltip content="Keyword Difficulty (0-100) — how hard it is to rank" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>KD</span>
               </TippyTooltip>
-            } sortable style={{ width: '6rem' }} />
+            } sortable style={{ width: '6rem' }}
+            body={(rowData) =>
+              valueOrShimmer(rowData, rowData.kd)
+            } />
             <Column field="cpc" header={
               <TippyTooltip content="Cost per click in INR" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>CPC</span>
               </TippyTooltip>
-            } sortable style={{ width: '7rem' }} body={(rowData) => (rowData.cpc != null ? `₹${rowData.cpc}` : '—')} />
+            } sortable style={{ width: '7rem' }}
+            body={(rowData) =>
+              valueOrShimmer(
+                rowData,
+                rowData.cpc,
+                (value) => `₹${value}`
+              )
+            } />
             <Column field="competition" header={
               <TippyTooltip content="Competition level (0-1) for paid search" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Competition</span>
               </TippyTooltip>
-            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.competition != null ? rowData.competition.toFixed(2) : '—')} />
+            } sortable style={{ width: '8rem' }}
+            body={(rowData) =>
+              valueOrShimmer(
+                rowData,
+                rowData.competition,
+                (value) => Number(value).toFixed(2)
+              )
+            } />
             <Column field="backlinks" header={
               <TippyTooltip content="Total backlinks pointing to this page" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Backlinks</span>
               </TippyTooltip>
-            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.backlinks != null ? Math.round(rowData.backlinks).toLocaleString('en-US') : '—')} />
+            } sortable style={{ width: '8rem' }}
+            body={(rowData) =>
+              valueOrShimmer(
+                rowData,
+                rowData.backlinks,
+                (value) => Math.round(value).toLocaleString('en-US')
+              )
+            } />
             <Column field="domains" header={
               <TippyTooltip content="Number of referring domains" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Domains</span>
               </TippyTooltip>
-            } sortable style={{ width: '8rem' }} body={(rowData) => (rowData.domains != null ? Math.round(rowData.domains).toLocaleString('en-US') : '—')} />
+            } sortable style={{ width: '8rem' }}
+            body={(rowData) =>
+              valueOrShimmer(
+                rowData,
+                rowData.domains,
+                (value) => Math.round(value).toLocaleString('en-US')
+              )
+            } />
             <Column field="intent" header={
               <TippyTooltip content="Search intent: informational, navigational, commercial, transactional" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Intent</span>
               </TippyTooltip>
-            } style={{ width: '8rem' }} body={(rowData) => <span className="capitalize">{rowData.intent || '—'}</span>} />
+            } style={{ width: '8rem' }}
+            body={(rowData) => {
+              if (isRowProcessing(rowData)) {
+                return <Shimmer width="w-20" />;
+              }
+              return (
+                <span className="capitalize">
+                  {rowData.intent || '—'}
+                </span>
+              );
+            }} />
             <Column field="position" header={
               <TippyTooltip content="Current organic rank position (1 = top)" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>

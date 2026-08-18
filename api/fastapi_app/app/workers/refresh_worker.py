@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from app.db.models import ProcessingJob, Keyword, RankResult, SerpFeature, User, Project, RefreshJob, TrackedKeyword
-from app.services.credit_service import consume_reserved, deduct_credits, consume_automatic_reserved
+from app.services.credit_service import (
+    consume_reserved,
+    deduct_credits,
+    consume_automatic_reserved,
+    refund_reserved,
+)
 from app.services.keyword_update_events import publish_keyword_update
 from app.services.dataforseo_client import _build_serp_cache_key, _set_cached_serp, _log_dataforseo_cost
 from app.core.config import get_settings
@@ -158,11 +163,66 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         keyword_rows = db.scalars(keyword_query).all()
         
         if not keyword_rows:
-            job.status = "failed"
-            job.updatedAt = datetime.utcnow()
+            now = datetime.utcnow()
+
+            try:
+                skipped_payload = json.loads(job.payload or "{}")
+            except Exception:
+                skipped_payload = {}
+
+            skipped_payload["skipped"] = True
+            skipped_payload["skip_reason"] = "keyword_deleted_or_inactive"
+            skipped_payload["skipped_at"] = now.isoformat()
+
+            action = skipped_payload.get("action")
+            credit_reference = skipped_payload.get("credit_reference")
+            cost_per_keyword = skipped_payload.get("cost_per_keyword")
+            payload_user_id = skipped_payload.get("user_id")
+
+            # The keyword was deleted/inactivated before its async result
+            # could be applied. Return any still-reserved user credits.
+            if (
+                action in ("add_keyword", "bulk_add", "manual_refresh", "weekly")
+                and payload_user_id
+                and credit_reference
+                and cost_per_keyword
+            ):
+                try:
+                    refund_reserved(
+                        db=db,
+                        user_id=payload_user_id,
+                        reference=credit_reference,
+                        amount=float(cost_per_keyword),
+                        description=f"Refund: keyword deleted before {action} completed",
+                        project_id=project_id,
+                        task_id=task_id,
+                    )
+                except Exception as refund_exc:
+                    logger.warning(
+                        "Could not refund reserved credits for skipped ProcessingJob "
+                        "job=%s keyword=%s: %s",
+                        job.id,
+                        job.keywordText,
+                        refund_exc,
+                    )
+
+            job.payload = json.dumps(skipped_payload)
+            job.status = "success"
+            job.processingTimeoutAt = None
+            job.updatedAt = now
+
             db.add(job)
             db.commit()
-            return False
+
+            logger.info(
+                "ProcessingJob skipped because keyword was deleted or inactive: "
+                "job=%s keyword=%s project=%s",
+                job.id,
+                job.keywordText,
+                project_id,
+            )
+
+            return True
         
         if first_block is None:
             now = datetime.utcnow()
