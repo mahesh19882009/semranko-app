@@ -79,7 +79,7 @@ FREE_PLAN_LIMITS = {
 
 class Settings(BaseSettings):
     # App Basics
-    APP_NAME: str = "RankCare API"
+    APP_NAME: str = "Semranko API"
     ENV: str = "development"
     PORT: int = 4000
     FRONTEND_URL: str = "http://localhost:3000"
@@ -90,9 +90,9 @@ class Settings(BaseSettings):
     JWT_ACCESS_SECRET: str = "dev-secret-key-change-in-production"
     JWT_ACCESS_EXPIRES_IN_DAYS: int = 1
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
-    AUTH_COOKIE_NAME: str = "rankcare_access"
-    SESSION_COOKIE_NAME: str = "rankcare_session"
-    CSRF_COOKIE_NAME: str = "rankcare_csrf"
+    AUTH_COOKIE_NAME: str = "semranko_access"
+    SESSION_COOKIE_NAME: str = "semranko_session"
+    CSRF_COOKIE_NAME: str = "semranko_csrf"
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
     AUTH_COOKIE_SAMESITE: str = "lax"
     TURNSTILE_SECRET_KEY: Optional[str] = None
@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "rankcare"
+    POSTGRES_DB: str = "semranko"
 
     #DataForSEO
     DATAFORSEO_LOGIN: Optional[str] = None
@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     
     # Email
     RESEND_API_KEY: Optional[str] = None
-    EMAIL_FROM: str = "noreply@rankcare.com"
+    EMAIL_FROM: str = "noreply@semranko.com"
     EMAIL_VERIFY_EXPIRE_HOURS: int = 24
     
     # Razorpay

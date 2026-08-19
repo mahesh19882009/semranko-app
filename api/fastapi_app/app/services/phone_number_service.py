@@ -58,7 +58,7 @@ def normalize_phone_number(value: Any, country: str | None = None) -> str:
     else:
         # First preserve the selected country's national-number interpretation.
         candidates.append((raw, parse_country))
-        # Existing RankCare values are digits-only international numbers; this
+        # Existing Semranko values are digits-only international numbers; this
         # fallback also permits legacy API clients to submit that representation.
         candidates.append((f"+{digits}", None))
 

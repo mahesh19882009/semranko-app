@@ -69,7 +69,7 @@ _redis_state_lock = Lock()
 
 def consume_limit(key: str, max_requests: int, window_seconds: int) -> tuple[bool, int]:
     """Atomically consume one request. Redis failure falls back to local protection."""
-    redis_key = f"rankcare:rate:{key}"
+    redis_key = f"semranko:rate:{key}"
     global _redis_retry_at
     if time.monotonic() < _redis_retry_at:
         return _memory.consume(redis_key, max_requests, window_seconds)
@@ -85,7 +85,7 @@ def consume_limit(key: str, max_requests: int, window_seconds: int) -> tuple[boo
 
 
 def clear_limit(key: str) -> None:
-    redis_key = f"rankcare:rate:{key}"
+    redis_key = f"semranko:rate:{key}"
     try:
         _redis.delete(redis_key)
     except Exception:

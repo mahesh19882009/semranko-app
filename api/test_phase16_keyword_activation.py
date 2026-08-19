@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.core.config import settings
 from app.core.errors import ApiError

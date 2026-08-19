@@ -1,4 +1,4 @@
-# RankCare — Final Implementation Plan: DataForSEO Cost Optimization
+# Semranko — Final Implementation Plan: DataForSEO Cost Optimization
 
 ## CREDIT/PRICING FREEZE NOTICE
 
@@ -8,7 +8,7 @@ This document covers ONLY technical architecture, worst-case cost analysis, and 
 
 Worst-case calculations use:
 - Current official DataForSEO USD pricing
-- Current RankCare credit costs
+- Current Semranko credit costs
 - Zero cache hits
 - Maximum plan-limit usage
 - Exchange rate: 1 USD = 95.23 INR
@@ -372,7 +372,7 @@ serp:seo tools:2840:desktop:100:false
 
 ## Executive Summary
 
-RankCare currently uses **Live SERP** (`/serp/google/organic/live/advanced`) with `depth=100` and `expand_ai_overview=true` for ALL keyword tracking — including weekly background jobs. This is the most expensive DataForSEO method available.
+Semranko currently uses **Live SERP** (`/serp/google/organic/live/advanced`) with `depth=100` and `expand_ai_overview=true` for ALL keyword tracking — including weekly background jobs. This is the most expensive DataForSEO method available.
 
 The current architecture also:
 - Makes duplicate DataForSEO calls (two separate clients, three weekly jobs)
@@ -382,7 +382,7 @@ The current architecture also:
 
 This plan fixes all of these while preserving every product feature.
 
-**Bottom line:** Under the CURRENT pricing and credit allocation, a worst-case paid user CAN cause RankCare to spend more on DataForSEO than the plan revenue. The trial is also unprofitable by design (expected). Specific mitigations are included below.
+**Bottom line:** Under the CURRENT pricing and credit allocation, a worst-case paid user CAN cause Semranko to spend more on DataForSEO than the plan revenue. The trial is also unprofitable by design (expected). Specific mitigations are included below.
 
 ---
 
@@ -445,7 +445,7 @@ This plan fixes all of these while preserving every product feature.
 
 ### Trial Actions Available
 
-| Action | RankCare Credits | Max Uses | DataForSEO USD Cost | DataForSEO INR | Max DataForSEO Cost (INR) |
+| Action | Semranko Credits | Max Uses | DataForSEO USD Cost | DataForSEO INR | Max DataForSEO Cost (INR) |
 |--------|------------------|----------|---------------------|----------------|---------------------------|
 | Add keyword (day-one) | 20 | 5 (keywordLimit) | $0.033 | ₹3.14 | ₹15.70 |
 | Manual Check Now (refresh) | 10 | 10 (100÷10) | $0.033 | ₹3.14 | ₹31.40 |
@@ -494,7 +494,7 @@ This plan fixes all of these while preserving every product feature.
 | Manual Check Now (Labs + Live SERP) | $0.033 | ₹3.14 |
 | Weekly Standard Normal tracking | $0.006 | ₹0.57 |
 
-### Cost Efficiency per RankCare Credit
+### Cost Efficiency per Semranko Credit
 
 | Feature | User Credits | DataForSEO USD | USD per Credit |
 |---------|-------------|----------------|----------------|
@@ -574,7 +574,7 @@ This plan fixes all of these while preserving every product feature.
 
 **Correct finding:**
 
-**YES — under the CURRENT pricing and credit allocation, a worst-case user CAN cause RankCare to lose money on ALL paid plans.**
+**YES — under the CURRENT pricing and credit allocation, a worst-case user CAN cause Semranko to lose money on ALL paid plans.**
 
 The theoretical worst-case assumes:
 - User spends all credits on Competitor Spy ($0.132/call) + Manual Check Now ($0.033/call)
@@ -958,7 +958,7 @@ User.selectedPlan.notin_(["free_trial", ""])
 
 ## Credit Safety Model
 
-### Layer 1: RankCare Credits Limit User Activity
+### Layer 1: Semranko Credits Limit User Activity
 - Every feature action checks `user.creditBalance` before proceeding
 - `deduct_credits()` raises HTTP 402 if insufficient
 - `refund_credits()` restores credits on failure
@@ -1271,7 +1271,7 @@ All required tables already exist:
 
 ### Cost Safety Conclusion
 
-**YES — under the CURRENT pricing and credit allocation, a worst-case user CAN cause RankCare to lose money on ALL paid plans.**
+**YES — under the CURRENT pricing and credit allocation, a worst-case user CAN cause Semranko to lose money on ALL paid plans.**
 
 **Corrected finding:**
 
@@ -1587,8 +1587,8 @@ Every credit-affecting event must be recorded with:
 - Cancellation where applicable
 
 ### Rules
-1. If RankCare reserves credits and the DataForSEO operation fails → **Refund the reserved credits**
-2. If the DataForSEO request succeeds and RankCare subsequently fails while processing the response → do NOT blindly issue a second request or duplicate charge
+1. If Semranko reserves credits and the DataForSEO operation fails → **Refund the reserved credits**
+2. If the DataForSEO request succeeds and Semranko subsequently fails while processing the response → do NOT blindly issue a second request or duplicate charge
 3. The system must be idempotent
 4. Every reservation/refund/finalization must have a transaction/reference ID
 5. Duplicate webhooks must not cause duplicate credit deductions or duplicate DataForSEO task processing
@@ -1795,7 +1795,7 @@ Credit operations must be atomic and concurrency-safe.
 - No assumed cache savings
 
 ### Objective
-**A paid plan must not require RankCare to pay the user's DataForSEO usage from RankCare's own pocket under the defined plan limits.**
+**A paid plan must not require Semranko to pay the user's DataForSEO usage from Semranko's own pocket under the defined plan limits.**
 
 ### Current Plans and Limits (FROZEN)
 
@@ -1969,4 +1969,4 @@ After actual DataForSEO costs are collected, we will separately design the final
 - FAQ
 - billing/usage messaging
 
-The final credit model must be based on actual measured DataForSEO costs and must protect RankCare from subsidizing worst-case paid-user usage.
+The final credit model must be based on actual measured DataForSEO costs and must protect Semranko from subsidizing worst-case paid-user usage.

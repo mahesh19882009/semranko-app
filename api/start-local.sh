@@ -5,7 +5,7 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$SCRIPT_DIR"
 
-echo "RankCare API Starter"
+echo "Semranko API Starter"
 echo "===================="
 echo "Project Directory: $PROJECT_DIR"
 echo ""

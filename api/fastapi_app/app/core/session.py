@@ -18,7 +18,7 @@ def generate_session_token() -> str:
 
 
 def _session_key(user_id: str) -> str:
-    return f"rankcare:session:{user_id}"
+    return f"semranko:session:{user_id}"
 
 
 def store_session(user_id: str, token: str) -> None:

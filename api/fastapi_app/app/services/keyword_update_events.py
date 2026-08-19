@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def keyword_update_channel(user_id: str, project_id: str) -> str:
-    return f"rankcare:keyword_updates:{user_id}:{project_id}"
+    return f"semranko:keyword_updates:{user_id}:{project_id}"
 
 
 def publish_keyword_update(

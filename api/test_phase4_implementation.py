@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from unittest.mock import patch, MagicMock
 
 import sys
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.db.models import Base, User, Subscription, Project, Keyword, CreditLedger, KeywordMetricsHistory, RankResult
 from app.services.plan_service import (

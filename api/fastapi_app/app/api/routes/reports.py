@@ -49,7 +49,7 @@ def _send_report_email(recipients: List[str], file_bytes: bytes, filename: str, 
         for recipient in recipients:
             email_service.send_email_with_attachment(
                 to_email=recipient,
-                subject=f"RankCare Export Report - Project {project_id}",
+                subject=f"Semranko Export Report - Project {project_id}",
                 html_body=f"<p>Please find attached the exported report for project {project_id}.</p>",
                 attachment_bytes=file_bytes,
                 attachment_filename=filename,
@@ -74,10 +74,10 @@ async def export_project_report(
 
     if request.export_format == "csv":
         file_bytes = generate_csv_report(project_id, request.start_date, request.end_date)
-        filename = f"rankcare-report-{project_id}.csv"
+        filename = f"semranko-report-{project_id}.csv"
     else:
         file_bytes = generate_pdf_report(project_id, request.start_date, request.end_date)
-        filename = f"rankcare-report-{project_id}.pdf"
+        filename = f"semranko-report-{project_id}.pdf"
 
     if request.email_recipients:
         background_tasks.add_task(

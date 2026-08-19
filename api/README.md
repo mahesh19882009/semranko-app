@@ -1,4 +1,4 @@
-# RankCare FastAPI Migration
+# Semranko FastAPI Migration
 
 This folder contains a full FastAPI migration of the original Node.js API.
 

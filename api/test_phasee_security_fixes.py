@@ -163,8 +163,8 @@ def test_get_current_user_fail_closed():
     class MockRequest:
         def __init__(self):
             self.cookies = {
-                "rankcare_access": access_token,
-                "rankcare_session": session_token,
+                "semranko_access": access_token,
+                "semranko_session": session_token,
             }
     
     request = MockRequest()

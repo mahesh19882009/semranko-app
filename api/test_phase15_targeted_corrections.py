@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.api.routes.keyword_research import research_keyword_endpoint, competitor_spy_endpoint
 from app.core.errors import ApiError

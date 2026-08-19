@@ -37,7 +37,7 @@ target_metadata = Base.metadata
 def _is_fresh_head_upgrade(connection) -> bool:
     """Return true only for ``alembic upgrade head`` on an empty database.
 
-    RankCare's first historical Alembic revision was generated as a bridge
+    Semranko's first historical Alembic revision was generated as a bridge
     from an existing Prisma-managed schema.  It cannot bootstrap an empty
     database.  Existing/versioned databases must continue through that
     history unchanged; only a genuinely empty database uses the current

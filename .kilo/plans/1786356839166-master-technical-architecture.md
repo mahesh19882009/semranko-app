@@ -1,4 +1,4 @@
-# RankCare — Final Technical Architecture, Credit Transaction & Cost-Safety Master Plan
+# Semranko — Final Technical Architecture, Credit Transaction & Cost-Safety Master Plan
 
 ## CREDIT/PRICING FREEZE NOTICE
 
@@ -147,7 +147,7 @@ At minimum measure:
 3. Manual Check Now
 4. Keyword Research
 5. Competitor Spy
-6. Any other DataForSEO operation currently used by RankCare
+6. Any other DataForSEO operation currently used by Semranko
 
 The final pricing model MUST use these observed costs.
 Do not use assumed public pricing as the final cost model.
@@ -636,7 +636,7 @@ Handle all of the following:
 * concurrent requests
 * task submitted successfully but webhook delayed
 * webhook received multiple times
-* DataForSEO succeeds but RankCare processing fails
+* DataForSEO succeeds but Semranko processing fails
 * user removes keyword while async task is running
 * user replaces keyword while async task is running
 * subscription expires while task is running
@@ -839,7 +839,7 @@ No assumed public pricing
 ```
 
 The paid plan must be designed so that:
-**RankCare does not pay the user's DataForSEO usage from RankCare's own pocket under the defined plan limits.**
+**Semranko does not pay the user's DataForSEO usage from Semranko's own pocket under the defined plan limits.**
 
 ### Current Plans and Limits (FROZEN)
 
@@ -1248,7 +1248,7 @@ Record at least several real samples for:
 5. Keyword Overview
 6. Keyword Ideas
 7. Competitor Spy
-8. Any other billable DataForSEO operation used by RankCare
+8. Any other billable DataForSEO operation used by Semranko
 
 Only after these are validated should we finalize credits.
 
@@ -1314,7 +1314,7 @@ The new architecture must produce equivalent user-visible results.
 
 ## FINAL OBJECTIVE
 
-The final RankCare system must satisfy all of these simultaneously:
+The final Semranko system must satisfy all of these simultaneously:
 
 1. Preserve all existing user-visible functionality.
 2. Use the cheapest technically compatible DataForSEO endpoint for each operation.
@@ -1334,7 +1334,7 @@ The final RankCare system must satisfy all of these simultaneously:
 16. Preserve credit usage/refund history.
 17. Log every actual DataForSEO cost.
 18. Base final pricing on actual DataForSEO account charges.
-19. Ensure worst-case permitted usage does not make RankCare pay the user's DataForSEO costs from its own pocket.
+19. Ensure worst-case permitted usage does not make Semranko pay the user's DataForSEO costs from its own pocket.
 20. Do NOT change credit values until the actual cost-validation phase is complete.
 
 Treat this document as the master technical specification until the actual DataForSEO cost validation is completed.

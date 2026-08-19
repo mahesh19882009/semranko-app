@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import inspect
 
 import sys
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session

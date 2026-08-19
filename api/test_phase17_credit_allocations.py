@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.core.config import get_settings
 from app.db.models import Base, CreditLedger, Keyword, Project, RefreshJob, Subscription, User

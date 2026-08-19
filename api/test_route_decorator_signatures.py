@@ -70,8 +70,8 @@ def test_login_accepts_body_without_fake_decorator_query_parameters(monkeypatch)
     assert "sessionToken" not in response.json()["data"]
     assert "accessToken" not in response.json()["data"]
     cookies = response.headers.get_list("set-cookie")
-    assert any("rankcare_access=" in cookie and "HttpOnly" in cookie for cookie in cookies)
-    assert any("rankcare_session=" in cookie and "HttpOnly" in cookie for cookie in cookies)
+    assert any("semranko_access=" in cookie and "HttpOnly" in cookie for cookie in cookies)
+    assert any("semranko_session=" in cookie and "HttpOnly" in cookie for cookie in cookies)
 
 
 def test_all_rate_limited_auth_routes_keep_declared_request_shapes():

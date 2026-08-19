@@ -10,7 +10,7 @@ Tests for:
 """
 
 import sys
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 import json
 import logging

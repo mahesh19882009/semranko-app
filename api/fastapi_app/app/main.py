@@ -30,7 +30,7 @@ if settings.ENV == "production" and (not origins or "*" in origins):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="RankCare SEO Analytics API - Track rankings, analyze competitors, and optimize your SEO strategy",
+    description="Semranko SEO Analytics API - Track rankings, analyze competitors, and optimize your SEO strategy",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"

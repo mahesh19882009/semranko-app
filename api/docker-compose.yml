@@ -1,25 +1,25 @@
 services:
   postgres:
     image: postgres:16
-    container_name: rankcare_postgres
+    container_name: semranko_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: rankcare
+      POSTGRES_DB: semranko
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d rankcare"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d semranko"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7
-    container_name: rankcare_redis
+    container_name: semranko_redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -32,13 +32,13 @@ services:
   api:
     build:
       context: ./fastapi_app
-    container_name: rankcare_fastapi_api
+    container_name: semranko_fastapi_api
     restart: unless-stopped
     environment:
-      APP_NAME: RankCare API
+      APP_NAME: Semranko API
       ENV: development
       PORT: 4000
-      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/rankcare
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/semranko
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
@@ -59,13 +59,13 @@ services:
   worker:
     build:
       context: ./fastapi_app
-    container_name: rankcare_fastapi_worker
+    container_name: semranko_fastapi_worker
     restart: unless-stopped
     environment:
-      APP_NAME: RankCare API
+      APP_NAME: Semranko API
       ENV: development
       PORT: 4000
-      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/rankcare
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/semranko
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""

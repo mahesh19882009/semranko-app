@@ -383,8 +383,8 @@ async def download_invoice(
         company_state = settings.COMPANY_STATE or ""
         company_state_code = settings.COMPANY_STATE_CODE or ""
         company_gstin = settings.GSTIN or ""
-        company_name = settings.COMPANY_NAME or "RankCare Technologies"
-        company_email = settings.COMPANY_EMAIL or "support@rankcare.com"
+        company_name = settings.COMPANY_NAME or "Semranko Technologies"
+        company_email = settings.COMPANY_EMAIL or "support@semranko.com"
 
         user = db.scalar(select(User).where(User.id == owner_id))
         bill_to_name = user.name if user else "Customer"
@@ -516,7 +516,7 @@ async def download_invoice(
             ["Terms & Conditions:"],
             ["1. Payment is due immediately upon invoice receipt."],
             ["2. Once purchased, credits are non-refundable."],
-            ["3. For any queries, contact us at support@rankcare.com."],
+            ["3. For any queries, contact us at support@semranko.com."],
         ]
         terms_table = Table(terms_data, colWidths=[6 * inch])
         terms_table.setStyle(TableStyle([

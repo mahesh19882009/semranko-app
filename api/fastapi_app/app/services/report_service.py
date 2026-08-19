@@ -19,7 +19,7 @@ def generate_csv_report(project_id: str, start_date: str, end_date: str) -> byte
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow(["RankCare Export Report"])
+    writer.writerow(["Semranko Export Report"])
     writer.writerow([f"Project ID: {project_id}"])
     writer.writerow([f"Date Range: {start_date} to {end_date}"])
     writer.writerow([f"Generated: {datetime.utcnow().isoformat()}"])
@@ -64,7 +64,7 @@ def generate_pdf_report(project_id: str, start_date: str, end_date: str) -> byte
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("RankCare Export Report", styles["Title"]))
+    story.append(Paragraph("Semranko Export Report", styles["Title"]))
     story.append(Spacer(1, 0.2 * inch))
     story.append(Paragraph(f"Project ID: {project_id}", styles["Normal"]))
     story.append(Paragraph(f"Date Range: {start_date} to {end_date}", styles["Normal"]))

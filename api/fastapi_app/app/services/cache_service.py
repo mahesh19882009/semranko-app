@@ -16,7 +16,7 @@ redis_client = Redis(
 def _make_key(prefix: str, args: tuple) -> str:
     raw = json.dumps(args, sort_keys=True, default=str)
     digest = hashlib.md5(raw.encode()).hexdigest()[:12]
-    return f"rankcare:cache:{prefix}:{digest}"
+    return f"semranko:cache:{prefix}:{digest}"
 
 
 def get_cached(prefix: str, args: tuple) -> Optional[dict]:
@@ -33,7 +33,7 @@ def set_cached(prefix: str, args: tuple, value: dict, ttl_seconds: int) -> None:
 
 
 def increment_usage(counter_key: str, ttl_seconds: int = 35 * 24 * 60 * 60) -> int:
-    key = f"rankcare:usage:{counter_key}"
+    key = f"semranko:usage:{counter_key}"
     count = redis_client.incr(key)
     if count == 1:
         redis_client.expire(key, ttl_seconds)
@@ -41,6 +41,6 @@ def increment_usage(counter_key: str, ttl_seconds: int = 35 * 24 * 60 * 60) -> i
 
 
 def get_usage(counter_key: str) -> int:
-    key = f"rankcare:usage:{counter_key}"
+    key = f"semranko:usage:{counter_key}"
     value = redis_client.get(key)
     return int(value) if value is not None else 0

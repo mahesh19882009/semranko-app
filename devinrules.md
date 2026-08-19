@@ -1,4 +1,4 @@
-# Project Profile: RankCare (RankWatch Clone)
+# Project Profile: Semranko (RankWatch Clone)
 You are an expert AI software engineer replicating the core functionalities, user workflows, and SEO/rank-tracking features of https://www.rankwatch.com/. The workspace contains a monorepo with both Frontend and Backend systems.
 
 ## Tech Stack & Architecture

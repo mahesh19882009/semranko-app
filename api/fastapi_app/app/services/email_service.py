@@ -47,7 +47,7 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
                                 <span style="color: #ffffff; font-size: 20px; line-height: 46px; font-weight: bold;">✉</span>
                             </div>
                             <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.025em;">Verify Your Email</h1>
-                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">Welcome to RankCare</p>
+                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">Welcome to Semranko</p>
                             </td>
                         </tr>
 
@@ -55,7 +55,7 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
                         <tr>
                             <td style="padding: 24px;">
                             <p style="margin: 0 0 16px 0; font-size: 15px; color: #334155; line-height: 1.5;">Hi <strong>{name}</strong>,</p>
-                            <p style="margin: 0 0 24px 0; font-size: 14px; color: #64748b; line-height: 1.5;">Thanks for creating an account with RankCare! Before we get started, we just need to confirm that this email address belongs to you.</p>
+                            <p style="margin: 0 0 24px 0; font-size: 14px; color: #64748b; line-height: 1.5;">Thanks for creating an account with Semranko! Before we get started, we just need to confirm that this email address belongs to you.</p>
 
                             <!-- Action Button -->
                             <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 28px;">
@@ -82,7 +82,7 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
                         <tr>
                             <td style="padding: 0 24px 24px 24px; text-align: center;">
                             <p style="margin: 0; font-size: 12px; color: #94a3b8;">If you did not sign up for this account, you can safely ignore this email.</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 Semranko. All rights reserved.</p>
                             </td>
                         </tr>
 
@@ -177,7 +177,7 @@ def send_payment_success_email(to_email: str, name: str, plan_name: str, amount:
                             <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                 <tr>
                                 <td align="center">
-                                    <a href="https://rankcare.codmonks.com" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Go to Dashboard</a>
+                                    <a href="https://semranko.ai" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Go to Dashboard</a>
                                 </td>
                                 </tr>
                             </table>
@@ -188,7 +188,7 @@ def send_payment_success_email(to_email: str, name: str, plan_name: str, amount:
                         <tr>
                             <td style="padding: 0 24px 24px 24px; text-align: center;">
                             <p style="margin: 0; font-size: 12px; color: #94a3b8;">If you have any questions, reply directly to this email.</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 Semranko. All rights reserved.</p>
                             </td>
                         </tr>
 
@@ -282,7 +282,7 @@ def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_i
                             <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                 <tr>
                                 <td align="center">
-                                    <a href="https://rankcare.codmonks.com" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Retry Payment</a>
+                                    <a href="https://semranko.ai" target="_blank" style="display: inline-block; background-color: #000000; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);">Retry Payment</a>
                                 </td>
                                 </tr>
                             </table>
@@ -293,7 +293,7 @@ def send_payment_failure_email(to_email: str, name: str, plan_name: str, order_i
                         <tr>
                             <td style="padding: 0 24px 24px 24px; text-align: center;">
                             <p style="margin: 0; font-size: 12px; color: #94a3b8;">Need help? Please reply directly to this email to reach support.</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 Semranko. All rights reserved.</p>
                             </td>
                         </tr>
 
@@ -353,7 +353,7 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
                                 <span style="color: #ffffff; font-size: 20px; line-height: 46px; font-weight: bold;">🔑</span>
                             </div>
                             <h1 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.025em;">Reset Your Password</h1>
-                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">RankCare Account Security</p>
+                            <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 14px;">Semranko Account Security</p>
                             </td>
                         </tr>
 
@@ -388,7 +388,7 @@ def send_password_reset_email(to_email: str, name: str, reset_url: str) -> bool:
                         <tr>
                             <td style="padding: 0 24px 24px 24px; text-align: center;">
                             <p style="margin: 0; font-size: 12px; color: #94a3b8;">This link will expire in 1 hour for your security.</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 RankCare. All rights reserved.</p>
+                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #94a3b8;">&copy; 2026 Semranko. All rights reserved.</p>
                             </td>
                         </tr>
 

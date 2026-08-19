@@ -49,9 +49,9 @@ def test_login_sets_httponly_credentials_and_safe_response(monkeypatch):
     body = response.json()["data"]
     assert "accessToken" not in body and "sessionToken" not in body
     cookies = response.headers.get_list("set-cookie")
-    assert any("rankcare_access=" in value and "HttpOnly" in value and "SameSite=lax" in value for value in cookies)
-    assert any("rankcare_session=" in value and "HttpOnly" in value for value in cookies)
-    assert any("rankcare_csrf=" in value and "HttpOnly" not in value for value in cookies)
+    assert any("semranko_access=" in value and "HttpOnly" in value and "SameSite=lax" in value for value in cookies)
+    assert any("semranko_session=" in value and "HttpOnly" in value for value in cookies)
+    assert any("semranko_csrf=" in value and "HttpOnly" not in value for value in cookies)
 
 
 def test_production_auth_cookies_are_secure(monkeypatch):
@@ -71,7 +71,7 @@ def test_authenticated_mutation_requires_valid_csrf(monkeypatch):
     assert missing.json()["data"]["error"] == "CSRF_INVALID"
     invalid = client.post("/api/auth/logout", headers={"X-CSRF-Token": "wrong"})
     assert invalid.status_code == 403
-    csrf = client.cookies.get("rankcare_csrf")
+    csrf = client.cookies.get("semranko_csrf")
     valid = client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf})
     assert valid.status_code == 200
     assert invalidated == ["user-cookie"]
@@ -94,8 +94,8 @@ def test_cookie_authenticated_get_and_revoked_session(monkeypatch):
     fake_db = SimpleNamespace(scalar=lambda *_args, **_kwargs: user)
     mini.dependency_overrides[get_db] = lambda: fake_db
     client = TestClient(mini)
-    client.cookies.set("rankcare_access", create_access_token(user.id, "cookie@example.com"))
-    client.cookies.set("rankcare_session", "server-session")
+    client.cookies.set("semranko_access", create_access_token(user.id, "cookie@example.com"))
+    client.cookies.set("semranko_session", "server-session")
     monkeypatch.setattr("app.api.deps.validate_session", lambda user_id, token: token == "server-session")
     assert client.get("/private").status_code == 200
     monkeypatch.setattr("app.api.deps.validate_session", lambda user_id, token: False)
@@ -104,9 +104,9 @@ def test_cookie_authenticated_get_and_revoked_session(monkeypatch):
 
 def test_revoked_browser_session_returns_unauthorized_and_clears_cookies(monkeypatch):
     client = TestClient(app)
-    client.cookies.set("rankcare_access", create_access_token("revoked-user", "revoked@example.com"))
-    client.cookies.set("rankcare_session", "revoked-session")
-    client.cookies.set("rankcare_csrf", csrf_for_session("revoked-session"))
+    client.cookies.set("semranko_access", create_access_token("revoked-user", "revoked@example.com"))
+    client.cookies.set("semranko_session", "revoked-session")
+    client.cookies.set("semranko_csrf", csrf_for_session("revoked-session"))
     monkeypatch.setattr("app.api.deps.validate_session", lambda *_args: False)
     response = client.get("/api/auth/me")
     assert response.status_code == 401
@@ -124,8 +124,8 @@ def test_mobile_verification_token_cannot_authenticate(monkeypatch):
 
     mini.dependency_overrides[get_db] = lambda: FakeDb()
     client = TestClient(mini)
-    client.cookies.set("rankcare_access", create_mobile_verification_token("user-cookie"))
-    client.cookies.set("rankcare_session", "server-session")
+    client.cookies.set("semranko_access", create_mobile_verification_token("user-cookie"))
+    client.cookies.set("semranko_session", "server-session")
     monkeypatch.setattr("app.api.deps.validate_session", lambda *_args: True)
     assert client.get("/private").status_code == 401
 

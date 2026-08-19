@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from datetime import datetime, timedelta
 
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.db.models import (
     Base,

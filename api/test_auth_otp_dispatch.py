@@ -28,14 +28,14 @@ from app.core.security import decode_access_token
 def _clear_rate_limiter():
     _memory._buckets.clear()
     try:
-        for key in _redis.scan_iter("rankcare:rate:*"):
+        for key in _redis.scan_iter("semranko:rate:*"):
             _redis.delete(key)
     except Exception:
         pass
     yield
     _memory._buckets.clear()
     try:
-        for key in _redis.scan_iter("rankcare:rate:*"):
+        for key in _redis.scan_iter("semranko:rate:*"):
             _redis.delete(key)
     except Exception:
         pass

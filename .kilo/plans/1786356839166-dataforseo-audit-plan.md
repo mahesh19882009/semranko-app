@@ -1,10 +1,10 @@
-# RankCare SEO SaaS — DataForSEO Cost Optimization Audit
+# Semranko SEO SaaS — DataForSEO Cost Optimization Audit
 
 ## 1. Current Architecture
 
 | Layer | Technology | Details |
 |-------|-----------|---------|
-| **Frontend** | Next.js 16 (App Router), React 19, Redux Toolkit, PrimeReact, Tailwind CSS v4 | 18 view components in `rankcareapp/src/views/` |
+| **Frontend** | Next.js 16 (App Router), React 19, Redux Toolkit, PrimeReact, Tailwind CSS v4 | 18 view components in `semrankoapp/src/views/` |
 | **Backend** | FastAPI, SQLAlchemy 2.x, PostgreSQL | 21 API route files in `api/fastapi_app/app/api/routes/` |
 | **Cache** | Redis | `cache_service.py` — generic key/value with MD5 digest keys |
 | **Background Jobs** | APScheduler + RQ (Redis Queue) | Weekly Sunday bulk job, Monday tracker, rank-check queue |
@@ -206,7 +206,7 @@ Keep as-is, but cache for 30 days
 |-------|------|-----|-------|-------|
 | `KeywordResearchCache` | PostgreSQL table | 90 days | Yes | Per-user, per-seed-keyword |
 | `CompetitorCache` | PostgreSQL table | 30 days | Yes | Per-domain, per-location |
-| Redis `rankcare:cache:*` | Redis | Configurable | **Partially** | `get_cached()`/`set_cached()` exist, `get_serp_data()` reads from it but **never writes** to it |
+| Redis `semranko:cache:*` | Redis | Configurable | **Partially** | `get_cached()`/`set_cached()` exist, `get_serp_data()` reads from it but **never writes** to it |
 | `UserCacheUnlock` | PostgreSQL table | N/A | Unclear | Purpose unclear from current usage |
 | Frontend localStorage | Browser | Indefinite | Yes | Keyword research and spy results cached in browser |
 

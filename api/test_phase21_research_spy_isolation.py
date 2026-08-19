@@ -5,7 +5,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-sys.path.insert(0, "/Users/maheshsharma/development/rankcare-api/api/fastapi_app")
+sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app")
 
 from app.db.models import Base, Subscription, User
 from app.services.dataforseo_client import _build_labs_cache_key
@@ -67,13 +67,13 @@ def test_keyword_research_cross_account_never_auto_uses_other_users_state_but_sh
     user_a = make_user(db, "user-a")
     user_b = make_user(db, "user-b")
     fake_redis = FakeRedis()
-    ideas = [{"keyword": "rankcare", "volume": 100, "difficulty": 10}]
+    ideas = [{"keyword": "semranko", "volume": 100, "difficulty": 10}]
 
     with patch("app.services.cache_service.redis_client", fake_redis), patch(
         "app.services.keyword_research_service.DataForSEOClient.get_keyword_ideas_api",
         return_value=ideas,
     ) as dfs_call:
-        result_a = research_keyword(db, user_a.id, "RankCare", 2356)
+        result_a = research_keyword(db, user_a.id, "Semranko", 2356)
         assert result_a["cached"] is False
         assert result_a["credits_charged"] == 1
         db.refresh(user_a)
@@ -83,7 +83,7 @@ def test_keyword_research_cross_account_never_auto_uses_other_users_state_but_sh
         # User B has not submitted anything yet, so usage/state remains empty.
         assert get_feature_usage(db, user_b.id, "keyword_research")["used"] == 0
 
-        result_b = research_keyword(db, user_b.id, "rankcare", 2356)
+        result_b = research_keyword(db, user_b.id, "semranko", 2356)
         assert result_b["cached"] is True
         assert result_b["credits_charged"] == 0
         db.refresh(user_b)
@@ -101,11 +101,11 @@ def test_keyword_research_different_query_still_fetches_and_charges():
     with patch("app.services.cache_service.redis_client", fake_redis), patch(
         "app.services.keyword_research_service.DataForSEOClient.get_keyword_ideas_api",
         side_effect=[
-            [{"keyword": "rankcare", "volume": 100}],
+            [{"keyword": "semranko", "volume": 100}],
             [{"keyword": "seo audit", "volume": 80}],
         ],
     ) as dfs_call:
-        research_keyword(db, user_a.id, "rankcare", 2356)
+        research_keyword(db, user_a.id, "semranko", 2356)
         result_b = research_keyword(db, user_b.id, "seo audit", 2356)
         assert result_b["cached"] is False
         assert result_b["credits_charged"] == 1
@@ -166,11 +166,11 @@ def test_competitor_spy_different_domain_fetches_new_provider_result():
 
 
 def test_research_and_spy_labs_cache_keys_include_material_fields_without_user_identity():
-    research_key_a = _build_labs_cache_key("keyword_ideas", "rankcare", 2356, "en")
-    research_key_same = _build_labs_cache_key("keyword_ideas", " rankcare ", 2356, "en")
+    research_key_a = _build_labs_cache_key("keyword_ideas", "semranko", 2356, "en")
+    research_key_same = _build_labs_cache_key("keyword_ideas", " semranko ", 2356, "en")
     research_key_keyword_diff = _build_labs_cache_key("keyword_ideas", "seo audit", 2356, "en")
-    research_key_location_diff = _build_labs_cache_key("keyword_ideas", "rankcare", 2840, "en")
-    research_key_language_diff = _build_labs_cache_key("keyword_ideas", "rankcare", 2356, "hi")
+    research_key_location_diff = _build_labs_cache_key("keyword_ideas", "semranko", 2840, "en")
+    research_key_language_diff = _build_labs_cache_key("keyword_ideas", "semranko", 2356, "hi")
 
     assert research_key_a == research_key_same
     assert research_key_a != research_key_keyword_diff

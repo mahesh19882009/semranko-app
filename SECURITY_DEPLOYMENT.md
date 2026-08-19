@@ -1,4 +1,4 @@
-# RankCare security deployment settings
+# Semranko security deployment settings
 
 Local and automated tests may leave Turnstile keys unset; backend verification is bypassed only outside production in that case.
 
