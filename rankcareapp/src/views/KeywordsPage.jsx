@@ -802,27 +802,28 @@ function KeywordsPage() {
   };
 
   const checkUrlBodyTemplate = (rowData) => {
+    const rankingUrl = rowData.check_url || rowData.localPackUrl;
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-24" />;
     }
 
-    if (!rowData.check_url) {
+    if (!rankingUrl) {
       return <span title="No ranking URL">—</span>;
     }
 
     return (
       <TippyTooltip
-        content={rowData.check_url}
+        content={rankingUrl}
         placement="left"
         appendTo={document.body}
       ><a
-        href={rowData.check_url}
+        href={rankingUrl}
         target="_blank"
         rel="noreferrer"
-        title={rowData.check_url}
+        title={rankingUrl}
         className="text-blue-600 hover:underline truncate block max-w-[200px]"
       >
-        {rowData.check_url}
+        {rankingUrl}
       </a></TippyTooltip>
     );
   };
@@ -1081,7 +1082,11 @@ function KeywordsPage() {
             } sortable style={{ width: '7rem' }} body={positionBodyTemplate} />
             <Column
               field="localPackPosition"
-              header="Local Pack"
+              header={
+                <TippyTooltip content="Local pack rank" placement="top" appendTo={document.body}>
+                  <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>LP&nbsp;Rank</span>
+                </TippyTooltip>
+              }
               sortable
               body={localPackPositionBodyTemplate}
               style={{ width: '8rem' }}
@@ -1098,7 +1103,7 @@ function KeywordsPage() {
             } style={{ width: '8rem' }} body={checkUrlBodyTemplate} />
             <Column header={
               <TippyTooltip content="AI Overview presence and description" placement="top" appendTo={document.body}>
-                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>AI Overview</span>
+                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>AI&nbsp;Overview</span>
               </TippyTooltip>
             } style={{ width: '8rem' }} body={aiBodyTemplate} />
             <Column header={
