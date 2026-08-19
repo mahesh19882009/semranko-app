@@ -1,4 +1,5 @@
 import secrets
+from pathlib import Path
 from typing import Optional, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import computed_field, BaseModel, model_validator
@@ -76,6 +77,7 @@ FREE_PLAN_LIMITS = {
     "reports_per_month": 2
 }
 
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 class Settings(BaseSettings):
     # App Basics
@@ -340,7 +342,11 @@ class Settings(BaseSettings):
     GST_RATE: float = 0.0
     TRIAL_DAYS: int = 0
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_FILE),
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     @model_validator(mode='after')
     def sync_legacy_config(self):
