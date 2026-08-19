@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "semranko_session"
     CSRF_COOKIE_NAME: str = "semranko_csrf"
     CSRF_HEADER_NAME: str = "X-CSRF-Token"
+    CSRF_COOKIE_DOMAIN: Optional[str] = None
     AUTH_COOKIE_SAMESITE: str = "lax"
     TURNSTILE_SECRET_KEY: Optional[str] = None
     # Comma-separated emergency/bootstrap allow-list. Durable administrator
