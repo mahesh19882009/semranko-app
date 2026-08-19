@@ -35,6 +35,7 @@ def set_auth_cookies(response: Response, access_token: str, session_token: str) 
         settings.CSRF_COOKIE_NAME,
         csrf_for_session(session_token),
         httponly=False,
+        domain=settings.CSRF_COOKIE_DOMAIN,
         **common,
     )
 
@@ -44,7 +45,7 @@ def clear_auth_cookies(response: Response) -> None:
     common = {"secure": cookie_secure(), "samesite": settings.AUTH_COOKIE_SAMESITE, "path": "/"}
     response.delete_cookie(settings.AUTH_COOKIE_NAME, httponly=True, **common)
     response.delete_cookie(settings.SESSION_COOKIE_NAME, httponly=True, **common)
-    response.delete_cookie(settings.CSRF_COOKIE_NAME, httponly=False, **common)
+    response.delete_cookie(settings.CSRF_COOKIE_NAME, httponly=False, domain=settings.CSRF_COOKIE_DOMAIN, **common)
 
 
 def read_auth_cookies(request: Request) -> tuple[str | None, str | None]:
