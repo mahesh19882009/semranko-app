@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, or_, select, update
