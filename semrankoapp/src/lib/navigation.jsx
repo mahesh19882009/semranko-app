@@ -2,7 +2,7 @@
 
 import NextLink from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 
 export function Link({ to, href, children, style, className, ...props }) {
   const path = to || href
@@ -15,13 +15,14 @@ export function Link({ to, href, children, style, className, ...props }) {
 
 export function useNavigate() {
   const router = useRouter()
-  return (to, options) => {
+
+  return useCallback((to, options) => {
     if (options && options.replace) {
       router.replace(to)
     } else {
       router.push(to)
     }
-  }
+  }, [router])
 }
 
 export function useLocation() {
@@ -44,28 +45,35 @@ export function useLocation() {
 export function useSearchParams() {
   const [search, setSearch] = useState('')
 
+  const pathname = usePathname()
+
   useEffect(() => {
     setSearch(window.location.search)
-  }, [usePathname()])
+  }, [pathname])
 
   const params = useMemo(() => new URLSearchParams(search), [search])
   const router = useRouter()
 
-  const setSearchParams = (newParams, options) => {
+  const setSearchParams = useCallback((newParams, options) => {
     const url = new URL(window.location.href)
     url.search = ''
+
     if (newParams instanceof URLSearchParams) {
       newParams.forEach((v, k) => url.searchParams.set(k, v))
     } else if (typeof newParams === 'object' && newParams !== null) {
-      Object.entries(newParams).forEach(([k, v]) => url.searchParams.set(k, String(v)))
+      Object.entries(newParams).forEach(([k, v]) =>
+        url.searchParams.set(k, String(v))
+      )
     }
+
     const fullPath = `${window.location.pathname}${url.search}`
+
     if (options && options.replace) {
       router.replace(fullPath)
     } else {
       router.push(fullPath)
     }
-  }
+  }, [router])
 
   return [params, setSearchParams]
 }
