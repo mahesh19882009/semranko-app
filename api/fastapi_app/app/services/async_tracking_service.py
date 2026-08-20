@@ -250,27 +250,64 @@ def submit_user_tracking_job(
     if not keyword_texts:
         return {"refresh_job_id": None, "task_ids": [], "submitted": [], "failed_chunks": 0}
 
-    existing_pending = db.scalar(
+    pending_jobs = db.scalars(
         select(RefreshJob)
         .where(RefreshJob.jobType == action)
         .where(RefreshJob.status.in_(["queued", "processing", "submitted"]))
         .order_by(RefreshJob.createdAt.desc())
-        .limit(1)
+        .limit(20)
+    ).all()
+
+    requested_keywords = sorted(
+        kw.strip().lower()
+        for kw in keyword_texts
+        if kw.strip()
     )
-    if existing_pending:
+
+    for pending_job in pending_jobs:
         try:
-            result_summary = json.loads(existing_pending.resultSummary or "{}")
+            result_summary = json.loads(pending_job.resultSummary or "{}")
         except Exception:
             result_summary = {}
-        existing_project_id = result_summary.get("project_id")
-        if existing_project_id == project_id:
-            logger.info("Reusing existing pending %s RefreshJob %s for project %s", action, existing_pending.id, project_id)
-            return {
-                "refresh_job_id": existing_pending.id,
-                "task_ids": json.loads(existing_pending.dataforseoRequestIds or "[]"),
-                "submitted": keyword_texts,
-                "failed_chunks": 0,
-            }
+
+        if result_summary.get("project_id") != project_id:
+            continue
+
+        if result_summary.get("user_id") != user_id:
+            continue
+
+        try:
+            pending_payload = json.loads(
+                pending_job.keywordsJson or "[]"
+            )
+        except Exception:
+            pending_payload = []
+
+        pending_keywords = sorted(
+            str(item.get("keyword", "")).strip().lower()
+            for item in pending_payload
+            if isinstance(item, dict) and item.get("keyword")
+        )
+
+        # Only reuse the job when this is the exact same in-flight request.
+        if pending_keywords != requested_keywords:
+            continue
+
+        logger.info(
+            "Reusing identical pending %s RefreshJob %s for project %s",
+            action,
+            pending_job.id,
+            project_id,
+        )
+
+        return {
+            "refresh_job_id": pending_job.id,
+            "task_ids": json.loads(
+                pending_job.dataforseoRequestIds or "[]"
+            ),
+            "submitted": keyword_texts,
+            "failed_chunks": 0,
+        }
 
     aio_keyword_texts = set(
         row.keyword

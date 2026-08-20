@@ -1030,3 +1030,174 @@ class TestResultSemantics:
             assert rank_results[0].position == 15
         finally:
             db.close()
+
+
+class TestPendingRefreshJobRequestIdentity:
+    """Regression tests for pending RefreshJob reuse."""
+
+    def test_different_keyword_does_not_reuse_pending_add_job(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+
+        keyword_a = "pending identity keyword a"
+        keyword_b = "pending identity keyword b"
+
+        _build_keyword(db, project.id, keyword_a)
+        _build_keyword(db, project.id, keyword_b)
+
+        try:
+            # First DFS submission creates an in-flight RefreshJob for A.
+            response_a = _mock_task_post_response([
+                {"keyword": keyword_a}
+            ])
+
+            with patch(
+                "app.services.dataforseo_client.requests.post",
+                return_value=MagicMock(
+                    status_code=200,
+                    headers={"Content-Type": "application/json"},
+                    json=MagicMock(return_value=response_a),
+                ),
+            ), patch(
+                "app.services.async_tracking_service._get_cached_serp",
+                return_value=None,
+            ):
+                result_a = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": keyword_a}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    location_code=2356,
+                    depth=100,
+                    cost_per_keyword=20,
+                )
+
+            # A different keyword must cause another DFS submission/job.
+            response_b = _mock_task_post_response([
+                {"keyword": keyword_b}
+            ])
+
+            with patch(
+                "app.services.dataforseo_client.requests.post",
+                return_value=MagicMock(
+                    status_code=200,
+                    headers={"Content-Type": "application/json"},
+                    json=MagicMock(return_value=response_b),
+                ),
+            ) as post_b, patch(
+                "app.services.async_tracking_service._get_cached_serp",
+                return_value=None,
+            ):
+                result_b = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": keyword_b}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    location_code=2356,
+                    depth=100,
+                    cost_per_keyword=20,
+                )
+
+            assert result_a["refresh_job_id"] != result_b["refresh_job_id"]
+
+            refresh_jobs = db.scalars(
+                select(RefreshJob)
+                .where(RefreshJob.jobType == "add_keyword")
+                .order_by(RefreshJob.createdAt)
+            ).all()
+
+            assert len(refresh_jobs) == 2
+
+            payloads = [
+                json.loads(job.keywordsJson or "[]")
+                for job in refresh_jobs
+            ]
+
+            assert any(
+                payload and payload[0].get("keyword") == keyword_a
+                for payload in payloads
+            )
+            assert any(
+                payload and payload[0].get("keyword") == keyword_b
+                for payload in payloads
+            )
+
+        finally:
+            db.close()
+
+    def test_identical_keyword_reuses_pending_add_job_without_second_dfs_post(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+
+        keyword = "pending identity same keyword"
+
+        _build_keyword(db, project.id, keyword)
+
+        try:
+            response = _mock_task_post_response([
+                {"keyword": keyword}
+            ])
+
+            with patch(
+                "app.services.dataforseo_client.requests.post",
+                return_value=MagicMock(
+                    status_code=200,
+                    headers={"Content-Type": "application/json"},
+                    json=MagicMock(return_value=response),
+                ),
+            ), patch(
+                "app.services.async_tracking_service._get_cached_serp",
+                return_value=None,
+            ):
+                first = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": keyword}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    location_code=2356,
+                    depth=100,
+                    cost_per_keyword=20,
+                )
+
+            # Calling the exact same request while the first is still
+            # submitted must reuse it and must not POST to DFS again.
+            with patch(
+                "app.services.dataforseo_client.requests.post"
+            ) as second_post, patch(
+                "app.services.async_tracking_service._get_cached_serp",
+                return_value=None,
+            ):
+                second = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": keyword}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    location_code=2356,
+                    depth=100,
+                    cost_per_keyword=20,
+                )
+
+            assert second["refresh_job_id"] == first["refresh_job_id"]
+            assert second["task_ids"] == first["task_ids"]
+            second_post.assert_not_called()
+
+            refresh_jobs = db.scalars(
+                select(RefreshJob).where(
+                    RefreshJob.jobType == "add_keyword"
+                )
+            ).all()
+
+            assert len(refresh_jobs) == 1
+
+        finally:
+            db.close()
