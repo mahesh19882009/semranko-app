@@ -184,14 +184,32 @@ function KeywordsPage() {
       withCredentials: true,
     });
 
-    const handleKeywordUpdated = async () => {
+    const handleKeywordUpdated = async (event) => {
       if (closed) return;
 
       try {
+        const payload = JSON.parse(event.data || '{}');
+        const updatedKeyword = String(payload.keyword || '')
+          .trim()
+          .toLowerCase();
+
+        // Worker publishes this event only after the completed
+        // keyword data has been committed to PostgreSQL.
         await fetchTableData();
 
-        // PostgreSQL now contains the completed SERP result.
-        setProcessingJobs([]);
+        // Remove only the keyword that actually completed.
+        // This is important for bulk operations where other
+        // keywords may still be processing.
+        if (updatedKeyword) {
+          setProcessingJobs((current) =>
+            current.filter(
+              (job) =>
+                String(job.keyword || '').trim().toLowerCase() !==
+                updatedKeyword
+            )
+          );
+        }
+
         setTableKey((key) => key + 1);
       } catch (error) {
         console.warn(

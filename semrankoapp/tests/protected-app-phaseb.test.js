@@ -67,3 +67,28 @@ test('keyword table shows available values during processing and only shimmers m
     /if \(rowData\.localPackPosition && rowData\.localPackPosition > 0\)/
   );
 });
+
+test('keyword SSE completion clears only the completed processing keyword', async () => {
+  const keywords = await source('src/views/KeywordsPage.jsx');
+
+  assert.match(
+    keywords,
+    /JSON\.parse\(event\.data \|\| '\{\}'\)/
+  );
+
+  assert.match(
+    keywords,
+    /payload\.keyword/
+  );
+
+  assert.match(
+    keywords,
+    /setProcessingJobs\(\(current\) =>/
+  );
+
+  assert.doesNotMatch(
+    keywords,
+    /PostgreSQL now contains the completed SERP result\.\s*setProcessingJobs\(\[\]\)/
+  );
+});
+
