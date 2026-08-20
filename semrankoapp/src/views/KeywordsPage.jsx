@@ -680,35 +680,35 @@ function KeywordsPage() {
   };
 
   const positionBodyTemplate = (rowData) => {
+    if (rowData.position && rowData.position > 0) {
+      return (
+        <span title={`Ranked at position #${rowData.position}`}>
+          #{rowData.position}
+        </span>
+      );
+    }
+
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-12" />;
     }
 
-    if (!rowData.position) {
-      return <span title="Not ranking">—</span>;
-    }
-
-    return (
-      <span title={`Ranked at position #${rowData.position}`}>
-        #{rowData.position}
-      </span>
-    );
+    return <span title="Not ranking">—</span>;
   };
 
   const localPackPositionBodyTemplate = (rowData) => {
+    if (rowData.localPackPosition && rowData.localPackPosition > 0) {
+      return (
+        <span title={`Local Pack position #${rowData.localPackPosition}`}>
+          #{rowData.localPackPosition}
+        </span>
+      );
+    }
+
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-12" />;
     }
 
-    if (!rowData.localPackPosition) {
-      return <span title="Not ranking in Local Pack">—</span>;
-    }
-
-    return (
-      <span title={`Local Pack position #${rowData.localPackPosition}`}>
-        #{rowData.localPackPosition}
-      </span>
-    );
+    return <span title="Not ranking in Local Pack">—</span>;
   };
 
   const actionBodyTemplate = (rowData) => {
@@ -743,13 +743,23 @@ function KeywordsPage() {
     formatter = (v) => v,
     width = 'w-12'
   ) => {
+    const hasValue =
+      value !== null &&
+      value !== undefined &&
+      value !== '';
+
+    // Show data immediately if it is already available,
+    // even while SERP processing is still running.
+    if (hasValue) {
+      return formatter(value);
+    }
+
+    // Only shimmer for values that are genuinely pending.
     if (isRowProcessing(rowData)) {
       return <Shimmer width={width} />;
     }
 
-    return value !== null && value !== undefined && value !== ''
-      ? formatter(value)
-      : '—';
+    return '—';
   };
 
   const statusBodyTemplate = (rowData) => {

@@ -43,3 +43,27 @@ test('project and keyword pages keep real counts and selected-project table cont
   assert.match(keywords, /variant="danger"/);
   assert.match(keywords, /Activate this keyword before refreshing it\./);
 });
+
+test('keyword table shows available values during processing and only shimmers missing values', async () => {
+  const keywords = await source('src/views/KeywordsPage.jsx');
+
+  assert.match(
+    keywords,
+    /if \(hasValue\) \{\s*return formatter\(value\);/
+  );
+
+  assert.match(
+    keywords,
+    /if \(isRowProcessing\(rowData\)\) \{\s*return <Shimmer width=\{width\} \/>;/
+  );
+
+  assert.match(
+    keywords,
+    /if \(rowData\.position && rowData\.position > 0\)/
+  );
+
+  assert.match(
+    keywords,
+    /if \(rowData\.localPackPosition && rowData\.localPackPosition > 0\)/
+  );
+});
