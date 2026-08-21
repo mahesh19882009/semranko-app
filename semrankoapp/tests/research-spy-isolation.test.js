@@ -19,3 +19,12 @@ test('keyword research and competitor spy render explicit empty states until the
   assert.match(page, /run your first research report/i);
   assert.match(page, /No data is shown until you submit a query/i);
 });
+
+test('keyword research and competitor spy normalize structured API failures', async () => {
+  const page = await source('src/views/KeywordResearchPage.jsx');
+
+  assert.match(page, /normalizeApiError\(err, "Unable to research this keyword\."\)/);
+  assert.match(page, /normalizeApiError\(err, "Unable to spy on this competitor\."\)/);
+  assert.match(page, /const \[researchData, setResearchData\] = useState\(null\)/);
+  assert.match(page, /const \[spyResults, setSpyResults\] = useState\(\[\]\)/);
+});

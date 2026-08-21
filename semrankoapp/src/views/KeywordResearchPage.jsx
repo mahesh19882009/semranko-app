@@ -7,6 +7,7 @@ import { Column } from 'primereact/column';
 import {
   researchKeywordApi,
   competitorSpyApi,
+  normalizeApiError,
 } from "../lib/api";
 import { selectSelectedProject } from "../features/dashboard/dashboardSelectors";
 import Button from "../components/ui/Button";
@@ -17,49 +18,6 @@ import { getCountryCode } from "../data/locations";
 import FeatureUsageSummary from "../components/FeatureUsageSummary";
 import { fetchSubscriptionStatus } from "../features/subscription/subscriptionSlice";
 
-const STORAGE_KEY = 'semranko_keyword_research_cache';
-const SPY_STORAGE_KEY = 'semranko_competitor_spy_cache';
-
-function loadCachedResearch() {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function saveCachedResearch(data) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-function loadCachedSpy() {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(SPY_STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function saveCachedSpy(data) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(SPY_STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    // ignore storage errors
-  }
-}
-
 export default function KeywordResearchPage() {
   const dispatch = useDispatch();
   const selectedProject = useSelector(selectSelectedProject);
@@ -69,15 +27,12 @@ export default function KeywordResearchPage() {
   const [country, setCountry] = useState("India");
   const [countryCode, setCountryCode] = useState(2356);
   const [loading, setLoading] = useState(false);
-  const [researchData, setResearchData] = useState(() => loadCachedResearch());
+  const [researchData, setResearchData] = useState(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("research");
 
   const [spyDomain, setSpyDomain] = useState("");
-  const [spyResults, setSpyResults] = useState(() => {
-    const cached = loadCachedSpy();
-    return cached?.keywords || [];
-  });
+  const [spyResults, setSpyResults] = useState([]);
   const [spyLoading, setSpyLoading] = useState(false);
   const [spyError, setSpyError] = useState("");
   const [researchUsage, setResearchUsage] = useState(null);
@@ -191,11 +146,11 @@ export default function KeywordResearchPage() {
       const data = result.data;
       setResearchData(data);
       if (data?.usage) setResearchUsage(data.usage);
-      saveCachedResearch(data);
       dispatch(fetchSubscriptionStatus());
     } catch (err) {
-      if (err?.data?.usage) setResearchUsage(err.data.usage);
-      setError(err?.message || "Failed to research keyword");
+      const normalized = normalizeApiError(err, "Unable to research this keyword.");
+      if (normalized?.data?.usage) setResearchUsage(normalized.data.usage);
+      setError(normalized.message);
     } finally {
       setLoading(false);
     }
@@ -214,11 +169,11 @@ export default function KeywordResearchPage() {
       const keywords = result.data?.keywords || [];
       setSpyResults(keywords);
       if (result.data?.usage) setSpyUsage(result.data.usage);
-      saveCachedSpy({ keywords, domain: spyDomain });
       dispatch(fetchSubscriptionStatus());
     } catch (err) {
-      if (err?.data?.usage) setSpyUsage(err.data.usage);
-      setSpyError(err?.message || "Failed to spy competitor");
+      const normalized = normalizeApiError(err, "Unable to spy on this competitor.");
+      if (normalized?.data?.usage) setSpyUsage(normalized.data.usage);
+      setSpyError(normalized.message);
     } finally {
       setSpyLoading(false);
     }
@@ -324,6 +279,15 @@ export default function KeywordResearchPage() {
                     </DataTable>
                   </div>
                 )}
+                {researchData.suggestions?.length === 0 && (
+                  <p className="text-slate-600">No suggestions found.</p>
+                )}
+              </div>
+            )}
+            {!researchData && !loading && (
+              <div className="mt-6 text-slate-600">
+                <p>Run your first research report to see suggestions.</p>
+                <p>No data is shown until you submit a query.</p>
               </div>
             )}
           </div>

@@ -7,9 +7,15 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db.models import Keyword, Project
 from app.services.cache_service import increment_usage
-from app.services.credit_service import deduct_credits, refund_credits, reserve_credits, consume_reserved
+from app.services.credit_service import (
+    consume_reserved,
+    deduct_credits,
+    refund_credits,
+    refund_reserved,
+    reserve_credits,
+)
 from app.services.plan_service import ensure_keyword_limit, get_user_plan_limits_by_id, count_user_keywords
-from app.services.dataforseo_client import DataForSEOClient
+from app.services.dataforseo_client import DataForSEOClient, DataForSEOKeywordIdeasError
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.services.feature_usage_service import (
@@ -64,7 +70,19 @@ def research_keyword(db: Session, user_id: str, keyword: str, location_code: int
         raise ApiError(402, f"Insufficient credits for keyword research. Required: {cost}")
 
     try:
-        ideas = DataForSEOClient.get_keyword_ideas_api(keyword, location_code, limit=50)
+        try:
+            ideas = DataForSEOClient.get_keyword_ideas_api(
+                keyword,
+                location_code,
+                limit=50,
+                raise_on_error=True,
+            )
+        except DataForSEOKeywordIdeasError as exc:
+            raise ApiError(
+                502,
+                "Keyword research provider unavailable. Please try again.",
+                {"error": "KEYWORD_RESEARCH_PROVIDER_ERROR"},
+            ) from exc
         save_research_cache(db, user_id, keyword, location_code, ideas or [])
 
         consume_reserved(

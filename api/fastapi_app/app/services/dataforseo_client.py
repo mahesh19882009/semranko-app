@@ -383,6 +383,10 @@ DEVICE_MAP = {
     "desktop": "desktop",
 }
 
+
+class DataForSEOKeywordIdeasError(RuntimeError):
+    """A provider failure for the Research keyword-ideas boundary."""
+
 CODE_TO_LOCATION = {}
 for name, code in LOCATION_MAP.items():
     if code not in CODE_TO_LOCATION:
@@ -1248,6 +1252,7 @@ class DataForSEOClient:
         limit: int = 50,
         db=None,
         user_id: str | None = None,
+        raise_on_error: bool = False,
     ) -> list:
         url = f"{cls.BASE_URL}/dataforseo_labs/google/keyword_ideas/live"
         payload = [
@@ -1285,21 +1290,39 @@ class DataForSEOClient:
                     success=False,
                     error=exc,
                 )
+            if raise_on_error:
+                raise DataForSEOKeywordIdeasError(
+                    "DataForSEO keyword ideas request failed"
+                ) from exc
             return []
 
         results = []
         tasks = data.get("tasks", []) or []
+        if not tasks:
+            if raise_on_error:
+                raise DataForSEOKeywordIdeasError(
+                    "DataForSEO keyword ideas response contained no tasks"
+                )
+            return []
         for task in tasks:
             task_status = task.get("status_code")
-            if task_status and task_status != 20000:
+            if task_status is not None and task_status != 20000:
                 logger.warning(
                     "DataForSEO keyword_ideas task error %s: %s",
                     task_status,
                     task.get("status_message"),
                 )
+                if raise_on_error:
+                    raise DataForSEOKeywordIdeasError(
+                        f"DataForSEO keyword ideas task failed: {task_status}"
+                    )
                 continue
             result = task.get("result")
             if not result:
+                if raise_on_error and result is None:
+                    raise DataForSEOKeywordIdeasError(
+                        "DataForSEO keyword ideas task returned no result"
+                    )
                 continue
             if isinstance(result, list) and result:
                 result = result[0]
