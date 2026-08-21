@@ -35,6 +35,10 @@ import logging
 logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
+# Scheduled refreshes may safely start shortly after a normal restart or
+# deployment, but should not run hours late against a stale schedule.
+SCHEDULED_REFRESH_MISFIRE_GRACE_SECONDS = 6 * 60 * 60
+
 
 def is_last_sunday_of_month(dt=None) -> bool:
     """Return True if the given datetime is the last Sunday of its month."""
@@ -205,6 +209,7 @@ def start_scheduler() -> None:
             minute=0,
             id="sunday-night-bulk-job",
             replace_existing=True,
+            misfire_grace_time=SCHEDULED_REFRESH_MISFIRE_GRACE_SECONDS,
         )
         # Monday competitor tracker (2 AM Monday)
         scheduler.add_job(
@@ -234,6 +239,7 @@ def start_scheduler() -> None:
             minute=0,
             id="monthly-metrics-refresh",
             replace_existing=True,
+            misfire_grace_time=SCHEDULED_REFRESH_MISFIRE_GRACE_SECONDS,
         )
         # Webhook credit retry (every 30 minutes)
         scheduler.add_job(

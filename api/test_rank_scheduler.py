@@ -33,10 +33,28 @@ def test_scheduler_registers_expected_jobs_and_starts_once():
     }
     assert registered["sunday-night-bulk-job"]["day_of_week"] == "sun"
     assert registered["sunday-night-bulk-job"]["hour"] == 23
+    assert registered["sunday-night-bulk-job"]["minute"] == 0
+    assert registered["sunday-night-bulk-job"]["trigger"] == "cron"
     assert registered["monthly-metrics-refresh"]["day_of_week"] == "sun"
     assert registered["monthly-metrics-refresh"]["hour"] == 1
+    assert registered["monthly-metrics-refresh"]["minute"] == 0
+    assert registered["monthly-metrics-refresh"]["trigger"] == "cron"
+    assert registered["sunday-night-bulk-job"]["misfire_grace_time"] == (
+        rank_scheduler.SCHEDULED_REFRESH_MISFIRE_GRACE_SECONDS
+    )
+    assert registered["monthly-metrics-refresh"]["misfire_grace_time"] == (
+        rank_scheduler.SCHEDULED_REFRESH_MISFIRE_GRACE_SECONDS
+    )
+    assert "misfire_grace_time" not in registered["webhook-credit-retry"]
+    assert "misfire_grace_time" not in registered["user-tracking-recovery"]
     assert all(item["replace_existing"] is True for item in registered.values())
     scheduler_mock.start.assert_called_once_with()
+
+
+def test_scheduler_defaults_keep_single_instance_and_coalesced_execution():
+    assert rank_scheduler.scheduler._job_defaults["misfire_grace_time"] == 1
+    assert rank_scheduler.scheduler._job_defaults["max_instances"] == 1
+    assert rank_scheduler.scheduler._job_defaults["coalesce"] is True
 
 
 def test_last_sunday_guard_handles_month_and_year_boundaries():
