@@ -5,6 +5,7 @@ credit safety, and result semantics for the canonical postback -> worker path.
 """
 import json
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import asyncio
@@ -12,7 +13,7 @@ import asyncio
 sys.path.insert(0, str(Path(__file__).parent / "fastapi_app"))
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 
@@ -50,13 +51,25 @@ def _make_webhook_request(payload: dict) -> Request:
     return request
 
 from app.db.models import Base, User, Project, Keyword, RankResult, RefreshJob, ProcessingJob, CreditLedger
-from app.services.async_tracking_service import submit_user_tracking_job
+from app.services.async_tracking_service import (
+    submit_user_tracking_job,
+    get_user_processing_jobs,
+    recover_stale_user_tracking_jobs,
+)
 from app.services.credit_service import reserve_credits, consume_reserved, refund_reserved
-from app.workers.refresh_worker import run_refresh_worker, process_processing_job
+from app.workers.refresh_worker import (
+    claim_processing_jobs,
+    run_refresh_worker,
+    process_processing_job,
+    process_pending_processing_jobs,
+)
 from app.api.routes.webhooks import (
     dataforseo_webhook,
     _aio_cites_target_domain,
+    _find_refresh_job_by_task_id,
 )
+from app.api.routes.keywords import create_keyword, bulk_create_keywords
+from app.core.errors import ApiError
 from fastapi import Request
 
 
@@ -821,6 +834,161 @@ class TestWorkerInvocation:
 
 
 class TestCreditSafety:
+    def test_cached_completion_consumes_reserved_credit(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        _build_keyword(db, project.id, "cached credit test")
+        cached = {
+            "organic_items": [
+                {"type": "organic", "rank_group": 3, "url": "https://example.com/cached", "domain": "example.com"},
+            ],
+            "items": [],
+        }
+        try:
+            with patch("app.services.async_tracking_service._get_cached_serp", return_value=cached), patch(
+                "app.services.async_tracking_service._enrich_keyword_metrics",
+                return_value={"requested": 1, "updated": 0, "missing": 1},
+            ):
+                result = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": "cached credit test"}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    cost_per_keyword=20,
+                )
+
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            assert result["cached_count"] == 1
+            assert ledger.status == "completed"
+            assert ledger.creditsConsumed == 20.0
+            assert ledger.creditsRefunded == 0.0
+        finally:
+            db.close()
+
+    def test_missing_provider_result_refunds_reserved_credit(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        kw = _build_keyword(db, project.id, "missing result credit test")
+        reference = f"add_keyword:{user.id}:{project.id}:missing"
+        try:
+            reserve_credits(db, user.id, 20.0, "reservation", "Add keyword reservation", reference=reference, project_id=project.id)
+            job = ProcessingJob(
+                refreshJobId="",
+                keywordText=kw.keyword,
+                location="India",
+                status="pending",
+                deduplicationKey="missing-result-credit",
+                payload=json.dumps({
+                    "first_block": None,
+                    "task_id": "task-missing",
+                    "action": "add_keyword",
+                    "credit_reference": reference,
+                    "cost_per_keyword": 20,
+                    "user_id": user.id,
+                    "project_id": project.id,
+                }),
+            )
+            db.add(job)
+            db.commit()
+
+            assert process_processing_job(db, job) is False
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            assert ledger.creditsRefunded == 20.0
+            assert user.creditBalance == 200.0
+        finally:
+            db.close()
+
+    def test_worker_failure_after_credit_step_rolls_back_charge_and_retries(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        kw = _build_keyword(db, project.id, "atomic worker credit")
+        reference = f"add_keyword:{user.id}:{project.id}:atomic"
+        reserve_credits(db, user.id, 20.0, "reservation", "Add keyword reservation", reference=reference, project_id=project.id)
+        job = ProcessingJob(
+            refreshJobId="",
+            keywordText=kw.keyword,
+            location="India",
+            status="processing",
+            deduplicationKey="atomic-worker-credit",
+            payload=json.dumps({
+                "position": 4,
+                "url": "https://example.com/atomic",
+                "task_id": "task-atomic",
+                "first_block": {"items": []},
+                "action": "add_keyword",
+                "credit_reference": reference,
+                "cost_per_keyword": 20,
+                "user_id": user.id,
+                "project_id": project.id,
+                "domain": project.domain,
+            }),
+        )
+        db.add(job)
+        db.commit()
+        try:
+            with patch("app.workers.refresh_worker._set_cached_serp", side_effect=RuntimeError("cache write crash")):
+                assert process_processing_job(db, job) is False
+
+            db.refresh(job)
+            db.refresh(kw)
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            rank_results = db.scalars(select(RankResult).where(RankResult.keywordId == kw.id)).all()
+            assert job.status == "retry"
+            assert ledger.creditsConsumed == 0.0
+            assert rank_results == []
+            assert kw.position is None
+        finally:
+            db.close()
+
+    def test_exhausted_worker_failure_refunds_and_clears_processing_state(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        kw = _build_keyword(db, project.id, "exhausted worker credit")
+        kw.processingTimeoutAt = datetime.utcnow() + timedelta(hours=24)
+        reference = f"add_keyword:{user.id}:{project.id}:exhausted"
+        reserve_credits(db, user.id, 20.0, "reservation", "Add keyword reservation", reference=reference, project_id=project.id)
+        job = ProcessingJob(
+            refreshJobId="",
+            keywordText=kw.keyword,
+            location="India",
+            status="processing",
+            maxRetries=0,
+            deduplicationKey="exhausted-worker-credit",
+            payload=json.dumps({
+                "position": 4,
+                "url": "https://example.com/exhausted",
+                "task_id": "task-exhausted",
+                "first_block": {"items": []},
+                "action": "add_keyword",
+                "credit_reference": reference,
+                "cost_per_keyword": 20,
+                "user_id": user.id,
+                "project_id": project.id,
+                "domain": project.domain,
+            }),
+        )
+        db.add(job)
+        db.commit()
+        try:
+            with patch("app.workers.refresh_worker._set_cached_serp", side_effect=RuntimeError("persistent cache failure")):
+                assert process_processing_job(db, job) is False
+
+            db.refresh(job)
+            db.refresh(kw)
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            assert job.status == "failed"
+            assert ledger.creditsConsumed == 0.0
+            assert ledger.creditsRefunded == 20.0
+            assert kw.processingTimeoutAt is None
+        finally:
+            db.close()
+
     def test_add_does_not_receive_weekly_deduction(self):
         db = _build_db()
         user = _build_user(db)
@@ -1130,6 +1298,399 @@ class TestPendingRefreshJobRequestIdentity:
         finally:
             db.close()
 
+
+class TestSubmissionFailureSafety:
+    def test_total_submission_failure_is_not_accepted(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        _build_keyword(db, project.id, "total submit failure")
+        try:
+            with patch("app.services.async_tracking_service._get_cached_serp", return_value=None), patch(
+                "app.services.async_tracking_service._enrich_keyword_metrics",
+                return_value={"requested": 1, "updated": 0, "missing": 1},
+            ), patch(
+                "app.services.async_tracking_service.DataForSEOClient.submit_serp_task_post",
+                return_value={"task_ids": [], "submitted": [], "failed_chunks": 1},
+            ):
+                result = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": "total submit failure"}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    cost_per_keyword=20,
+                )
+
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            assert result["accepted"] is False
+            assert result["failed_keywords"] == ["total submit failure"]
+            assert ledger.creditsRefunded == 20.0
+            assert db.scalars(select(ProcessingJob)).all() == []
+        finally:
+            db.close()
+
+    def test_single_add_removes_keyword_when_tracking_is_not_accepted(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        route = create_keyword
+        while hasattr(route, "__wrapped__"):
+            route = route.__wrapped__
+        try:
+            with patch(
+                "app.api.routes.keywords.submit_user_tracking_job",
+                return_value={
+                    "refresh_job_id": "failed-refresh",
+                    "accepted": False,
+                    "accepted_keywords": [],
+                    "failed_keywords": ["route failure"],
+                },
+            ):
+                with pytest.raises(ApiError) as exc_info:
+                    route(
+                        request=MagicMock(),
+                        project_id=project.id,
+                        payload={"keyword": "route failure"},
+                        user={"userId": user.id},
+                        db=db,
+                    )
+
+            assert exc_info.value.status_code == 502
+            assert db.scalar(select(Keyword).where(Keyword.keyword == "route failure")) is None
+        finally:
+            db.close()
+
+    def test_bulk_add_keeps_only_keywords_with_valid_tracking(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        route = bulk_create_keywords
+        while hasattr(route, "__wrapped__"):
+            route = route.__wrapped__
+        try:
+            with patch(
+                "app.api.routes.keywords.submit_user_tracking_job",
+                return_value={
+                    "refresh_job_id": "partial-refresh",
+                    "accepted": True,
+                    "accepted_keywords": ["kept keyword"],
+                    "failed_keywords": ["removed keyword"],
+                },
+            ):
+                result = route(
+                    request=MagicMock(),
+                    project_id=project.id,
+                    payload={"keywords": ["kept keyword", "removed keyword"]},
+                    user={"userId": user.id},
+                    db=db,
+                )
+
+            rows = db.scalars(select(Keyword).where(Keyword.projectId == project.id)).all()
+            assert [row.keyword for row in rows] == ["kept keyword"]
+            assert result["data"]["processed"] == 1
+            assert result["data"]["failed_tracking"] == 1
+            assert result["data"]["keywords"] == ["kept keyword"]
+        finally:
+            db.close()
+
+    def test_partial_submission_only_tracks_submitted_keywords_and_refunds_rest(self):
+        db = _build_db()
+        user = _build_user(db)
+        user.planCreditBalance = 3000.0
+        user.creditBalance = 3000.0
+        project = _build_project(db, user.id)
+        keyword_texts = [f"partial keyword {index}" for index in range(101)]
+        db.add_all([
+            Keyword(projectId=project.id, userId=user.id, keyword=text, location="India", device="desktop", isActive=True)
+            for text in keyword_texts
+        ])
+        db.commit()
+        submitted = keyword_texts[:100]
+        try:
+            with patch("app.services.async_tracking_service._get_cached_serp", return_value=None), patch(
+                "app.services.async_tracking_service._enrich_keyword_metrics",
+                return_value={"requested": 101, "updated": 0, "missing": 101},
+            ), patch(
+                "app.services.async_tracking_service.DataForSEOClient.submit_serp_task_post",
+                return_value={"task_ids": [f"task-{index}" for index in range(100)], "submitted": submitted, "failed_chunks": 1},
+            ):
+                result = submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": text} for text in keyword_texts],
+                    domain=project.domain,
+                    action="bulk_add",
+                    cost_per_keyword=20,
+                )
+
+            jobs = db.scalars(select(ProcessingJob)).all()
+            ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+            assert result["accepted_keywords"] == submitted
+            assert result["failed_keywords"] == [keyword_texts[-1]]
+            assert len(jobs) == 100
+            assert {job.keywordText for job in jobs} == set(submitted)
+            assert ledger.creditsRefunded == 20.0
+        finally:
+            db.close()
+
+
+class TestWorkerReadiness:
+    def test_awaiting_callback_filter_is_json_format_independent(self):
+        db = _build_db()
+        refresh = RefreshJob(jobType="add_keyword", status="submitted")
+        db.add(refresh)
+        db.flush()
+        jobs = [
+            ProcessingJob(
+                refreshJobId=refresh.id,
+                keywordText="normal waiting",
+                location="India",
+                status="pending",
+                deduplicationKey="normal-waiting",
+                payload=json.dumps({"awaiting_callback": True}),
+            ),
+            ProcessingJob(
+                refreshJobId=refresh.id,
+                keywordText="compact waiting",
+                location="India",
+                status="pending",
+                deduplicationKey="compact-waiting",
+                payload=json.dumps({"awaiting_callback": True}, separators=(",", ":")),
+            ),
+            ProcessingJob(
+                refreshJobId=refresh.id,
+                keywordText="compact ready",
+                location="India",
+                status="pending",
+                deduplicationKey="compact-ready",
+                payload=json.dumps({"awaiting_callback": False}, separators=(",", ":")),
+            ),
+            ProcessingJob(
+                refreshJobId=refresh.id,
+                keywordText="absent ready",
+                location="India",
+                status="pending",
+                deduplicationKey="absent-ready",
+                payload=json.dumps({"task_id": "ready"}),
+            ),
+        ]
+        db.add_all(jobs)
+        db.commit()
+
+        claimed = claim_processing_jobs(db, batch_size=10)
+
+        assert {job.keywordText for job in claimed} == {
+            "compact ready",
+            "absent ready",
+        }
+        waiting = db.scalars(
+            select(ProcessingJob).where(ProcessingJob.status == "pending")
+        ).all()
+        assert {job.keywordText for job in waiting} == {
+            "normal waiting",
+            "compact waiting",
+        }
+        db.close()
+
+    def test_worker_does_not_claim_job_before_callback_payload_arrives(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        _build_keyword(db, project.id, "awaiting callback")
+        try:
+            with patch("app.services.async_tracking_service._get_cached_serp", return_value=None), patch(
+                "app.services.async_tracking_service._enrich_keyword_metrics",
+                return_value={"requested": 1, "updated": 0, "missing": 1},
+            ), patch(
+                "app.services.async_tracking_service.DataForSEOClient.submit_serp_task_post",
+                return_value={"task_ids": ["task-awaiting"], "submitted": ["awaiting callback"], "failed_chunks": 0},
+            ):
+                submit_user_tracking_job(
+                    db=db,
+                    user_id=user.id,
+                    project_id=project.id,
+                    keywords=[{"keyword": "awaiting callback"}],
+                    domain=project.domain,
+                    action="add_keyword",
+                    cost_per_keyword=20,
+                )
+
+            result = process_pending_processing_jobs(db)
+            job = db.scalar(select(ProcessingJob))
+            assert result["processed"] == 0
+            assert result["failed"] == 0
+            assert job.status == "pending"
+        finally:
+            db.close()
+
+    def test_stale_missed_callback_is_failed_and_refunded(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        keyword = _build_keyword(db, project.id, "missed callback")
+        keyword.processingTimeoutAt = datetime.utcnow() - timedelta(minutes=1)
+        reference = f"add_keyword:{user.id}:{project.id}:stale"
+        reserve_credits(db, user.id, 20.0, "reservation", "Add keyword reservation", reference=reference, project_id=project.id)
+        refresh = RefreshJob(
+            jobType="add_keyword",
+            status="submitted",
+            keywordCount=1,
+            keywordsJson=json.dumps([{"keyword": keyword.keyword}]),
+            dataforseoRequestIds=json.dumps(["task-never-callback"]),
+            resultSummary=json.dumps({
+                "project_id": project.id,
+                "user_id": user.id,
+                "credit_reference": reference,
+                "cost_per_keyword": 20,
+            }),
+            processingTimeoutAt=datetime.utcnow() - timedelta(minutes=1),
+        )
+        db.add(refresh)
+        db.flush()
+        processing = ProcessingJob(
+            refreshJobId=refresh.id,
+            keywordText=keyword.keyword,
+            location="India",
+            status="pending",
+            deduplicationKey="pending:missed-callback",
+            payload=json.dumps({
+                "project_id": project.id,
+                "user_id": user.id,
+                "action": "add_keyword",
+                "credit_reference": reference,
+                "cost_per_keyword": 20,
+                "awaiting_callback": True,
+            }),
+        )
+        db.add(processing)
+        db.commit()
+
+        result = recover_stale_user_tracking_jobs(db)
+        db.refresh(refresh)
+        db.refresh(processing)
+        db.refresh(keyword)
+        ledger = db.scalar(select(CreditLedger).where(CreditLedger.userId == user.id))
+
+        assert result == {"jobs": 1, "callbacks_timed_out": 1, "refunded": 20.0}
+        assert refresh.status == "failed"
+        assert processing.status == "failed"
+        assert keyword.processingTimeoutAt is None
+        assert ledger.creditsRefunded == 20.0
+        db.close()
+
+
+class TestWebhookTaskCorrelation:
+    def test_task_id_match_is_exact_not_json_substring(self):
+        db = _build_db()
+        longer = RefreshJob(
+            jobType="add_keyword",
+            status="submitted",
+            dataforseoRequestIds=json.dumps(["task-123"]),
+        )
+        exact = RefreshJob(
+            jobType="add_keyword",
+            status="submitted",
+            dataforseoRequestIds=json.dumps(["task-12"]),
+        )
+        db.add_all([longer, exact])
+        db.commit()
+
+        found = _find_refresh_job_by_task_id(db, "task-12")
+
+        assert found.id == exact.id
+        db.close()
+
+
+class TestProcessingStatusScaleAndIsolation:
+    def test_processing_query_rejects_crossed_keyword_location_pair(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        db.add_all([
+            Keyword(projectId=project.id, userId=user.id, keyword="alpha", location="India", device="desktop", isActive=True),
+            Keyword(projectId=project.id, userId=user.id, keyword="beta", location="United States", device="desktop", isActive=True),
+        ])
+        refresh = RefreshJob(jobType="bulk_add", status="submitted")
+        db.add(refresh)
+        db.flush()
+        db.add(ProcessingJob(
+            refreshJobId=refresh.id,
+            keywordText="alpha",
+            location="United States",
+            status="pending",
+            deduplicationKey="crossed-pair",
+            payload=json.dumps({"project_id": project.id, "user_id": user.id, "action": "bulk_add"}),
+        ))
+        db.commit()
+
+        with patch(
+            "app.services.async_tracking_service.json.loads",
+            wraps=json.loads,
+        ) as parse_payload:
+            jobs = get_user_processing_jobs(db, user.id, project.id)
+
+        assert jobs == []
+        parse_payload.assert_not_called()
+        db.close()
+
+    def test_processing_jobs_are_project_isolated_without_n_plus_one_queries(self):
+        db = _build_db()
+        user = _build_user(db)
+        project = _build_project(db, user.id)
+        other_project = Project(id="other-project", userId=user.id, name="Other", domain="other.com", location="India", locationCode=2840)
+        db.add(other_project)
+        db.commit()
+
+        own_keywords = [f"status keyword {index}" for index in range(30)]
+        for text in own_keywords:
+            db.add(Keyword(projectId=project.id, userId=user.id, keyword=text, location="India", device="desktop", isActive=True))
+        db.add(Keyword(projectId=other_project.id, userId=user.id, keyword=own_keywords[0], location="India", device="desktop", isActive=True))
+
+        own_refresh = RefreshJob(jobType="bulk_add", status="submitted", keywordsJson="[]", resultSummary=json.dumps({"project_id": project.id, "user_id": user.id}))
+        other_refresh = RefreshJob(jobType="bulk_add", status="submitted", keywordsJson="[]", resultSummary=json.dumps({"project_id": other_project.id, "user_id": user.id}))
+        db.add_all([own_refresh, other_refresh])
+        db.flush()
+        db.add_all([
+            ProcessingJob(
+                refreshJobId=own_refresh.id,
+                keywordText=text,
+                location="India",
+                status="pending",
+                deduplicationKey=f"own:{index}",
+                payload=json.dumps({"project_id": project.id, "user_id": user.id, "action": "bulk_add"}),
+            )
+            for index, text in enumerate(own_keywords)
+        ])
+        db.add(ProcessingJob(
+            refreshJobId=other_refresh.id,
+            keywordText=own_keywords[0],
+            location="India",
+            status="pending",
+            deduplicationKey="other:0",
+            payload=json.dumps({"project_id": other_project.id, "user_id": user.id, "action": "bulk_add"}),
+        ))
+        db.commit()
+
+        query_count = 0
+        def count_query(*_args, **_kwargs):
+            nonlocal query_count
+            query_count += 1
+
+        event.listen(db.bind, "before_cursor_execute", count_query)
+        try:
+            jobs = get_user_processing_jobs(db, user.id, project.id)
+        finally:
+            event.remove(db.bind, "before_cursor_execute", count_query)
+
+        assert len(jobs) == 30
+        assert {job["keyword"] for job in jobs} == set(own_keywords)
+        assert query_count <= 4
+        db.close()
+
+class TestPendingRefreshJobIdenticalReuse:
     def test_identical_keyword_reuses_pending_add_job_without_second_dfs_post(self):
         db = _build_db()
         user = _build_user(db)

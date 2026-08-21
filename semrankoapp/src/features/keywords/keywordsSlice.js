@@ -83,6 +83,7 @@ export const addKeywordToProject = createAsyncThunk(
       return {
         projectId,
         message: response.message || 'Keyword added successfully',
+        data: response.data || {},
       };
     } catch (error) {
       return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to add keyword.', { projectId }));
@@ -213,6 +214,7 @@ export const bulkAddKeywords = createAsyncThunk(
       return {
         projectId,
         message: response.message || 'Keywords added successfully',
+        data: response.data || {},
       };
     } catch (error) {
       return thunkAPI.rejectWithValue(toRejectedValue(error, 'Failed to add keywords.', { projectId }));

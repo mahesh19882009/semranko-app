@@ -43,7 +43,7 @@ from app.workers.refresh_worker import (
     process_processing_job,
     recover_stale_processing_jobs,
 )
-from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved
+from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, reserve_automatic_credits
 
 
 def make_user(db, user_id="user-1", email=None, plan="starter", credit_balance=100.0,
@@ -260,6 +260,9 @@ class TestProcessingJobRetryCompletes:
         db = Session(engine)
 
         user = make_user(db)
+        user.automaticCreditBalance = 100.0
+        db.add(user)
+        db.commit()
         project = make_project(db, user.id)
         kw = make_keyword(db, project.id, user.id, keyword="kw1")
 
@@ -269,13 +272,20 @@ class TestProcessingJobRetryCompletes:
             location="India",
             status="processing",
             deduplicationKey="task-retry:kw1:India",
-            payload=json.dumps({"position": 5, "url": "https://example.com", "task_id": "task-retry"}),
+            payload=json.dumps({"position": 5, "url": "https://example.com", "task_id": "task-retry", "first_block": {"items": []}}),
             processingTimeoutAt=datetime.utcnow() - timedelta(hours=2),
             retryCount=0,
             maxRetries=3,
         )
         db.add(pj)
         db.commit()
+        reserve_automatic_credits(
+            db,
+            user.id,
+            10,
+            "test weekly reservation",
+            f"auto:weekly:rj1:{user.id}",
+        )
 
         recover_stale_processing_jobs(db)
         db.refresh(pj)

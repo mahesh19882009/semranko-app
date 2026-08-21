@@ -304,6 +304,7 @@ def consume_reserved(
     keyword_id: str | None = None,
     task_id: str | None = None,
     request_id: str | None = None,
+    commit: bool = True,
 ) -> float:
     if amount <= 0:
         return get_credit_balance(db, user_id)
@@ -355,7 +356,8 @@ def consume_reserved(
 
     db.add(ledger)
     db.flush()
-    db.commit()
+    if commit:
+        db.commit()
     return get_credit_balance(db, user_id)
 
 
@@ -475,6 +477,7 @@ def consume_automatic_reserved(
     project_id: str | None = None,
     keyword_id: str | None = None,
     task_id: str | None = None,
+    commit: bool = True,
 ) -> float:
     ledger = db.scalar(select(CreditLedger).where(
         CreditLedger.userId == user_id,
@@ -506,7 +509,9 @@ def consume_automatic_reserved(
         ledger.status = "completed"
         ledger.actionType = "charge"
     db.add(ledger)
-    db.commit()
+    db.flush()
+    if commit:
+        db.commit()
     user = db.scalar(select(User).where(User.id == user_id))
     return round(_to_float(user.automaticCreditBalance), 2)
 

@@ -1,15 +1,27 @@
 import logging
 from sqlalchemy import select, func, desc, over
 from sqlalchemy.orm import Session
-from app.db.models import Keyword, RankResult, KeywordMetricsHistory
+from app.db.models import Keyword, Project, RankResult, KeywordMetricsHistory
 from app.core.errors import ApiError
 
 logger = logging.getLogger(__name__)
 
 
 def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[dict]:
+    project = db.scalar(
+        select(Project).where(
+            Project.id == project_id,
+            Project.userId == user_id,
+        )
+    )
+    if not project:
+        raise ApiError(404, "Project not found")
+
     keywords = db.scalars(
-        select(Keyword).where(Keyword.projectId == project_id)
+        select(Keyword).where(
+            Keyword.projectId == project_id,
+            Keyword.userId == user_id,
+        )
     ).all()
 
     keyword_ids = [kw.id for kw in keywords if kw.id]

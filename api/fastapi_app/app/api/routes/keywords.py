@@ -318,18 +318,23 @@ def create_keyword(
         keyword=normalized_keyword,
         location=location,
         device=(payload.get("device") or "desktop"),
-        volume=0,
-        kd=0,
-        cpc=0.0,
-        competition=0.0,
-        backlinks=0.0,
-        referring_domains=0.0,
-        intent="—",
-        position=0,
-        ai_badge="—",
+        volume=None,
+        kd=None,
+        cpc=None,
+        competition=None,
+        backlinks=None,
+        referring_domains=None,
+        intent=None,
+        position=None,
+        ai_badge=None,
     )
     db.add(keyword)
     db.flush()
+
+    def cleanup_untracked_keyword() -> None:
+        db.rollback()
+        db.execute(delete(Keyword).where(Keyword.id == keyword.id))
+        db.commit()
 
     try:
         logger.info("CREATE_KEYWORD: calling submit_user_tracking_job for keyword=%s", normalized_keyword)
@@ -347,15 +352,17 @@ def create_keyword(
             depth=100,
             cost_per_keyword=single_cost,
         )
-        if not tracking.get("refresh_job_id"):
-            db.rollback()
+        if not tracking.get("refresh_job_id") or not tracking.get("accepted", True):
+            cleanup_untracked_keyword()
             raise ApiError(502, f"Tracking job was not created for \"{normalized_keyword}\". Keyword was not added.")
         db.refresh(keyword)
         logger.info("CREATE_KEYWORD: tracking job submitted for keyword=%s", normalized_keyword)
     except ApiError:
+        if db.scalar(select(Keyword.id).where(Keyword.id == keyword.id)):
+            cleanup_untracked_keyword()
         raise
     except Exception as exc:
-        db.rollback()
+        cleanup_untracked_keyword()
         logger.warning("Day-one tracking failed for %s: %s", normalized_keyword, exc)
         raise ApiError(502, f"Day-one tracking failed for \"{normalized_keyword}\". Keyword was not added. {exc}")
 
@@ -377,6 +384,7 @@ def create_keyword(
         "createdAt": keyword.createdAt.isoformat() if keyword.createdAt else None,
         "updatedAt": keyword.updatedAt.isoformat() if keyword.updatedAt else None,
         "refresh_job_id": tracking.get("refresh_job_id"),
+        "completed_keywords": tracking.get("completed_keywords", []),
         "status": "tracking",
     }
     return JSONResponse(status_code=201, content={"success": True, "message": "Keyword added", "data": response_data})
@@ -453,15 +461,15 @@ def bulk_create_keywords(
             keyword=kw,
             location=location,
             device=device,
-            volume=0,
-            kd=0,
-            cpc=0.0,
-            competition=0.0,
-            backlinks=0.0,
-            referring_domains=0.0,
-            intent="—",
-            position=0,
-            ai_badge="—",
+            volume=None,
+            kd=None,
+            cpc=None,
+            competition=None,
+            backlinks=None,
+            referring_domains=None,
+            intent=None,
+            position=None,
+            ai_badge=None,
         )
         db.add(keyword)
         added.append(kw)
@@ -472,6 +480,8 @@ def bulk_create_keywords(
     processed = 0
     failed_tracking = 0
     tracking_errors = []
+    accepted_keywords = []
+    completed_keywords = []
 
     if added:
         bulk_cost = settings.plan_config.credit_costs.get("bulk_add_keyword", 20)
@@ -489,20 +499,45 @@ def bulk_create_keywords(
                 depth=100,
                 cost_per_keyword=bulk_cost,
             )
-            processed = len(added)
+            accepted_keywords = tracking.get("accepted_keywords", added)
+            completed_keywords = tracking.get("completed_keywords", [])
+            failed_keywords = tracking.get("failed_keywords", [])
+            if failed_keywords:
+                db.execute(
+                    delete(Keyword).where(
+                        Keyword.projectId == project_id,
+                        Keyword.keyword.in_(failed_keywords),
+                    )
+                )
+                db.commit()
+                failed_tracking = len(failed_keywords)
+                tracking_errors = [
+                    {"keyword": kw, "error": "tracking submission failed"}
+                    for kw in failed_keywords
+                ]
+            processed = len(accepted_keywords)
         except ApiError:
+            db.rollback()
+            db.execute(
+                delete(Keyword).where(
+                    Keyword.projectId == project_id,
+                    Keyword.keyword.in_(added),
+                )
+            )
+            db.commit()
             raise
         except Exception as exc:
             failed_tracking = len(added)
             tracking_errors = [{"keyword": kw, "error": str(exc)} for kw in added]
             logger.warning("Bulk day-one tracking failed for %s: %s", added, exc)
-            for kw_text in added:
-                failed_keyword = db.scalar(
-                    select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+            db.rollback()
+            db.execute(
+                delete(Keyword).where(
+                    Keyword.projectId == project_id,
+                    Keyword.keyword.in_(added),
                 )
-                if failed_keyword:
-                    db.delete(failed_keyword)
-                    db.commit()
+            )
+            db.commit()
 
     message = f"Added {processed} keywords"
     if skipped_count := len(normalized_keywords) - len(added):
@@ -517,7 +552,8 @@ def bulk_create_keywords(
             "added": processed,
             "skipped": len(normalized_keywords) - len(added),
             "skipped_details": skipped,
-            "keywords": added[:processed],
+            "keywords": accepted_keywords,
+            "completed_keywords": completed_keywords,
             "processed": processed,
             "failed_tracking": failed_tracking,
             "tracking_errors": tracking_errors,

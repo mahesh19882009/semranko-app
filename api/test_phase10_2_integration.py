@@ -9,7 +9,7 @@ sys.path.insert(0, "/Users/maheshsharma/development/semranko-api/api/fastapi_app
 
 import json
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 from sqlalchemy import create_engine, select, update, text
@@ -152,6 +152,15 @@ class TestDuplicateWebhookProtection:
             dataforseoRequestIds=json.dumps(["task-dup-1"]),
         )
         db.add(rj)
+        db.flush()
+        db.add(ProcessingJob(
+            refreshJobId=rj.id,
+            keywordText="test kw",
+            location="United States",
+            status="pending",
+            deduplicationKey="pending:task-dup-1:test-kw",
+            payload=json.dumps({"project_id": project.id, "user_id": user.id, "domain": project.domain, "awaiting_callback": True}),
+        ))
         db.commit()
 
         payload = {
@@ -169,6 +178,8 @@ class TestDuplicateWebhookProtection:
             async def json_func():
                 return payload
             req.json = json_func
+            req.body = AsyncMock(return_value=json.dumps(payload).encode("utf-8"))
+            req.headers = {}
             req.query_params = {"task_id": None}
             return req
 
@@ -241,6 +252,7 @@ class TestDuplicateRankResultProtection:
                 "position": 5,
                 "url": "https://example.com",
                 "task_id": "task-rr",
+                "first_block": {"items": []},
             }),
         )
         db.add(pj)
@@ -275,6 +287,7 @@ class TestCreditDeduplication:
                 "position": 5,
                 "url": "https://example.com",
                 "task_id": "task-cd",
+                "first_block": {"items": []},
             }),
         )
         db.add(pj)
@@ -296,6 +309,7 @@ class TestCreditDeduplication:
                 "position": 5,
                 "url": "https://example.com",
                 "task_id": "task-cd-2",
+                "first_block": {"items": []},
             }),
         )
         db.add(pj2)

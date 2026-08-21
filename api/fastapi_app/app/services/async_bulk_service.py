@@ -341,8 +341,6 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     """
     location_code = 2840
     pingback_url = _build_postback_url()
-    if settings.DATAFORSEO_WEBHOOK_SECRET:
-        pingback_url = f"{pingback_url}?secret={settings.DATAFORSEO_WEBHOOK_SECRET}"
     
     aio_keyword_texts = set(
         row.keyword
@@ -376,7 +374,6 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
         db.add(job)
         db.commit()
         
-        from app.db.models import Project
         for kw_text in keyword_texts:
             kw = db.scalar(
                 select(Keyword).where(
@@ -493,6 +490,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     auth = (settings.effective_serp_login, settings.effective_serp_key)
     all_task_ids = []
     submitted_keywords = []
+    task_ids_by_keyword = {}
     failed_chunks = 0
     
     for chunk in chunks:
@@ -531,8 +529,19 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                     task_keyword = (t.get("data") or {}).get("keyword")
                     if not task_keyword and index < len(chunk):
                         task_keyword = chunk[index]
+                    elif task_keyword not in chunk:
+                        normalized_task_keyword = str(task_keyword).strip().casefold()
+                        task_keyword = next(
+                            (
+                                keyword
+                                for keyword in chunk
+                                if keyword.strip().casefold() == normalized_task_keyword
+                            ),
+                            task_keyword,
+                        )
                     if task_keyword:
                         submitted_keywords.append(task_keyword)
+                        task_ids_by_keyword.setdefault(task_keyword, []).append(t["id"])
         
         all_task_ids.extend(chunk_task_ids)
     
@@ -566,13 +575,100 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                 )
             except Exception:
                 logger.exception("Failed to refund partial automatic reservation for weekly job %s user %s", job.id, user_id)
+
+    processing_timeout_at = datetime.utcnow() + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
+    accepted_keywords = list(task_ids_by_keyword)
+    if accepted_keywords:
+        existing_children_by_keyword_id = {}
+        existing_children_by_deduplication_key = {}
+        for existing_child in db.scalars(
+            select(ProcessingJob).where(ProcessingJob.refreshJobId == job.id)
+        ).all():
+            existing_children_by_deduplication_key[
+                existing_child.deduplicationKey
+            ] = existing_child
+            try:
+                existing_payload = json.loads(existing_child.payload or "{}")
+            except Exception:
+                existing_payload = {}
+            existing_keyword_id = existing_payload.get("keyword_id")
+            if existing_keyword_id:
+                existing_children_by_keyword_id[existing_keyword_id] = existing_child
+
+        accepted_rows = db.execute(
+            select(KwModel, Project)
+            .join(Project, Project.id == KwModel.projectId)
+            .where(
+                KwModel.keyword.in_(accepted_keywords),
+                KwModel.location == "India",
+                KwModel.isActive == True,
+                KwModel.userId.in_(reserved_users),
+                Project.userId == KwModel.userId,
+            )
+        ).all()
+
+        for keyword_row, project in accepted_rows:
+            child_deduplication_key = f"pending:weekly:{job.id}:{keyword_row.id}"
+            existing_child = (
+                existing_children_by_keyword_id.get(keyword_row.id)
+                or existing_children_by_deduplication_key.get(
+                    child_deduplication_key
+                )
+            )
+            task_ids = task_ids_by_keyword[keyword_row.keyword]
+            child_payload = {
+                "action": "weekly_serp",
+                "credit_reference": f"auto:weekly:{job.id}:{project.userId}",
+                "cost_per_keyword": refresh_cost,
+                "task_ids": task_ids,
+                "location_code": location_code,
+                "language_code": "en",
+                "device": "desktop",
+                "depth": 10,
+                "domain": project.domain,
+                "user_id": project.userId,
+                "project_id": project.id,
+                "keyword_id": keyword_row.id,
+                "expand_ai_overview": keyword_row.keyword in aio_keyword_texts,
+                "awaiting_callback": True,
+            }
+
+            if existing_child:
+                try:
+                    existing_payload = json.loads(existing_child.payload or "{}")
+                except Exception:
+                    existing_payload = {}
+                if (
+                    existing_child.status == "success"
+                    or existing_payload.get("awaiting_callback") is False
+                ):
+                    continue
+                existing_task_ids = existing_payload.get("task_ids") or []
+                child_payload["task_ids"] = list(dict.fromkeys(
+                    [*existing_task_ids, *task_ids]
+                ))
+                existing_child.payload = json.dumps(child_payload)
+                existing_child.status = "pending"
+                existing_child.processingTimeoutAt = processing_timeout_at
+                db.add(existing_child)
+                continue
+
+            db.add(ProcessingJob(
+                refreshJobId=job.id,
+                keywordText=keyword_row.keyword,
+                location=keyword_row.location or "India",
+                status="pending",
+                deduplicationKey=child_deduplication_key,
+                processingTimeoutAt=processing_timeout_at,
+                payload=json.dumps(child_payload),
+            ))
     
     # Store task IDs and mark as submitted
     existing_ids = json.loads(job.dataforseoRequestIds or "[]")
     existing_ids.extend(all_task_ids)
     job.dataforseoRequestIds = json.dumps(existing_ids)
     job.status = "submitted"
-    job.processingTimeoutAt = datetime.utcnow() + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
+    job.processingTimeoutAt = processing_timeout_at
     db.add(job)
     db.commit()
     
@@ -1099,8 +1195,6 @@ def submit_bulk_to_dataforseo(
         
         location_code = task.locationCode or 2840
         pingback_url = _build_postback_url()
-        if settings.DATAFORSEO_WEBHOOK_SECRET:
-            pingback_url = f"{pingback_url}?secret={settings.DATAFORSEO_WEBHOOK_SECRET}"
         
         from app.services.dataforseo_client import _build_serp_cache_key, _get_cached_serp, _log_dataforseo_cost
         from app.db.models import TrackedKeyword

@@ -18,6 +18,17 @@ from app.services.monthly_metrics_service import (
     recover_stale_monthly_jobs,
 )
 from app.services.webhook_credit_retry_service import run_webhook_credit_retry_job
+from app.services.async_tracking_service import (
+    recover_missed_callback_results,
+    recover_stale_user_tracking_jobs,
+)
+from app.workers.refresh_worker import (
+    recover_stale_processing_jobs,
+    processing_job_ready_clause,
+    PROCESSING_BATCH_SIZE,
+)
+from app.db.models import ProcessingJob
+from app.queues.rank_check_queue import get_rank_check_queue
 from app.workers.monday_tracker import run_monday_tracker
 import logging
 
@@ -139,6 +150,50 @@ def run_last_sunday_monthly_metrics_job() -> None:
         db.close()
 
 
+def run_user_tracking_recovery_job() -> None:
+    """Recover durable user-tracking work after missed callbacks or worker/Redis restarts."""
+    db = SessionLocal()
+    try:
+        missed_callback_recovery = recover_missed_callback_results(db)
+        callback_recovery = recover_stale_user_tracking_jobs(db)
+        worker_recovery = recover_stale_processing_jobs(db)
+        ready_count = db.scalar(
+            select(func.count())
+            .select_from(ProcessingJob)
+            .where(ProcessingJob.status.in_(["pending", "retry"]))
+            .where(processing_job_ready_clause(db.get_bind().dialect.name))
+        ) or 0
+
+        recovery_batches = (
+            (ready_count + PROCESSING_BATCH_SIZE - 1) // PROCESSING_BATCH_SIZE
+            if ready_count
+            else 0
+        )
+        additional_batches = max(
+            0,
+            recovery_batches - missed_callback_recovery["queue_enqueues"],
+        )
+        if additional_batches:
+            queue = get_rank_check_queue()
+            for _ in range(additional_batches):
+                queue.enqueue(
+                    "app.workers.tasks.process_refresh_jobs",
+                    job_timeout="600",
+                )
+
+        logger.info(
+            "User tracking recovery completed: task_get=%s callbacks=%s workers=%s ready=%s",
+            missed_callback_recovery,
+            callback_recovery,
+            worker_recovery,
+            ready_count,
+        )
+    except Exception as exc:
+        logger.error("User tracking recovery failed: %s", exc)
+    finally:
+        db.close()
+
+
 def start_scheduler() -> None:
     if not scheduler.running:
         # Sunday night bulk async job (11 PM Sunday)
@@ -186,6 +241,13 @@ def start_scheduler() -> None:
             trigger="interval",
             minutes=30,
             id="webhook-credit-retry",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            run_user_tracking_recovery_job,
+            trigger="interval",
+            minutes=5,
+            id="user-tracking-recovery",
             replace_existing=True,
         )
         scheduler.start()

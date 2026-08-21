@@ -49,12 +49,17 @@ test('keyword table shows available values during processing and only shimmers m
 
   assert.match(
     keywords,
-    /if \(hasValue\) \{\s*return formatter\(value\);/
+    /if \(displayState === 'value'\) \{\s*return formatter\(value\);/
   );
 
   assert.match(
     keywords,
-    /if \(isRowProcessing\(rowData\)\) \{\s*return <Shimmer width=\{width\} \/>;/
+    /if \(displayState === 'shimmer'\) \{\s*return <Shimmer width=\{width\} \/>;/
+  );
+
+  assert.match(
+    keywords,
+    /const isRowProcessing = \(rowData\) => rowData\.isProcessing === true;/
   );
 
   assert.match(
@@ -91,4 +96,3 @@ test('keyword SSE completion clears only the completed processing keyword', asyn
     /PostgreSQL now contains the completed SERP result\.\s*setProcessingJobs\(\[\]\)/
   );
 });
-

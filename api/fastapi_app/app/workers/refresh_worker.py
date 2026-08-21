@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update, or_
+from sqlalchemy import JSON, cast, func, select, update, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -27,6 +27,20 @@ PROCESSING_BATCH_SIZE = 50
 PROCESSING_TIMEOUT_HOURS = 1
 
 
+def processing_job_ready_clause(dialect_name: str):
+    """SQL predicate: callback is complete when awaiting_callback is false or absent."""
+    if dialect_name == "sqlite":
+        return func.json_extract(
+            ProcessingJob.payload,
+            "$.awaiting_callback",
+        ).is_not(True)
+
+    return cast(
+        ProcessingJob.payload,
+        JSON,
+    )["awaiting_callback"].as_boolean().is_not(True)
+
+
 def _dfs_visibility(position):
     if position is None or position > 100:
         return 0.0
@@ -45,6 +59,7 @@ def claim_processing_jobs(db: Session, batch_size: int = PROCESSING_BATCH_SIZE) 
     jobs = db.scalars(
         select(ProcessingJob)
         .where(ProcessingJob.status.in_(["pending", "retry"]))
+        .where(processing_job_ready_clause(db.get_bind().dialect.name))
         .order_by(ProcessingJob.createdAt.asc())
         .limit(batch_size)
     ).all()
@@ -229,6 +244,29 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         if first_block is None:
             now = datetime.utcnow()
 
+            if (
+                action in ("add_keyword", "bulk_add", "manual_refresh", "weekly")
+                and payload_user_id
+                and payload.get("credit_reference")
+                and payload.get("cost_per_keyword")
+            ):
+                try:
+                    refund_reserved(
+                        db=db,
+                        user_id=payload_user_id,
+                        reference=payload["credit_reference"],
+                        amount=float(payload["cost_per_keyword"]),
+                        description=f"Refund: missing DataForSEO result for {job.keywordText}",
+                        project_id=project_id,
+                        task_id=task_id,
+                    )
+                except Exception as refund_exc:
+                    logger.warning(
+                        "Could not refund missing-result ProcessingJob job=%s: %s",
+                        job.id,
+                        refund_exc,
+                    )
+
             for keyword_row in keyword_rows:
                 keyword_row.weeklyRefreshStatus = "failed"
                 keyword_row.processingTimeoutAt = None
@@ -272,6 +310,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
                             project_id=keyword_row.projectId,
                             keyword_id=keyword_row.id,
                             task_id=task_id,
+                            commit=False,
                         )
                     elif action in ("add_keyword", "bulk_add", "manual_refresh", "weekly"):
                         consume_reserved(
@@ -284,6 +323,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
                             project_id=keyword_row.projectId,
                             keyword_id=keyword_row.id,
                             task_id=task_id,
+                            commit=False,
                         )
                     else:
                         if job.refreshJobId:
@@ -311,7 +351,7 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
                             )
                 except Exception as credit_exc:
                     logger.error("Skipping result without credits keyword=%s user=%s: %s", job.keywordText, user_id, credit_exc)
-                    continue
+                    raise
 
             keyword_row.position = position
             keyword_row.check_url = url
@@ -424,9 +464,61 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
     except Exception as exc:
         db.rollback()
         logger.error(f"Failed to process ProcessingJob {job.id}: {exc}")
-        job.status = "failed"
-        job.updatedAt = datetime.utcnow()
-        db.add(job)
+        failed_job = db.scalar(
+            select(ProcessingJob).where(ProcessingJob.id == job.id)
+        )
+        if not failed_job:
+            return False
+        failed_job.retryCount = int(failed_job.retryCount or 0) + 1
+        failed_job.status = (
+            "retry"
+            if failed_job.retryCount <= int(failed_job.maxRetries or 0)
+            else "failed"
+        )
+        failed_job.processingTimeoutAt = None
+        failed_job.updatedAt = datetime.utcnow()
+        db.add(failed_job)
+
+        if failed_job.status == "failed":
+            try:
+                failed_payload = json.loads(failed_job.payload or "{}")
+            except Exception:
+                failed_payload = {}
+            if (
+                failed_payload.get("action") in ("add_keyword", "bulk_add", "manual_refresh", "weekly")
+                and failed_payload.get("user_id")
+                and failed_payload.get("credit_reference")
+                and failed_payload.get("cost_per_keyword")
+            ):
+                try:
+                    refund_reserved(
+                        db=db,
+                        user_id=failed_payload["user_id"],
+                        reference=failed_payload["credit_reference"],
+                        amount=float(failed_payload["cost_per_keyword"]),
+                        description=f"Refund: worker retries exhausted for {failed_job.keywordText}",
+                        project_id=failed_payload.get("project_id"),
+                        task_id=failed_payload.get("task_id"),
+                    )
+                except Exception as refund_exc:
+                    logger.warning(
+                        "Could not refund exhausted ProcessingJob job=%s: %s",
+                        failed_job.id,
+                        refund_exc,
+                    )
+            failed_project_id = failed_payload.get("project_id")
+            if failed_project_id:
+                keyword_rows = db.scalars(
+                    select(Keyword).where(
+                        Keyword.projectId == failed_project_id,
+                        Keyword.keyword == failed_job.keywordText,
+                    )
+                ).all()
+                for keyword_row in keyword_rows:
+                    keyword_row.processingTimeoutAt = None
+                    if keyword_row.weeklyRefreshStatus == "processing":
+                        keyword_row.weeklyRefreshStatus = "failed"
+                    db.add(keyword_row)
         db.commit()
         return False
 

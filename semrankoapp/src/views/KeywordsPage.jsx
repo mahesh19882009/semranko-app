@@ -36,6 +36,15 @@ import {
   clearKeywordMessage,
   deleteKeywordById,
 } from '../features/keywords/keywordsSlice';
+import {
+  addOptimisticProcessingJobs,
+  buildActiveProcessingJobsByKeyword,
+  completeProcessingKeyword,
+  completeProcessingKeywords,
+  getKeywordFieldDisplayState,
+  reconcileBulkProcessingJobs,
+  removeProcessingSubmission,
+} from '../features/keywords/processingState';
 import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
 import { apiRequest, API_BASE_URL} from '../lib/api';
 import { Card } from '../components/ui';
@@ -117,6 +126,7 @@ function KeywordsPage() {
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [processingJobs, setProcessingJobs] = useState([]);
+  const processingSubmissionIdRef = useRef(0);
   const [tableKey, setTableKey] = useState(0);
 
   const fetchTableData = async () => {
@@ -202,11 +212,7 @@ function KeywordsPage() {
         // keywords may still be processing.
         if (updatedKeyword) {
           setProcessingJobs((current) =>
-            current.filter(
-              (job) =>
-                String(job.keyword || '').trim().toLowerCase() !==
-                updatedKeyword
-            )
+            completeProcessingKeyword(current, updatedKeyword)
           );
         }
 
@@ -242,30 +248,18 @@ function KeywordsPage() {
   }, [selectedProjectId]);
 
   const filteredData = useMemo(() => {
-    const processingByKeyword = new Map(
+    const processingByKeyword = buildActiveProcessingJobsByKeyword(
       processingJobs
-        .filter((job) => job.keyword)
-        .map((job) => [
-          String(job.keyword).trim().toLowerCase(),
-          job,
-        ])
     );
 
     let rows = tableData.map((row) => {
       const key = String(row.keyword || '').trim().toLowerCase();
       const processingJob = processingByKeyword.get(key);
-
-      if (!processingJob) {
-        return row;
-      }
-
-      const isProcessing =
-        processingJob.status === 'pending' ||
-        processingJob.status === 'processing' ||
-        processingJob.status === 'retry';
+      const isProcessing = Boolean(processingJob);
 
       return {
         ...row,
+        isProcessing,
         status: isProcessing ? 'processing' : row.status,
       };
     });
@@ -276,7 +270,7 @@ function KeywordsPage() {
       )
     );
 
-    for (const job of processingJobs) {
+    for (const job of processingByKeyword.values()) {
       const key = String(job.keyword || '').trim().toLowerCase();
 
       if (!key || existingKeywords.has(key)) {
@@ -302,8 +296,9 @@ function KeywordsPage() {
             ? job.position <= 10
               ? Math.round((1 - (job.position - 1) * 0.1) * 100) / 100
               : 0.05
-            : 0,
+            : null,
         is_active: true,
+        isProcessing: true,
         status: 'processing',
       });
     }
@@ -416,26 +411,51 @@ function KeywordsPage() {
 
   const handleAddKeywords = async (e) => {
     e.preventDefault();
+
     if (!selectedProjectId || !keywordText.trim() || isSubmitting) return;
 
     const parsed = parseKeywords(keywordText);
+
     if (parsed.length === 0) return;
 
+    const optimisticKeywords = [...parsed];
+    const submissionId = `add:${selectedProjectId}:${++processingSubmissionIdRef.current}`;
+
+    // Close immediately after local validation.
+    setKeywordText('');
+    setIsAddModalOpen(false);
+
+    // Immediately show pending rows in the table.
+    setProcessingJobs((current) =>
+      addOptimisticProcessingJobs(
+        current,
+        optimisticKeywords,
+        submissionId
+      )
+    );
+
     setIsSubmitting(true);
+
     try {
       let resultAction;
-      if (parsed.length === 1) {
+
+      if (optimisticKeywords.length === 1) {
         resultAction = await dispatch(
           addKeywordToProject({
             projectId: selectedProjectId,
-            payload: { keyword: parsed[0], location_code: projectCountryCode, location: projectCountry, device },
+            payload: {
+              keyword: optimisticKeywords[0],
+              location_code: projectCountryCode,
+              location: projectCountry,
+              device,
+            },
           })
         );
       } else {
         resultAction = await dispatch(
           bulkAddKeywords({
             projectId: selectedProjectId,
-            keywords: parsed,
+            keywords: optimisticKeywords,
             location_code: projectCountryCode,
             location: projectCountry,
             device,
@@ -443,51 +463,50 @@ function KeywordsPage() {
         );
       }
 
-      if (
-        (parsed.length === 1
+      const succeeded =
+        optimisticKeywords.length === 1
           ? addKeywordToProject.fulfilled.match(resultAction)
-          : bulkAddKeywords.fulfilled.match(resultAction))
-      ) {
+          : bulkAddKeywords.fulfilled.match(resultAction);
+
+      if (succeeded) {
+        const resultData = resultAction.payload?.data;
         setProcessingJobs((current) => {
-          const existing = new Map(
-            current.map((job) => [
-              String(job.keyword || '').trim().toLowerCase(),
-              job,
-            ])
+          const reconciled = bulkAddKeywords.fulfilled.match(resultAction)
+            ? reconcileBulkProcessingJobs(
+                current,
+                submissionId,
+                resultData
+              )
+            : current;
+
+          return completeProcessingKeywords(
+            reconciled,
+            resultData?.completed_keywords
           );
-
-          for (const keyword of parsed) {
-            const key = String(keyword).trim().toLowerCase();
-
-            existing.set(key, {
-              id: `processing:${key}`,
-              keyword,
-              status: 'processing',
-              position: null,
-              localPackPosition: null,
-              localPackUrl: null,
-              check_url: null,
-              ai_badge: null,
-              volume: null,
-              kd: null,
-              cpc: null,
-              competition: null,
-              backlinks: null,
-              referring_domains: null,
-              intent: null,
-            });
-          }
-
-          return Array.from(existing.values());
         });
 
-        setKeywordText('');
-        setIsAddModalOpen(false);
-
-        // Fetch the DB row once after creation.
-        // SSE will fetch again when processing actually completes.
+        // Fetch DB row after creation.
+        // SSE will refresh again after SERP completes.
         setTimeout(fetchTableData, 500);
+        return;
       }
+
+      // Request failed: remove only the optimistic rows created by this attempt.
+      setProcessingJobs((current) =>
+        removeProcessingSubmission(current, submissionId)
+      );
+
+      setTableError(
+        resultAction?.payload?.message ||
+          resultAction?.error?.message ||
+          'Failed to add keyword.'
+      );
+    } catch (error) {
+      setProcessingJobs((current) =>
+        removeProcessingSubmission(current, submissionId)
+      );
+
+      setTableError(error?.message || 'Failed to add keyword.');
     } finally {
       setIsSubmitting(false);
     }
@@ -511,6 +530,7 @@ function KeywordsPage() {
     setShowCsvConfirm(false);
     if (!selectedProjectId || csvPreview.length === 0) return;
 
+    const submissionId = `csv:${selectedProjectId}:${++processingSubmissionIdRef.current}`;
     setIsCsvSubmitting(true);
     try {
       const resultAction = await dispatch(
@@ -524,38 +544,20 @@ function KeywordsPage() {
       );
 
       if (bulkAddKeywords.fulfilled.match(resultAction)) {
-        setProcessingJobs((current) => {
-          const existing = new Map(
-            current.map((job) => [
-              String(job.keyword || '').trim().toLowerCase(),
-              job,
-            ])
-          );
-
-          for (const keyword of csvPreview) {
-            const key = String(keyword).trim().toLowerCase();
-
-            existing.set(key, {
-              id: `processing:${key}`,
-              keyword,
-              status: 'processing',
-              position: null,
-              localPackPosition: null,
-              localPackUrl: null,
-              check_url: null,
-              ai_badge: null,
-              volume: null,
-              kd: null,
-              cpc: null,
-              competition: null,
-              backlinks: null,
-              referring_domains: null,
-              intent: null,
-            });
-          }
-
-          return Array.from(existing.values());
-        });
+        setProcessingJobs((current) =>
+          completeProcessingKeywords(
+            reconcileBulkProcessingJobs(
+              addOptimisticProcessingJobs(
+                current,
+                csvPreview,
+                submissionId
+              ),
+              submissionId,
+              resultAction.payload?.data
+            ),
+            resultAction.payload?.data?.completed_keywords
+          )
+        );
 
         setCsvPreview([]);
         setTimeout(fetchTableData, 500);
@@ -753,7 +755,7 @@ function KeywordsPage() {
     );
   };
 
-  const isRowProcessing = (rowData) => rowData.status === 'processing';
+  const isRowProcessing = (rowData) => rowData.isProcessing === true;
 
   const valueOrShimmer = (
     rowData,
@@ -761,19 +763,16 @@ function KeywordsPage() {
     formatter = (v) => v,
     width = 'w-12'
   ) => {
-    const hasValue =
-      value !== null &&
-      value !== undefined &&
-      value !== '';
+    const displayState = getKeywordFieldDisplayState(rowData, value);
 
     // Show data immediately if it is already available,
     // even while SERP processing is still running.
-    if (hasValue) {
+    if (displayState === 'value') {
       return formatter(value);
     }
 
     // Only shimmer for values that are genuinely pending.
-    if (isRowProcessing(rowData)) {
+    if (displayState === 'shimmer') {
       return <Shimmer width={width} />;
     }
 
@@ -787,73 +786,73 @@ function KeywordsPage() {
   };
 
   const aiBodyTemplate = (rowData) => {
+    const hasAI = rowData.hasAIOverview;
+    const description = rowData.ai_description;
+
+    if (hasAI) {
+      return (
+        <TippyTooltip
+          content={description || 'AI Overview'}
+          placement="left"
+          appendTo={document.body}
+        >
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700 cursor-pointer">
+            AIO
+          </span>
+        </TippyTooltip>
+      );
+    }
+
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-10" />;
     }
 
-    const hasAI = rowData.hasAIOverview;
-    const description = rowData.ai_description;
-
-    if (!hasAI) {
-      return <span className="text-slate-400 text-xs">—</span>;
-    }
-
-    return (
-      <TippyTooltip
-        content={description || 'AI Overview'}
-        placement="left"
-        appendTo={document.body}
-      >
-        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700 cursor-pointer">
-          AIO
-        </span>
-      </TippyTooltip>
-    );
+    return <span className="text-slate-400 text-xs">—</span>;
   };
 
   const visibilityBodyTemplate = (rowData) => {
+    const vis = rowData.visibility;
+
+    if (vis !== null && vis !== undefined) {
+      return (
+        <span title={`${(vis * 100).toFixed(0)}% visibility score`}>
+          {(vis * 100).toFixed(0)}%
+        </span>
+      );
+    }
+
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-14" />;
     }
 
-    const vis = rowData.visibility;
-
-    if (vis === null || vis === undefined) {
-      return <span title="No visibility data">—</span>;
-    }
-
-    return (
-      <span title={`${(vis * 100).toFixed(0)}% visibility score`}>
-        {(vis * 100).toFixed(0)}%
-      </span>
-    );
+    return <span title="No visibility data">—</span>;
   };
 
   const checkUrlBodyTemplate = (rowData) => {
     const rankingUrl = rowData.check_url || rowData.localPackUrl;
+    if (rankingUrl) {
+      return (
+        <TippyTooltip
+          content={rankingUrl}
+          placement="left"
+          appendTo={document.body}
+        ><a
+          href={rankingUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={rankingUrl}
+          className="text-blue-600 hover:underline truncate block max-w-[200px]"
+        >
+          {rankingUrl}
+        </a></TippyTooltip>
+      );
+    }
+
     if (isRowProcessing(rowData)) {
       return <Shimmer width="w-24" />;
     }
 
-    if (!rankingUrl) {
-      return <span title="No ranking URL">—</span>;
-    }
-
-    return (
-      <TippyTooltip
-        content={rankingUrl}
-        placement="left"
-        appendTo={document.body}
-      ><a
-        href={rankingUrl}
-        target="_blank"
-        rel="noreferrer"
-        title={rankingUrl}
-        className="text-blue-600 hover:underline truncate block max-w-[200px]"
-      >
-        {rankingUrl}
-      </a></TippyTooltip>
-    );
+    return <span title="No ranking URL">—</span>;
   };
 
   const headerTemplate = () => {
@@ -1088,21 +1087,35 @@ function KeywordsPage() {
                 (value) => Math.round(value).toLocaleString('en-US')
               )
             } />
-            <Column field="intent" header={
-              <TippyTooltip content="Search intent: informational, navigational, commercial, transactional" placement="top" appendTo={document.body}>
-                <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Intent</span>
-              </TippyTooltip>
-            } style={{ width: '8rem' }}
-            body={(rowData) => {
-              if (isRowProcessing(rowData)) {
-                return <Shimmer width="w-20" />;
+            <Column
+              field="intent"
+              header={
+                <TippyTooltip
+                  content="Search intent: informational, navigational, commercial, transactional"
+                  placement="top"
+                  appendTo={document.body}
+                >
+                  <span
+                    style={{ display: 'inline-block', width: '100%', cursor: 'help' }}
+                  >
+                    Intent
+                  </span>
+                </TippyTooltip>
               }
-              return (
-                <span className="capitalize">
-                  {rowData.intent || '—'}
-                </span>
-              );
-            }} />
+              style={{ width: '8rem' }}
+              body={(rowData) =>
+                valueOrShimmer(
+                  rowData,
+                  rowData.intent,
+                  (value) => (
+                    <span className="capitalize">
+                      {value}
+                    </span>
+                  ),
+                  'w-20'
+                )
+              }
+            />
             <Column field="position" header={
               <TippyTooltip content="Current organic rank position (1 = top)" placement="top" appendTo={document.body}>
                 <span style={{ display: 'inline-block', width: '100%', cursor: 'help' }}>Position</span>

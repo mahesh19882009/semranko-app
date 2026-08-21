@@ -220,6 +220,15 @@ class TestDuplicateWebhook:
             dataforseoRequestIds=json.dumps(["task-123"]),
         )
         self.db.add(refresh_job)
+        self.db.flush()
+        self.db.add(ProcessingJob(
+            refreshJobId=refresh_job.id,
+            keywordText="test kw",
+            location="United States",
+            status="pending",
+            deduplicationKey="pending:task-123:test-kw",
+            payload=json.dumps({"project_id": project.id, "user_id": user.id, "domain": project.domain, "awaiting_callback": True}),
+        ))
         self.db.commit()
 
         class FakeRequest:
@@ -233,9 +242,12 @@ class TestDuplicateWebhook:
                         }]
                     }]
                 }
+            async def body(self):
+                return json.dumps(await self.json()).encode("utf-8")
             def __init__(self):
                 self.query_params = MagicMock()
                 self.query_params.get.return_value = None
+                self.headers = {}
 
         mock_request = FakeRequest()
 
@@ -247,8 +259,8 @@ class TestDuplicateWebhook:
 
         jobs = self.db.scalars(select(ProcessingJob)).all()
         assert len(jobs) == 1
-        assert result1["created"] == 1
-        assert result2["skipped"] == 1
+        assert result1["updated"] == 1
+        assert result2["updated"] == 1
 
 
 class TestDuplicateRankResult:
