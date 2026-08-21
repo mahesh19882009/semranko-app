@@ -79,7 +79,7 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
     - User.refreshFrequency is monthly or None
     """
     now = datetime.utcnow()
-    batches = []
+    entries = {}
     last_id = None
     
     while True:
@@ -121,27 +121,30 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
         if not batch:
             break
         
-        keyword_map = {}
         for kw in batch:
             key = (kw.keyword.lower().strip(), kw.location or "India")
-            if key not in keyword_map:
-                keyword_map[key] = []
-            keyword_map[key].append(kw)
-        
-        unique_keywords = [
-            {"keyword": key[0], "location": key[1]}
-            for key in keyword_map.keys()
-        ]
-        
-        if unique_keywords:
-            batches.append(unique_keywords)
+            entry = entries.setdefault(
+                key,
+                {"keyword": key[0], "location": key[1], "eligible_rows": []},
+            )
+            entry["eligible_rows"].append({
+                "keyword_id": kw.id,
+                "project_id": kw.projectId,
+                "user_id": kw.userId,
+                "keyword": key[0],
+                "location": key[1],
+            })
         
         last_id = batch[-1].id
         
         if len(batch) < REFRESH_JOB_BATCH_SIZE:
             break
     
-    return batches
+    ordered_entries = list(entries.values())
+    return [
+        ordered_entries[index:index + REFRESH_JOB_BATCH_SIZE]
+        for index in range(0, len(ordered_entries), REFRESH_JOB_BATCH_SIZE)
+    ]
 
 
 def create_refresh_jobs(db: Session, job_type: str, keyword_batches: list[list[dict]]) -> list[RefreshJob]:
@@ -227,7 +230,12 @@ def claim_refresh_job(db: Session, job_id: str) -> Optional[RefreshJob]:
     return None
 
 
-def mark_keywords_processing_atomic(db: Session, keyword_texts: list[str], location: str = "India") -> int:
+def mark_keywords_processing_atomic(
+    db: Session,
+    keyword_texts: list[str],
+    location: str = "India",
+    keyword_ids: Optional[list[str]] = None,
+) -> int:
     """
     Atomically mark keywords as processing.
     Returns the number of keywords successfully marked.
@@ -235,18 +243,22 @@ def mark_keywords_processing_atomic(db: Session, keyword_texts: list[str], locat
     now = datetime.utcnow()
     timeout_at = now + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
     
+    filters = [
+        Keyword.keyword.in_(keyword_texts),
+        Keyword.location == location,
+        Keyword.isActive == True,
+        (
+            (Keyword.weeklyRefreshStatus == None) |
+            (Keyword.weeklyRefreshStatus != "processing") |
+            ((Keyword.processingTimeoutAt != None) & (Keyword.processingTimeoutAt <= now))
+        ),
+    ]
+    if keyword_ids:
+        filters.append(Keyword.id.in_(keyword_ids))
+
     result = db.execute(
         update(Keyword)
-        .where(
-            Keyword.keyword.in_(keyword_texts),
-            Keyword.location == location,
-            Keyword.isActive == True,
-            (
-                (Keyword.weeklyRefreshStatus == None) |
-                (Keyword.weeklyRefreshStatus != "processing") |
-                ((Keyword.processingTimeoutAt != None) & (Keyword.processingTimeoutAt <= now))
-            ),
-        )
+        .where(*filters)
         .values(
             weeklyRefreshStatus="processing",
             processingTimeoutAt=timeout_at,
@@ -295,9 +307,9 @@ def submit_refresh_job_to_dataforseo(db: Session, job: RefreshJob) -> bool:
     
     try:
         if job.jobType == "weekly_serp":
-            return _submit_weekly_refresh(db, job, keyword_texts)
+            return _submit_weekly_refresh(db, job, keyword_texts, keyword_entries=keywords)
         elif job.jobType == "monthly_metrics":
-            return _submit_monthly_refresh(db, job, keyword_texts)
+            return _submit_monthly_refresh(db, job, keyword_texts, keyword_entries=keywords)
         else:
             job.status = "failed"
             job.errorMessage = f"Unknown job type: {job.jobType}"
@@ -335,11 +347,60 @@ def _refund_job_automatic_reservations(db: Session, job: RefreshJob, reason: str
             logger.exception("Failed to refund automatic reservation for job %s user %s", job.id, user_id)
 
 
-def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str]) -> bool:
+def _submit_weekly_refresh(
+    db: Session,
+    job: RefreshJob,
+    keyword_texts: list[str],
+    keyword_entries: Optional[list[dict]] = None,
+) -> bool:
     """
     Submit weekly SERP refresh to DataForSEO async endpoint.
     """
     location_code = 2840
+    has_exact_identity = bool(
+        keyword_entries and any("eligible_rows" in entry for entry in keyword_entries)
+    )
+    eligible_rows = []
+    if has_exact_identity:
+        eligible_ids = [
+            row.get("keyword_id")
+            for entry in keyword_entries or []
+            for row in entry.get("eligible_rows", [])
+            if row.get("keyword_id")
+        ]
+        if eligible_ids:
+            eligible_rows = db.scalars(
+                select(Keyword).join(User, User.id == Keyword.userId).where(
+                    Keyword.id.in_(eligible_ids),
+                    Keyword.isActive == True,
+                    User.subscriptionStatus == "active",
+                    User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
+                )
+            ).all()
+    else:
+        eligible_rows = db.scalars(
+            select(Keyword).where(
+                Keyword.keyword.in_(keyword_texts),
+                Keyword.location == "India",
+                Keyword.isActive == True,
+            )
+        ).all()
+    project_by_keyword_id = {}
+    user_by_id = {}
+    if has_exact_identity and eligible_rows:
+        for keyword_row, project, user in db.execute(
+            select(Keyword, Project, User)
+            .join(Project, Project.id == Keyword.projectId)
+            .join(User, User.id == Keyword.userId)
+            .where(Keyword.id.in_([row.id for row in eligible_rows]))
+        ).all():
+            project_by_keyword_id[keyword_row.id] = project
+            user_by_id[user.id] = user
+    eligible_by_text = {}
+    for row in eligible_rows:
+        key = (row.keyword or "").strip().casefold(), row.location or "India"
+        eligible_by_text.setdefault(key[0], []).append(row)
+
     pingback_url = _build_postback_url()
     
     aio_keyword_texts = set(
@@ -375,18 +436,15 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
         db.commit()
         
         for kw_text in keyword_texts:
-            kw = db.scalar(
-                select(Keyword).where(
-                    Keyword.keyword == kw_text,
-                    Keyword.location == "India",
-                    Keyword.isActive == True,
+            for kw in eligible_by_text.get(kw_text.strip().casefold(), []):
+                project = project_by_keyword_id.get(kw.id) or db.scalar(
+                    select(Project).where(Project.id == kw.projectId)
                 )
-            )
-            if kw:
-                project = db.scalar(select(Project).where(Project.id == kw.projectId))
                 if project:
                     user_id = project.userId
-                    user = db.scalar(select(User).where(User.id == user_id))
+                    user = user_by_id.get(user_id) or db.scalar(
+                        select(User).where(User.id == user_id)
+                    )
                     if user and user.subscriptionStatus == "active":
                         cache_hit_ref = f"cache_hit:{job.id}:{kw.id}"
                         existing_charge = db.scalar(
@@ -421,13 +479,8 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     
     keyword_user_map = {}
     for kw_text in uncached_keywords:
-        matching = db.scalars(
-            select(KwModel).where(
-                KwModel.keyword == kw_text,
-                KwModel.location == "India",
-                KwModel.isActive == True,
-            )
-        ).all()
+        key = kw_text.strip().casefold()
+        matching = eligible_by_text.get(key, [])
         for kw in matching:
             keyword_user_map.setdefault(kw.userId, []).append(kw_text)
     
@@ -443,9 +496,9 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     if excluded_users:
         uncached_keywords = [
             kw_text for kw_text in uncached_keywords
-            if not any(
-                kw_text in keyword_user_map.get(uid, [])
-                for uid in excluded_users
+            if any(
+                row.userId not in excluded_users
+                for row in eligible_by_text.get(kw_text.strip().casefold(), [])
             )
         ]
         logger.info(f"RefreshJob {job.id}: excluded {len(excluded_users)} users due to DFS cost ceiling")
@@ -559,10 +612,17 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
         db.commit()
         return False
 
-    submitted_counts = Counter(submitted_keywords)
+    submitted_counts = Counter(
+        keyword.strip().casefold() for keyword in submitted_keywords
+    )
     for user_id in reserved_users:
-        user_counts = Counter(keyword_user_map.get(user_id, []))
-        submitted_for_user = sum(min(count, submitted_counts.get(keyword, 0)) for keyword, count in user_counts.items())
+        user_counts = Counter(
+            keyword.strip().casefold() for keyword in keyword_user_map.get(user_id, [])
+        )
+        submitted_for_user = sum(
+            min(count, submitted_counts.get(keyword, 0))
+            for keyword, count in user_counts.items()
+        )
         unused_count = sum(user_counts.values()) - submitted_for_user
         if unused_count > 0:
             try:
@@ -577,7 +637,11 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                 logger.exception("Failed to refund partial automatic reservation for weekly job %s user %s", job.id, user_id)
 
     processing_timeout_at = datetime.utcnow() + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
-    accepted_keywords = list(task_ids_by_keyword)
+    task_ids_by_key = {
+        keyword.strip().casefold(): task_ids
+        for keyword, task_ids in task_ids_by_keyword.items()
+    }
+    accepted_keywords = list(task_ids_by_key)
     if accepted_keywords:
         existing_children_by_keyword_id = {}
         existing_children_by_deduplication_key = {}
@@ -595,17 +659,34 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
             if existing_keyword_id:
                 existing_children_by_keyword_id[existing_keyword_id] = existing_child
 
-        accepted_rows = db.execute(
-            select(KwModel, Project)
-            .join(Project, Project.id == KwModel.projectId)
-            .where(
-                KwModel.keyword.in_(accepted_keywords),
-                KwModel.location == "India",
-                KwModel.isActive == True,
-                KwModel.userId.in_(reserved_users),
-                Project.userId == KwModel.userId,
-            )
-        ).all()
+        if has_exact_identity:
+            exact_ids = [row.id for row in eligible_rows]
+            accepted_rows = [
+                (keyword_row, project)
+                for keyword_row, project in db.execute(
+                    select(KwModel, Project)
+                    .join(Project, Project.id == KwModel.projectId)
+                    .where(
+                        KwModel.id.in_(exact_ids),
+                        KwModel.isActive == True,
+                        KwModel.userId.in_(reserved_users),
+                        Project.userId == KwModel.userId,
+                    )
+                ).all()
+                if keyword_row.keyword.strip().casefold() in task_ids_by_key
+            ] if exact_ids else []
+        else:
+            accepted_rows = db.execute(
+                select(KwModel, Project)
+                .join(Project, Project.id == KwModel.projectId)
+                .where(
+                    KwModel.keyword.in_(accepted_keywords),
+                    KwModel.location == "India",
+                    KwModel.isActive == True,
+                    KwModel.userId.in_(reserved_users),
+                    Project.userId == KwModel.userId,
+                )
+            ).all()
 
         for keyword_row, project in accepted_rows:
             child_deduplication_key = f"pending:weekly:{job.id}:{keyword_row.id}"
@@ -615,7 +696,7 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
                     child_deduplication_key
                 )
             )
-            task_ids = task_ids_by_keyword[keyword_row.keyword]
+            task_ids = task_ids_by_key.get(keyword_row.keyword.strip().casefold(), [])
             child_payload = {
                 "action": "weekly_serp",
                 "credit_reference": f"auto:weekly:{job.id}:{project.userId}",
@@ -700,7 +781,12 @@ def _submit_weekly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str
     return True
 
 
-def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[str]) -> bool:
+def _submit_monthly_refresh(
+    db: Session,
+    job: RefreshJob,
+    keyword_texts: list[str],
+    keyword_entries: Optional[list[dict]] = None,
+) -> bool:
     """
     Submit monthly metrics refresh to DataForSEO Labs endpoint.
     """
@@ -711,17 +797,49 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
     results = {}
     missing_keywords = []
     cached_keywords = []
+    has_exact_identity = bool(
+        keyword_entries and any("eligible_rows" in entry for entry in keyword_entries)
+    )
+    if has_exact_identity:
+        eligible_ids = [
+            row.get("keyword_id")
+            for entry in keyword_entries or []
+            for row in entry.get("eligible_rows", [])
+            if row.get("keyword_id")
+        ]
+        eligible_rows = db.scalars(
+            select(Keyword).join(User, User.id == Keyword.userId).where(
+                Keyword.id.in_(eligible_ids),
+                Keyword.isActive == True,
+                User.subscriptionStatus == "active",
+                User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
+            )
+        ).all() if eligible_ids else []
+    else:
+        eligible_rows = db.scalars(
+            select(Keyword).where(
+                Keyword.keyword.in_(keyword_texts),
+                Keyword.isActive == True,
+            )
+        ).all()
+    eligible_by_text = {}
+    for row in eligible_rows:
+        key = (row.keyword or "").strip().casefold(), row.location or "India"
+        eligible_by_text.setdefault(key[0], []).append(row)
 
     monthly_cost = settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10)
     monthly_user_counts = {}
-    for keyword_row in db.scalars(
-        select(Keyword).join(User, User.id == Keyword.userId).where(
-            Keyword.keyword.in_(keyword_texts),
-            Keyword.isActive == True,
-            User.subscriptionStatus == "active",
-            User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
-        )
-    ).all():
+    eligible_for_billing = list(eligible_rows)
+    if not has_exact_identity:
+        eligible_for_billing = db.scalars(
+            select(Keyword).join(User, User.id == Keyword.userId).where(
+                Keyword.keyword.in_(keyword_texts),
+                Keyword.isActive == True,
+                User.subscriptionStatus == "active",
+                User.selectedPlan.in_(["starter", "pro", "agency", "enterprise"]),
+            )
+        ).all()
+    for keyword_row in eligible_for_billing:
         monthly_user_counts[keyword_row.userId] = monthly_user_counts.get(keyword_row.userId, 0) + 1
 
     reserved_users = set()
@@ -773,13 +891,7 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
     
     keyword_user_map = {}
     for kw_text in missing_keywords:
-        matching = db.scalars(
-            select(Keyword).where(
-                Keyword.keyword == kw_text,
-                Keyword.location == "India",
-                Keyword.isActive == True,
-            )
-        ).all()
+        matching = eligible_by_text.get(kw_text.strip().casefold(), [])
         for kw in matching:
             keyword_user_map.setdefault(kw.userId, []).append(kw_text)
     
@@ -795,9 +907,9 @@ def _submit_monthly_refresh(db: Session, job: RefreshJob, keyword_texts: list[st
     if excluded_users:
         missing_keywords = [
             kw_text for kw_text in missing_keywords
-            if not any(
-                kw_text in keyword_user_map.get(uid, [])
-                for uid in excluded_users
+            if any(
+                row.userId not in excluded_users
+                for row in eligible_by_text.get(kw_text.strip().casefold(), [])
             )
         ]
         logger.info(f"Monthly RefreshJob {job.id}: excluded {len(excluded_users)} users due to DFS cost ceiling")
@@ -1130,8 +1242,16 @@ def run_weekly_refresh_worker(db: Session) -> dict:
             keywords = json.loads(job.keywordsJson or "[]")
             keyword_texts = [kw.get("keyword") for kw in keywords if kw.get("keyword")]
             location = keywords[0].get("location", "India") if keywords else "India"
+            keyword_ids = [
+                row.get("keyword_id")
+                for entry in keywords
+                for row in entry.get("eligible_rows", [])
+                if row.get("keyword_id")
+            ]
             if keyword_texts:
-                mark_keywords_processing_atomic(db, keyword_texts, location)
+                mark_keywords_processing_atomic(
+                    db, keyword_texts, location, keyword_ids=keyword_ids or None
+                )
             if submit_refresh_job_to_dataforseo(db, job):
                 processed += 1
             else:

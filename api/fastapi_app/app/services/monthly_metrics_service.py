@@ -50,7 +50,7 @@ def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000)
     Keyset-paginated collection of eligible keywords for monthly refresh.
     """
     now = datetime.utcnow()
-    batches = []
+    entries = {}
     last_id = None
     
     while True:
@@ -77,27 +77,30 @@ def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000)
         if not batch:
             break
         
-        keyword_map = {}
         for kw in batch:
             key = (kw.keyword.lower().strip(), kw.location or "India")
-            if key not in keyword_map:
-                keyword_map[key] = []
-            keyword_map[key].append(kw)
-        
-        unique_keywords = [
-            {"keyword": key[0], "location": key[1]}
-            for key in keyword_map.keys()
-        ]
-        
-        if unique_keywords:
-            batches.append(unique_keywords)
+            entry = entries.setdefault(
+                key,
+                {"keyword": key[0], "location": key[1], "eligible_rows": []},
+            )
+            entry["eligible_rows"].append({
+                "keyword_id": kw.id,
+                "project_id": kw.projectId,
+                "user_id": kw.userId,
+                "keyword": key[0],
+                "location": key[1],
+            })
         
         last_id = batch[-1].id
         
         if len(batch) < batch_size:
             break
     
-    return batches
+    ordered_entries = list(entries.values())
+    return [
+        ordered_entries[index:index + batch_size]
+        for index in range(0, len(ordered_entries), batch_size)
+    ]
 
 
 def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
@@ -393,7 +396,15 @@ def run_monthly_refresh_worker(db: Session) -> dict:
             if keyword_texts:
                 from app.services.async_bulk_service import mark_keywords_processing_atomic
                 location = keywords[0].get("location", "India") if keywords else "India"
-                mark_keywords_processing_atomic(db, keyword_texts, location)
+                keyword_ids = [
+                    row.get("keyword_id")
+                    for entry in keywords
+                    for row in entry.get("eligible_rows", [])
+                    if row.get("keyword_id")
+                ]
+                mark_keywords_processing_atomic(
+                    db, keyword_texts, location, keyword_ids=keyword_ids or None
+                )
             success = submit_refresh_job_to_dataforseo(db, job)
             if success:
                 _apply_monthly_refresh_results(db, job)
@@ -421,70 +432,101 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
         
         now = datetime.utcnow()
         updated_count = 0
-        for kw_entry in keywords:
-            kw_text = kw_entry.get("keyword", "").lower().strip()
-            location = kw_entry.get("location", "India")
-            metrics = results.get(kw_text)
-            
-            db_keywords = db.scalars(
+        applied_keyword_ids = set(summary.get("applied_keyword_ids", []))
+        identity_entries = [
+            entry for entry in keywords if "eligible_rows" in entry
+        ]
+        if identity_entries:
+            row_specs = [
+                (row.get("keyword_id"), entry.get("keyword", "").lower().strip(), entry.get("location", "India"))
+                for entry in identity_entries
+                for row in entry.get("eligible_rows", [])
+                if row.get("keyword_id")
+            ]
+        else:
+            row_specs = []
+            for kw_entry in keywords:
+                kw_text = kw_entry.get("keyword", "").lower().strip()
+                location = kw_entry.get("location", "India")
+                db_keywords = db.scalars(
+                    select(Keyword).where(
+                        Keyword.keyword == kw_text,
+                        Keyword.isActive == True,
+                        (
+                            (Keyword.location == location) |
+                            (Keyword.location == None)
+                        ),
+                    )
+                ).all()
+                row_specs.extend((row.id, kw_text, location) for row in db_keywords)
+
+        exact_ids = [keyword_id for keyword_id, _, _ in row_specs]
+        exact_keyword_rows = {
+            row.id: row
+            for row in db.scalars(
                 select(Keyword).where(
-                    Keyword.keyword == kw_text,
+                    Keyword.id.in_(exact_ids),
                     Keyword.isActive == True,
-                    (
-                        (Keyword.location == location) |
-                        (Keyword.location == None)
-                    ),
                 )
             ).all()
-            
-            if not db_keywords:
+        } if exact_ids else {}
+
+        seen_ids = set()
+        for keyword_id, kw_text, location in row_specs:
+            if keyword_id in seen_ids or keyword_id in applied_keyword_ids:
                 continue
-            
-            for db_keyword in db_keywords:
-                user_id = db_keyword.userId
-                if not metrics:
-                    continue
-                
-                try:
-                    consume_automatic_reserved(
-                        db=db,
-                        user_id=user_id,
-                        reference=f"auto:monthly:{job.id}:{user_id}",
-                        amount=settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10),
-                        description=f"Monthly keyword metrics refresh: {kw_text}",
-                        project_id=db_keyword.projectId,
-                        keyword_id=db_keyword.id,
-                        task_id=job.id,
-                    )
-                    history = KeywordMetricsHistory(
-                        keywordId=db_keyword.id,
-                        projectId=db_keyword.projectId,
-                        userId=db_keyword.userId,
-                        volume=db_keyword.volume,
-                        kd=db_keyword.kd,
-                        cpc=db_keyword.cpc,
-                        competition=db_keyword.competition,
-                        backlinks=db_keyword.backlinks,
-                        referring_domains=db_keyword.referring_domains,
-                        intent=db_keyword.intent,
-                        refreshedAt=now,
-                    )
-                    db.add(history)
-                    
-                    db_keyword.volume = metrics.get("volume")
-                    db_keyword.kd = metrics.get("kd")
-                    db_keyword.cpc = metrics.get("cpc")
-                    db_keyword.competition = metrics.get("competition")
-                    db_keyword.backlinks = metrics.get("backlinks")
-                    db_keyword.referring_domains = metrics.get("referring_domains")
-                    db_keyword.intent = metrics.get("intent")
-                    db_keyword.lastMonthlyMetricsRefreshAt = now
-                    db_keyword.updatedAt = now
-                    db.add(db_keyword)
-                    updated_count += 1
-                except Exception as exc:
-                    logger.error(f"Failed to apply monthly metrics for keyword {kw_text}: {exc}")
-        
+            seen_ids.add(keyword_id)
+            db_keyword = exact_keyword_rows.get(keyword_id)
+            metrics = results.get(kw_text)
+            if not db_keyword or not db_keyword.isActive or not metrics:
+                continue
+
+            user_id = db_keyword.userId
+            try:
+                consume_automatic_reserved(
+                    db=db,
+                    user_id=user_id,
+                    reference=f"auto:monthly:{job.id}:{user_id}",
+                    amount=settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10),
+                    description=f"Monthly keyword metrics refresh: {kw_text}",
+                    project_id=db_keyword.projectId,
+                    keyword_id=db_keyword.id,
+                    task_id=job.id,
+                    commit=False,
+                )
+                history = KeywordMetricsHistory(
+                    keywordId=db_keyword.id,
+                    projectId=db_keyword.projectId,
+                    userId=db_keyword.userId,
+                    volume=db_keyword.volume,
+                    kd=db_keyword.kd,
+                    cpc=db_keyword.cpc,
+                    competition=db_keyword.competition,
+                    backlinks=db_keyword.backlinks,
+                    referring_domains=db_keyword.referring_domains,
+                    intent=db_keyword.intent,
+                    refreshedAt=now,
+                )
+                db.add(history)
+
+                db_keyword.volume = metrics.get("volume")
+                db_keyword.kd = metrics.get("kd")
+                db_keyword.cpc = metrics.get("cpc")
+                db_keyword.competition = metrics.get("competition")
+                db_keyword.backlinks = metrics.get("backlinks")
+                db_keyword.referring_domains = metrics.get("referring_domains")
+                db_keyword.intent = metrics.get("intent")
+                db_keyword.lastMonthlyMetricsRefreshAt = now
+                db_keyword.updatedAt = now
+                db.add(db_keyword)
+                applied_keyword_ids.add(keyword_id)
+                updated_count += 1
+            except Exception as exc:
+                logger.error(f"Failed to apply monthly metrics for keyword {kw_text}: {exc}")
+
+        summary["applied_keyword_ids"] = sorted(applied_keyword_ids)
+        job.resultSummary = json.dumps(summary)
+        db.add(job)
         db.commit()
 
         pending_user_ids = db.scalars(

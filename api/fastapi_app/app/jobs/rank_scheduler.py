@@ -39,7 +39,7 @@ scheduler = BackgroundScheduler()
 def is_last_sunday_of_month(dt=None) -> bool:
     """Return True if the given datetime is the last Sunday of its month."""
     if dt is None:
-        dt = datetime.utcnow()
+        dt = datetime.now(scheduler.timezone)
     year = dt.year
     month = dt.month
     last_day = monthrange(year, month)[1]
@@ -123,7 +123,7 @@ def run_scheduler_monthly_metrics_refresh() -> None:
 
 def run_last_sunday_monthly_metrics_job() -> None:
     """Run monthly metrics only on the last Sunday of the month."""
-    if not is_last_sunday_of_month(datetime.utcnow()):
+    if not is_last_sunday_of_month():
         return
     db = SessionLocal()
     try:
