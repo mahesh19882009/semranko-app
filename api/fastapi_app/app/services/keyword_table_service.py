@@ -7,6 +7,16 @@ from app.core.errors import ApiError
 logger = logging.getLogger(__name__)
 
 
+def _calculate_visibility(position: int | None) -> float:
+    if position is None or position > 100:
+        return 0.0
+    if 1 <= position <= 10:
+        return round(1.0 - (position - 1) * 0.1, 2)
+    if 11 <= position <= 20:
+        return 0.05
+    return 0.0
+
+
 def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[dict]:
     project = db.scalar(
         select(Project).where(
@@ -26,25 +36,28 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
 
     keyword_ids = [kw.id for kw in keywords if kw.id]
 
-    latest_ranks = {}
+    rank_history = {}
     if keyword_ids:
-        latest_rank_subq = (
+        rank_history_subq = (
             select(
                 RankResult.keywordId,
                 RankResult.position,
                 RankResult.url,
                 RankResult.checkedAt,
-                func.row_number().over(partition_by=RankResult.keywordId, order_by=RankResult.checkedAt.desc()).label('rn')
+                func.row_number().over(
+                    partition_by=RankResult.keywordId,
+                    order_by=(RankResult.checkedAt.desc(), RankResult.id.desc()),
+                ).label('rn'),
             )
             .where(RankResult.projectId == project_id)
             .where(RankResult.keywordId.in_(keyword_ids))
             .subquery()
         )
-        latest_rank_rows = db.execute(
-            select(latest_rank_subq).where(latest_rank_subq.c.rn == 1)
+        rank_history_rows = db.execute(
+            select(rank_history_subq).where(rank_history_subq.c.rn <= 2)
         ).fetchall()
-        for row in latest_rank_rows:
-            latest_ranks[row.keywordId] = {
+        for row in rank_history_rows:
+            rank_history.setdefault(row.keywordId, {})[row.rn] = {
                 "position": row.position,
                 "url": row.url,
                 "checkedAt": row.checkedAt.isoformat() if row.checkedAt else None,
@@ -84,7 +97,6 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
 
     results = []
     for kw in keywords:
-        rank_info = latest_ranks.get(kw.id, {})
         has_ai_overview = kw.ai_badge == "AIO"
 
         prev_metrics = previous_metrics.get(kw.id, {})
@@ -94,7 +106,10 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             prev = prev_metrics.get(field)
             if curr is not None and prev is not None:
                 diff = round(float(curr) - float(prev), 2)
-                if field in ("volume", "kd", "backlinks", "referring_domains"):
+                if field == "kd":
+                    direction = "up" if diff > 0 else ("down" if diff < 0 else "same")
+                    is_positive = diff < 0
+                elif field in ("volume", "backlinks", "referring_domains"):
                     direction = "up" if diff > 0 else ("down" if diff < 0 else "same")
                     is_positive = diff > 0
                 elif field == "cpc":
@@ -114,16 +129,43 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
                     "isPositive": is_positive,
                 }
 
+        rank_history_info = rank_history.get(kw.id, {})
+        rank_info = rank_history_info.get(1, {})
+        previous_rank_info = rank_history_info.get(2, {})
+
         position_change = None
-        if kw.position is not None and rank_info.get("position") is not None:
-            pos_diff = round(float(kw.position) - float(rank_info["position"]), 1)
-            position_change = {
-                "previous": rank_info["position"],
-                "current": kw.position,
-                "difference": pos_diff,
-                "direction": "up" if pos_diff < 0 else ("down" if pos_diff > 0 else "same"),
-                "isPositive": pos_diff < 0,
-            }
+        previous_position = previous_rank_info.get("position")
+        if (
+            kw.position is not None
+            and kw.position > 0
+            and previous_position is not None
+            and previous_position > 0
+        ):
+            pos_diff = round(float(kw.position) - float(previous_position), 1)
+            if pos_diff != 0:
+                position_change = {
+                    "previous": previous_position,
+                    "current": kw.position,
+                    "difference": pos_diff,
+                    "direction": "up" if pos_diff < 0 else "down",
+                    "isPositive": pos_diff < 0,
+                }
+
+        effective_rank = kw.position if kw.position is not None else kw.localPackPosition
+        visibility = _calculate_visibility(effective_rank)
+
+        visibility_change = None
+        if previous_position is not None and previous_position > 0:
+            previous_visibility = _calculate_visibility(previous_position)
+            visibility_diff = round(visibility - previous_visibility, 2)
+            if visibility_diff != 0:
+                visibility_change = {
+                    "previous": previous_visibility,
+                    "current": visibility,
+                    "difference": visibility_diff,
+                    "direction": "up" if visibility_diff > 0 else "down",
+                    "isPositive": visibility_diff > 0,
+                }
 
         results.append({
             "id": kw.id,
@@ -146,12 +188,13 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
             "ai": "AIO" if has_ai_overview else "Off",
             "hasAIOverview": has_ai_overview,
             "ai_description": kw.ai_description,
-            "visibility": kw.visibility,
+            "visibility": visibility,
             "is_active": kw.isActive,
             "deletedAt": kw.deletedAt.isoformat() if kw.deletedAt else None,
             "createdAt": kw.createdAt.isoformat() if getattr(kw, "createdAt", None) else None,
             "changes": changes,
             "positionChange": position_change,
+            "visibilityChange": visibility_change,
         })
 
     return results

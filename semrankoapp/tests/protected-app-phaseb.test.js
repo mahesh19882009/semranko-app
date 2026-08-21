@@ -49,7 +49,7 @@ test('keyword table shows available values during processing and only shimmers m
 
   assert.match(
     keywords,
-    /if \(displayState === 'value'\) \{\s*return formatter\(value\);/
+    /if \(displayState === 'value'\) \{\s*return renderWithComparison\(formatter\(value\), change, comparisonOptions\);/
   );
 
   assert.match(

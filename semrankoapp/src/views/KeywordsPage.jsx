@@ -45,6 +45,7 @@ import {
   reconcileBulkProcessingJobs,
   removeProcessingSubmission,
 } from '../features/keywords/processingState';
+import { getComparisonIndicator } from '../features/keywords/comparisonState';
 import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
 import { apiRequest, API_BASE_URL} from '../lib/api';
 import { Card } from '../components/ui';
@@ -701,10 +702,11 @@ function KeywordsPage() {
 
   const positionBodyTemplate = (rowData) => {
     if (rowData.position && rowData.position > 0) {
-      return (
+      return renderWithComparison(
         <span title={`Ranked at position #${rowData.position}`}>
           #{rowData.position}
-        </span>
+        </span>,
+        rowData.positionChange
       );
     }
 
@@ -757,18 +759,40 @@ function KeywordsPage() {
 
   const isRowProcessing = (rowData) => rowData.isProcessing === true;
 
+  const renderWithComparison = (content, change, options) => {
+    const indicator = getComparisonIndicator(change, options);
+    if (!indicator) return content;
+
+    const toneClass = indicator.tone === 'positive'
+      ? 'text-emerald-600'
+      : indicator.tone === 'negative'
+        ? 'text-rose-600'
+        : 'text-slate-500';
+
+    return (
+      <span className="inline-flex items-center gap-1">
+        {content}
+        <span className={`text-xs font-medium ${toneClass}`}>
+          {indicator.text}
+        </span>
+      </span>
+    );
+  };
+
   const valueOrShimmer = (
     rowData,
     value,
     formatter = (v) => v,
-    width = 'w-12'
+    width = 'w-12',
+    change = null,
+    comparisonOptions = undefined
   ) => {
     const displayState = getKeywordFieldDisplayState(rowData, value);
 
     // Show data immediately if it is already available,
     // even while SERP processing is still running.
     if (displayState === 'value') {
-      return formatter(value);
+      return renderWithComparison(formatter(value), change, comparisonOptions);
     }
 
     // Only shimmer for values that are genuinely pending.
@@ -814,10 +838,12 @@ function KeywordsPage() {
     const vis = rowData.visibility;
 
     if (vis !== null && vis !== undefined) {
-      return (
+      return renderWithComparison(
         <span title={`${(vis * 100).toFixed(0)}% visibility score`}>
           {(vis * 100).toFixed(0)}%
-        </span>
+        </span>,
+        rowData.visibilityChange,
+        { scale: 100, suffix: '%' }
       );
     }
 
@@ -1027,7 +1053,9 @@ function KeywordsPage() {
                 valueOrShimmer(
                   rowData,
                   rowData.volume,
-                  (value) => Number(value).toLocaleString('en-US')
+                  (value) => Number(value).toLocaleString('en-US'),
+                  'w-12',
+                  rowData.changes?.volume
                 )
               }
             />
@@ -1037,7 +1065,13 @@ function KeywordsPage() {
               </TippyTooltip>
             } sortable style={{ width: '6rem' }}
             body={(rowData) =>
-              valueOrShimmer(rowData, rowData.kd)
+              valueOrShimmer(
+                rowData,
+                rowData.kd,
+                (value) => value,
+                'w-12',
+                rowData.changes?.kd
+              )
             } />
             <Column field="cpc" header={
               <TippyTooltip content="Cost per click in INR" placement="top" appendTo={document.body}>
@@ -1048,7 +1082,10 @@ function KeywordsPage() {
               valueOrShimmer(
                 rowData,
                 rowData.cpc,
-                (value) => `₹${value}`
+                (value) => `₹${value}`,
+                'w-12',
+                rowData.changes?.cpc,
+                { semantic: false }
               )
             } />
             <Column field="competition" header={
@@ -1060,7 +1097,10 @@ function KeywordsPage() {
               valueOrShimmer(
                 rowData,
                 rowData.competition,
-                (value) => Number(value).toFixed(2)
+                (value) => Number(value).toFixed(2),
+                'w-12',
+                rowData.changes?.competition,
+                { semantic: false }
               )
             } />
             <Column field="backlinks" header={
@@ -1072,7 +1112,9 @@ function KeywordsPage() {
               valueOrShimmer(
                 rowData,
                 rowData.backlinks,
-                (value) => Math.round(value).toLocaleString('en-US')
+                (value) => Math.round(value).toLocaleString('en-US'),
+                'w-12',
+                rowData.changes?.backlinks
               )
             } />
             <Column field="domains" header={
@@ -1084,7 +1126,9 @@ function KeywordsPage() {
               valueOrShimmer(
                 rowData,
                 rowData.domains,
-                (value) => Math.round(value).toLocaleString('en-US')
+                (value) => Math.round(value).toLocaleString('en-US'),
+                'w-12',
+                rowData.changes?.referring_domains
               )
             } />
             <Column
