@@ -50,6 +50,7 @@ import {
   removeProcessingSubmission,
 } from '../features/keywords/processingState';
 import { keywordTargetKey } from '../features/keywords/keywordTargetIdentity';
+import { createKeywordTableRefreshCoalescer } from '../features/keywords/keywordTableRefreshCoalescer';
 import { getComparisonIndicator } from '../features/keywords/comparisonState';
 import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
 import { apiRequest, API_BASE_URL, exportProjectKeywordsApi } from '../lib/api';
@@ -262,14 +263,26 @@ function KeywordsPage() {
       withCredentials: true,
     });
 
-    const handleKeywordUpdated = async (event) => {
+    const tableRefreshCoalescer = createKeywordTableRefreshCoalescer(
+      fetchTableData,
+      {
+        onError: (error) => {
+          console.warn(
+            'Failed to refresh keyword table after update:',
+            error
+          );
+        },
+      }
+    );
+
+    const handleKeywordUpdated = (event) => {
       if (closed) return;
 
       try {
         const payload = JSON.parse(event.data || '{}');
         // Worker publishes this event only after the completed
         // keyword data has been committed to PostgreSQL.
-        await fetchTableData();
+        tableRefreshCoalescer.request();
 
         // Remove only the keyword that actually completed.
         // This is important for bulk operations where other
@@ -301,6 +314,8 @@ function KeywordsPage() {
 
     return () => {
       closed = true;
+
+      tableRefreshCoalescer.dispose();
 
       eventSource.removeEventListener(
         'keyword_updated',

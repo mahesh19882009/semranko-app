@@ -963,22 +963,53 @@ def ensure_project_limit(db: Session, user_id: str) -> None:
         raise ApiError(403, f"Domain limit reached. Your current plan allows {domain_limit} domain(s).")
 
 
-def ensure_keyword_limit(db: Session, user_id: str) -> None:
-    user = get_user_or_404(db, user_id)
-    ensure_subscription_active(user)
-    limits = get_user_plan_limits(user, db)
-    keyword_limit = limits.get("keywordLimit", 0)
-    if keyword_limit <= 0:
-        return
-    used = db.scalar(
-        select(func.count())
-        .select_from(Keyword)
-        .join(Project, Keyword.projectId == Project.id)
-        .where(Project.userId == user_id)
-        .where(or_(Keyword.isActive == True, Keyword.deletedAt.is_(None)))
-    ) or 0
-    if used >= keyword_limit:
-        raise ApiError(403, f"Keyword limit reached. Your current plan allows {keyword_limit} keywords.")
+def ensure_keyword_limit(
+    db: Session,
+    user_id: str,
+    additional_count: int = 0,
+    *,
+    lock_user: bool = False,
+) -> None:
+    """Enforce the existing counted-target rule, optionally reserving new capacity."""
+    additional_count = max(0, int(additional_count or 0))
+
+    # Active add routes lock the owning user until their Keyword insert commits.
+    # PostgreSQL then serializes capacity checks for concurrent requests from the
+    # same account. no_autoflush keeps not-yet-approved ORM rows out of `used`.
+    with db.no_autoflush:
+        if lock_user:
+            user = db.scalar(
+                select(User).where(User.id == user_id).with_for_update()
+            )
+            if not user:
+                raise ApiError(404, "User not found")
+        else:
+            user = get_user_or_404(db, user_id)
+
+        ensure_subscription_active(user)
+        limits = get_user_plan_limits(user, db)
+        keyword_limit = limits.get("keywordLimit", 0)
+        if keyword_limit <= 0:
+            return
+
+        used = db.scalar(
+            select(func.count())
+            .select_from(Keyword)
+            .join(Project, Keyword.projectId == Project.id)
+            .where(Project.userId == user_id)
+            .where(or_(Keyword.isActive == True, Keyword.deletedAt.is_(None)))
+        ) or 0
+
+    exceeds_limit = (
+        used + additional_count > keyword_limit
+        if additional_count
+        else used >= keyword_limit
+    )
+    if exceeds_limit:
+        raise ApiError(
+            403,
+            f"Keyword limit reached. Your current plan allows {keyword_limit} keywords.",
+        )
 
 
 def ensure_competitor_limit(db: Session, user_id: str, project_id: str) -> None:

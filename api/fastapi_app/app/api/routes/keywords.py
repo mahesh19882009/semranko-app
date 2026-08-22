@@ -20,6 +20,7 @@ from app.services.async_tracking_service import submit_user_tracking_job, get_us
 from app.services.keyword_service import delete_keyword, delete_keywords_bulk
 from app.services.plan_service import (
     get_user_or_404,
+    ensure_keyword_limit,
     activate_keyword as service_activate_keyword,
     deactivate_keyword as service_deactivate_keyword,
     set_keywords_active_state,
@@ -440,6 +441,13 @@ def create_keyword(
         db.execute(delete(Keyword).where(Keyword.id == existing_deleted.id))
         db.commit()
 
+    ensure_keyword_limit(
+        db,
+        user["userId"],
+        additional_count=1,
+        lock_user=True,
+    )
+
     keyword = Keyword(
         projectId=project_id,
         userId=user["userId"],
@@ -529,7 +537,7 @@ def create_keyword(
 
 
 @router.post("/{project_id}/bulk")
-@enforce_limits(resource_type='keyword')
+@enforce_limits()
 @rate_limit(max_requests=5, window_seconds=60, key_func=lambda r, kw: f"bulk_create_keyword:{kw.get('user', {}).get('userId', 'unknown')}")
 def bulk_create_keywords(
     request: Request,
@@ -625,7 +633,6 @@ def bulk_create_keywords(
             position=None,
             ai_badge=None,
         )
-        db.add(keyword)
         added.append(kw)
         added_targets.append({
             "keyword": kw,
@@ -637,6 +644,18 @@ def bulk_create_keywords(
             "user_id": user["userId"],
         })
         existing_set.add(target)
+
+    if added_targets:
+        ensure_keyword_limit(
+            db,
+            user["userId"],
+            additional_count=len(added_targets),
+            lock_user=True,
+        )
+        db.add_all([
+            target["_keyword_row"]
+            for target in added_targets
+        ])
 
     db.commit()
 
