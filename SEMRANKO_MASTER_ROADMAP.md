@@ -159,38 +159,43 @@ manual/automatic tracking flows;
 
 regression test coverage.
 
-Current confirmed defect --- pending RefreshJob reuse
+Pending RefreshJob reuse defect
 
-🔴 CURRENT PRIORITY
+✅ COMPLETED
 
-A pending add_keyword RefreshJob can currently be reused for a
-different keyword in the same project.
+Pending A + different B now creates separate work. Pending A + the
+same A reuses the identical in-flight request without a second DFS
+submission. Both cases have focused regression coverage.
 
-Observed result:
+Reliability audit hardening completed:
 
-new Keyword row can be created;
+total and partial task submission failures no longer leave newly
+created keywords without valid tracking work;
 
-API can return 201;
+partial failures create ProcessingJobs only for provider-accepted
+keywords and refund the remainder;
 
-no new customer credit reservation;
+cache-hit completions settle reserved credits;
 
-no new DataForSEO task;
+workers cannot claim pre-callback jobs as ready work;
 
-no new ProcessingJob;
+missing provider result blocks and exhausted worker retries refund
+unsettled user reservations;
 
-UI can remain in processing/shimmer state indefinitely.
+credit consumption and result persistence are one database
+transaction in the refresh worker;
 
-Required fix:
+missed callbacks time out using the existing 24-hour window, clear
+processing state and refund unsettled user credits;
 
-pending A + different B → B must create its own reservation/job/DFS
-task;
+a five-minute recovery scheduler requeues durable ready work after
+Redis/RQ worker interruption;
 
-pending A + exact duplicate A → may safely reuse/idempotently return
-existing work;
+webhook task correlation verifies exact task IDs rather than relying
+on JSON substring matches;
 
-add regression tests for both cases;
-
-do not discard real stale DFS task IDs without reconciliation.
+processing-status reads are project-isolated and use bounded query
+count instead of per-keyword OR/N+1 queries.
 
 3.2 Add Keyword UX
 
@@ -250,6 +255,13 @@ project count, subscription usage, keyword table and backend limits
 must use the same rule;
 
 incomplete/orphan rows must not create inconsistent usage.
+
+Confirmed audit result: backend plan usage and project-card counts use
+non-deleted keywords, including inactive keywords (inactive keywords
+intentionally consume a plan slot). The table endpoint returns those
+rows. The previously observed 4/5 versus 3/5 case is not reproduced by
+backend counting tests; filtered frontend views and development data
+still require an end-to-end reproduction before this item can close.
 
 3.4 Credit and failure lifecycle
 
@@ -325,6 +337,10 @@ callback idempotency;
 
 recovery without manually editing DB rows.
 
+✅ Internal timeout/refund recovery and periodic RQ requeue are now
+implemented and regression tested. Restart behavior still requires a
+clean local/development process-level E2E.
+
 3.7 Bulk scale validation
 
 ⬜ After single-keyword flow is frozen:
@@ -362,6 +378,20 @@ no double charges;
 database performance;
 
 frontend usability/progress.
+
+Confirmed audit findings:
+
+provider submission remains frozen at batches of 100;
+
+internal ProcessingJob creation and processing-status reads are now
+linear/bounded rather than per-keyword lookup loops;
+
+partial 101-keyword submission/refund behavior is regression tested;
+
+existing 5,000-keyword weekly/monthly pagination tests pass;
+
+full 100 / 1,000 / 10,000 callback, queue-pressure and UI load tests
+have not yet been executed, so this section remains open.
 
 Keyword Tracking exit criteria
 
