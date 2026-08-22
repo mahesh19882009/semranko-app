@@ -1,3 +1,4 @@
+import os
 import secrets
 from pathlib import Path
 from typing import Optional, Any
@@ -77,7 +78,14 @@ FREE_PLAN_LIMITS = {
     "reports_per_month": 2
 }
 
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+ENV_DIR = Path(__file__).resolve().parents[2]
+
+ENV_FILE = Path(
+    os.getenv(
+        "SEMRANKO_ENV_FILE",
+        str(ENV_DIR / ".env"),
+    )
+)
 
 class Settings(BaseSettings):
     # App Basics
