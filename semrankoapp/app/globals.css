@@ -303,3 +303,8 @@ a {
 .compact-datatable .p-checkbox .p-checkbox-box:focus {
   box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--color-focus) 22%, transparent) !important;
 }
+
+
+.p-inputtext {
+  padding: 0.5rem 0.4rem;
+}
