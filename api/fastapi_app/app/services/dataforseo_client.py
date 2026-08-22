@@ -717,6 +717,8 @@ class DataForSEOClient:
         location: str = "India",
         db=None,
         user_id: str | None = None,
+        *,
+        location_code: int | None = None,
     ) -> dict:
         """
         Fetch Keyword Overview metrics for one or many keywords.
@@ -727,7 +729,16 @@ class DataForSEOClient:
         if not keywords:
             return {}
 
-        location_code = LOCATION_MAP.get(location, 2840)
+        # Tracking supplies the exact SERP target code. Labs Keyword Overview
+        # requires the root country code, so resolve through the canonical
+        # hierarchy only at this boundary. Name-based legacy callers retain
+        # their established country mapping.
+        if location_code is not None:
+            from app.services.location_catalog import get_country_code_for_location
+
+            resolved_location_code = get_country_code_for_location(location_code)
+        else:
+            resolved_location_code = LOCATION_MAP.get(location, 2840)
 
         # Preserve caller's original keyword text while allowing
         # case-insensitive matching against DataForSEO response keywords.
@@ -747,7 +758,7 @@ class DataForSEOClient:
 
             cache_key = _build_kw_metrics_cache_key(
                 kw,
-                location_code,
+                resolved_location_code,
                 "en",
             )
 
@@ -780,7 +791,7 @@ class DataForSEOClient:
         payload = [
             {
                 "keywords": missing_keywords,
-                "location_code": location_code,
+                "location_code": resolved_location_code,
                 "language_code": "en",
                 "item_types": [
                     "organic",
@@ -923,7 +934,7 @@ class DataForSEOClient:
                 # Store metrics in shared Redis cache for 7 days.
                 cache_key = _build_kw_metrics_cache_key(
                     result_keyword,
-                    location_code,
+                    resolved_location_code,
                     "en",
                 )
 
@@ -974,7 +985,11 @@ class DataForSEOClient:
         )
 
         labs_results = cls._fetch_keyword_data_batch(
-            keywords, location, db=db, user_id=user_id
+            keywords,
+            location,
+            db=db,
+            user_id=user_id,
+            location_code=location_code,
         )
 
         metrics_map = {}

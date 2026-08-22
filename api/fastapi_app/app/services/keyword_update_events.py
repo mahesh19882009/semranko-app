@@ -17,6 +17,9 @@ def publish_keyword_update(
     project_id: str,
     keyword: str,
     status: str = "success",
+    keyword_id: str | None = None,
+    location_code: int | None = None,
+    device: str | None = None,
 ) -> None:
     """
     Publish a lightweight UI notification after keyword data
@@ -35,6 +38,12 @@ def publish_keyword_update(
         "status": status,
         "timestamp": datetime.utcnow().isoformat(),
     }
+    if keyword_id:
+        payload["keyword_id"] = keyword_id
+    if location_code is not None:
+        payload["location_code"] = location_code
+    if device:
+        payload["device"] = device
 
     try:
         redis = get_redis()

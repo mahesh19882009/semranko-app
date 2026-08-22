@@ -29,6 +29,7 @@ from app.services.credit_service import (
     consume_automatic_reserved, refund_automatic_reserved,
 )
 from app.services.async_bulk_service import submit_refresh_job_to_dataforseo
+from app.services.keyword_identity import effective_location_code, normalize_device, normalize_keyword
 from app.services.dataforseo_client import _build_kw_metrics_cache_key, _get_cached_kw_metrics, _set_cached_kw_metrics, _log_dataforseo_cost
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,25 @@ MONTHLY_METRICS_FIELDS = {
 }
 
 
+def _monthly_keyword_target(keyword: Keyword, project: Project | None = None) -> tuple[str, int, str]:
+    project = project or getattr(keyword, "project", None)
+    location_code = effective_location_code(
+        location_code=keyword.locationCode,
+        location=keyword.location,
+        project_location_code=getattr(project, "locationCode", None),
+        project_location=getattr(project, "location", None),
+    )
+    return (
+        normalize_keyword(keyword.keyword),
+        int(location_code),
+        normalize_device(keyword.device or getattr(project, "device", None)),
+    )
+
+
+def _monthly_result_key(keyword: str, location_code: int) -> str:
+    return f"{normalize_keyword(keyword)}|{int(location_code)}"
+
+
 def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000) -> list[list[dict]]:
     """
     Keyset-paginated collection of eligible keywords for monthly refresh.
@@ -55,7 +75,7 @@ def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000)
     
     while True:
         query = (
-            select(Keyword)
+            select(Keyword, Project)
             .join(Project, Project.id == Keyword.projectId)
             .join(User, User.id == Project.userId)
             .where(
@@ -72,26 +92,34 @@ def _paginate_eligible_keywords_for_monthly(db: Session, batch_size: int = 5000)
             query = query.where(Keyword.id > last_id)
         
         query = query.limit(batch_size)
-        batch = db.scalars(query).all()
+        batch = db.execute(query).all()
         
         if not batch:
             break
         
-        for kw in batch:
-            key = (kw.keyword.lower().strip(), kw.location or "India")
+        for kw, project in batch:
+            keyword_text, location_code, device = _monthly_keyword_target(kw, project)
+            key = (keyword_text, location_code)
             entry = entries.setdefault(
                 key,
-                {"keyword": key[0], "location": key[1], "eligible_rows": []},
+                {
+                    "keyword": keyword_text,
+                    "location": kw.location or project.location or "India",
+                    "location_code": location_code,
+                    "eligible_rows": [],
+                },
             )
             entry["eligible_rows"].append({
                 "keyword_id": kw.id,
                 "project_id": kw.projectId,
                 "user_id": kw.userId,
-                "keyword": key[0],
-                "location": key[1],
+                "keyword": keyword_text,
+                "location": kw.location or project.location or "India",
+                "location_code": location_code,
+                "device": device,
             })
         
-        last_id = batch[-1].id
+        last_id = batch[-1][0].id
         
         if len(batch) < batch_size:
             break
@@ -112,36 +140,50 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
     if not keywords:
         return {}
 
-    location_code = 2840
     results = {}
-    missing_keywords = []
-
+    target_entries: dict[tuple[str, int], str] = {}
     for kw_entry in keywords:
-        kw = kw_entry.get("keyword", "").lower().strip()
+        kw = normalize_keyword(kw_entry.get("keyword"))
         location = kw_entry.get("location", "India")
+        # Legacy callers did not persist a code; retain their established
+        # 2840 fallback while modern scheduled entries provide location_code.
+        location_code = int(kw_entry.get("location_code") or 2840)
+        target_entries[(kw, location_code)] = location
+
+    missing_targets = []
+    for (kw, location_code), location in target_entries.items():
         cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
         cached = _get_cached_kw_metrics(cache_key)
         if cached:
             results[(kw, location)] = cached
         else:
-            missing_keywords.append(kw)
+            missing_targets.append((kw, location_code, location))
 
-    if not missing_keywords:
+    if not missing_targets:
         logger.info("All monthly metrics found in cache, skipping DataForSEO call")
         return results
 
     url = f"{getattr(settings, 'DATAFORSEO_BASE_URL', None) or 'https://api.dataforseo.com/v3'}/dataforseo_labs/google/keyword_overview/live"
     
+    targets_by_location: dict[int, list[tuple[str, int, str]]] = {}
+    for target in missing_targets:
+        targets_by_location.setdefault(target[1], []).append(target)
     chunks = [
-        missing_keywords[i:i + 700]
-        for i in range(0, len(missing_keywords), 700)
+        chunk
+        for location_targets in targets_by_location.values()
+        for chunk in (
+            location_targets[i:i + 700]
+            for i in range(0, len(location_targets), 700)
+        )
     ]
     
     try:
         for chunk in chunks:
+            location_code = chunk[0][1]
             payload = [
                 {
-                    "keywords": chunk,
+                    "keywords": [target[0] for target in chunk],
+                    "location_code": location_code,
                     "language_code": "en",
                     "item_types": ["organic", "paid", "ai_overview_reference"],
                 }
@@ -180,8 +222,11 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
                 kw = item.get("keyword") or (task.get("data") or {}).get("keyword")
                 if not kw:
                     continue
-                kw = kw.lower().strip()
-                location = "India"
+                kw = normalize_keyword(kw)
+                task_location_code = int(
+                    (task.get("data") or {}).get("location_code") or location_code
+                )
+                location = target_entries.get((kw, task_location_code), "India")
 
                 metric_entry = {
                     "volume": keyword_info.get("search_volume"),
@@ -194,7 +239,7 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
                 }
                 results[(kw, location)] = metric_entry
 
-                cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
+                cache_key = _build_kw_metrics_cache_key(kw, task_location_code, "en")
                 _set_cached_kw_metrics(cache_key, metric_entry, ttl=604800)
 
                 _log_dataforseo_cost(
@@ -219,7 +264,7 @@ def _fetch_monthly_metrics(db: Session, keywords: list[dict]) -> dict:
             task_type="monthly_metrics_error",
             endpoint="/dataforseo_labs/google/keyword_overview/live",
             method="POST",
-            keyword_count=len(missing_keywords),
+            keyword_count=len(missing_targets),
             priority=1,
             depth=100,
             expand_ai_overview=False,
@@ -427,6 +472,7 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
     try:
         summary = json.loads(job.resultSummary)
         results = summary.get("results", {})
+        results_by_target = summary.get("results_by_target", {})
         
         keywords = json.loads(job.keywordsJson or "[]")
         
@@ -438,7 +484,12 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
         ]
         if identity_entries:
             row_specs = [
-                (row.get("keyword_id"), entry.get("keyword", "").lower().strip(), entry.get("location", "India"))
+                (
+                    row.get("keyword_id"),
+                    normalize_keyword(entry.get("keyword")),
+                    entry.get("location", "India"),
+                    int(row.get("location_code") or entry.get("location_code") or 2840),
+                )
                 for entry in identity_entries
                 for row in entry.get("eligible_rows", [])
                 if row.get("keyword_id")
@@ -458,9 +509,23 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
                         ),
                     )
                 ).all()
-                row_specs.extend((row.id, kw_text, location) for row in db_keywords)
+                for row in db_keywords:
+                    project = db.get(Project, row.projectId)
+                    row_specs.append(
+                        (
+                            row.id,
+                            kw_text,
+                            location,
+                            effective_location_code(
+                                location_code=row.locationCode,
+                                location=row.location,
+                                project_location_code=getattr(project, "locationCode", None),
+                                project_location=getattr(project, "location", None),
+                            ),
+                        )
+                    )
 
-        exact_ids = [keyword_id for keyword_id, _, _ in row_specs]
+        exact_ids = [keyword_id for keyword_id, _, _, _ in row_specs]
         exact_keyword_rows = {
             row.id: row
             for row in db.scalars(
@@ -472,12 +537,14 @@ def _apply_monthly_refresh_results(db: Session, job: RefreshJob) -> None:
         } if exact_ids else {}
 
         seen_ids = set()
-        for keyword_id, kw_text, location in row_specs:
+        for keyword_id, kw_text, location, location_code in row_specs:
             if keyword_id in seen_ids or keyword_id in applied_keyword_ids:
                 continue
             seen_ids.add(keyword_id)
             db_keyword = exact_keyword_rows.get(keyword_id)
-            metrics = results.get(kw_text)
+            metrics = results_by_target.get(
+                f"{normalize_keyword(kw_text)}|{int(location_code)}"
+            ) or results.get(kw_text)
             if not db_keyword or not db_keyword.isActive or not metrics:
                 continue
 

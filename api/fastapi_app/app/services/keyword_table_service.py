@@ -3,6 +3,7 @@ from sqlalchemy import select, func, desc, over
 from sqlalchemy.orm import Session
 from app.db.models import Keyword, Project, RankResult, KeywordMetricsHistory
 from app.core.errors import ApiError
+from app.services.location_catalog import location_label
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
     )
     if not project:
         raise ApiError(404, "Project not found")
+
+    project_location = location_label(project.location)
 
     keywords = db.scalars(
         select(Keyword).where(
@@ -170,7 +173,8 @@ def get_enriched_keywords(db: Session, user_id: str, project_id: str) -> list[di
         results.append({
             "id": kw.id,
             "keyword": kw.keyword,
-            "location": kw.location or "India",
+            "location": location_label(kw.location, project_location),
+            "locationCode": kw.locationCode,
             "device": kw.device or "desktop",
             "volume": kw.volume,
             "kd": kw.kd,

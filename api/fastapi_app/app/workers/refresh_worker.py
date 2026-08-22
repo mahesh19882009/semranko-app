@@ -166,18 +166,37 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         device = payload.get("device", "desktop")
         depth = payload.get("depth", 100)
         
-        keyword_query = select(Keyword).where(
-            Keyword.keyword == job.keywordText,
-            Keyword.location == job.location,
-            Keyword.isActive == True,
-        )
-
-        if project_id:
-            keyword_query = keyword_query.where(
-                Keyword.projectId == project_id
+        keyword_id = payload.get("keyword_id") or getattr(job, "keywordId", None)
+        if keyword_id:
+            keyword_query = select(Keyword).where(
+                Keyword.id == keyword_id,
+                Keyword.isActive == True,
             )
-
-        keyword_rows = db.scalars(keyword_query).all()
+            if project_id:
+                keyword_query = keyword_query.where(Keyword.projectId == project_id)
+            if payload_user_id:
+                keyword_query = keyword_query.where(Keyword.userId == payload_user_id)
+            keyword_rows = db.scalars(keyword_query).all()
+        else:
+            keyword_query = select(Keyword).where(
+                Keyword.keyword == job.keywordText,
+                Keyword.location == job.location,
+                Keyword.isActive == True,
+            )
+            if project_id:
+                keyword_query = keyword_query.where(Keyword.projectId == project_id)
+            if payload_user_id:
+                keyword_query = keyword_query.where(Keyword.userId == payload_user_id)
+            keyword_rows = db.scalars(keyword_query).all()
+            # Legacy rows may predate keywordId. Never guess when the old
+            # text/location identity maps to more than one target.
+            if len(keyword_rows) > 1:
+                logger.warning(
+                    "Ambiguous legacy ProcessingJob target; refusing to guess job=%s keyword=%s",
+                    job.id,
+                    job.keywordText,
+                )
+                keyword_rows = []
         
         if not keyword_rows:
             now = datetime.utcnow()
@@ -452,12 +471,19 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
         db.add(job)
         db.commit()
 
-        publish_keyword_update(
-            user_id=payload_user_id,
-            project_id=project_id,
-            keyword=job.keywordText,
-            status="success",
-        )
+        event = {
+            "user_id": payload_user_id,
+            "project_id": project_id,
+            "keyword": job.keywordText,
+            "status": "success",
+        }
+        if keyword_id:
+            event.update(
+                keyword_id=keyword_rows[0].id if keyword_rows else None,
+                location_code=location_code,
+                device=device,
+            )
+        publish_keyword_update(**event)
 
         return True
         
@@ -508,13 +534,18 @@ def process_processing_job(db: Session, job: ProcessingJob) -> bool:
                     )
             failed_project_id = failed_payload.get("project_id")
             if failed_project_id:
-                keyword_rows = db.scalars(
-                    select(Keyword).where(
-                        Keyword.projectId == failed_project_id,
-                        Keyword.keyword == failed_job.keywordText,
-                    )
-                ).all()
-                for keyword_row in keyword_rows:
+                failed_keyword_id = failed_payload.get("keyword_id") or getattr(failed_job, "keywordId", None)
+                failed_keyword_query = select(Keyword).where(
+                    Keyword.projectId == failed_project_id,
+                )
+                if failed_keyword_id:
+                    failed_keyword_query = failed_keyword_query.where(Keyword.id == failed_keyword_id)
+                else:
+                    failed_keyword_query = failed_keyword_query.where(Keyword.keyword == failed_job.keywordText)
+                failed_keyword_rows = db.scalars(failed_keyword_query).all()
+                if not failed_keyword_id and len(failed_keyword_rows) > 1:
+                    failed_keyword_rows = []
+                for keyword_row in failed_keyword_rows:
                     keyword_row.processingTimeoutAt = None
                     if keyword_row.weeklyRefreshStatus == "processing":
                         keyword_row.weeklyRefreshStatus = "failed"

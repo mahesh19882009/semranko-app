@@ -1,0 +1,83 @@
+[
+  {
+    "id": "in",
+    "name": "India",
+    "locationCode": 2356,
+    "states": [
+      {
+        "id": "in-mh",
+        "name": "Maharashtra",
+        "locationCode": 20359,
+        "cities": [{"id": "in-mh-mumbai", "name": "Mumbai", "locationCode": 9062115}]
+      },
+      {
+        "id": "in-ka",
+        "name": "Karnataka",
+        "locationCode": 20351,
+        "cities": [{"id": "in-ka-bengaluru", "name": "Bengaluru", "locationCode": 9061972}]
+      },
+      {
+        "id": "in-dl",
+        "name": "Delhi",
+        "locationCode": 20345,
+        "cities": [{"id": "in-dl-new-delhi", "name": "New Delhi", "locationCode": 1007809}]
+      },
+      {
+        "id": "in-hr",
+        "name": "Haryana",
+        "locationCode": 1007787,
+        "cities": [{"id": "in-hr-faridabad", "name": "Faridabad", "locationCode": 9061655}]
+      }
+    ]
+  },
+  {
+    "id": "au",
+    "name": "Australia",
+    "locationCode": 2036,
+    "states": [
+      {
+        "id": "au-nsw",
+        "name": "New South Wales",
+        "locationCode": 20001,
+        "cities": [{"id": "au-nsw-sydney", "name": "Sydney", "locationCode": 1000256}]
+      },
+      {
+        "id": "au-vic",
+        "name": "Victoria",
+        "locationCode": 20005,
+        "cities": [{"id": "au-vic-melbourne", "name": "Melbourne", "locationCode": 1000142}]
+      },
+      {
+        "id": "au-qld",
+        "name": "Queensland",
+        "locationCode": 20002,
+        "cities": [{"id": "au-qld-brisbane", "name": "Brisbane", "locationCode": 1000109}]
+      }
+    ]
+  },
+  {
+    "id": "us",
+    "name": "United States",
+    "locationCode": 2840,
+    "states": [
+      {
+        "id": "us-ca",
+        "name": "California",
+        "locationCode": 21137,
+        "cities": [{"id": "us-ca-los-angeles", "name": "Los Angeles", "locationCode": 1013962}]
+      },
+      {
+        "id": "us-ny",
+        "name": "New York",
+        "locationCode": 21167,
+        "cities": [{"id": "us-ny-new-york-city", "name": "New York City", "locationCode": 1023191}]
+      },
+      {
+        "id": "us-tx",
+        "name": "Texas",
+        "locationCode": 21176,
+        "cities": [{"id": "us-tx-houston", "name": "Houston", "locationCode": 1026480}]
+      }
+    ]
+  }
+]

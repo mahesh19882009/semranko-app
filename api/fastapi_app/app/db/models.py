@@ -160,6 +160,7 @@ class Keyword(Base):
     keyword: Mapped[str] = mapped_column(String, nullable=False)
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     device: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    locationCode: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     volume: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     kd: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpc: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -188,7 +189,7 @@ class Keyword(Base):
 
     __table_args__ = (
         Index("Keyword_projectId_idx", "projectId"),
-        Index("Keyword_projectId_keyword_key", "projectId", "keyword", unique=True),
+        Index("Keyword_projectId_keyword_locationCode_device_key", "projectId", "keyword", "locationCode", "device", unique=True),
         Index("idx_keyword_last_monthly_metrics_refresh", "lastMonthlyMetricsRefreshAt"),
         Index("idx_keyword_last_weekly_refresh", "lastWeeklyRefreshAt"),
         Index("idx_keyword_weekly_eligibility", "lastWeeklyRefreshAt", "weeklyRefreshStatus", "isActive"),
@@ -699,6 +700,9 @@ class ProcessingJob(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=generate_id)
     refreshJobId: Mapped[str] = mapped_column(String, ForeignKey("RefreshJob.id", ondelete="CASCADE"), nullable=False)
+    # Exact durable target identity for user-triggered jobs.  Nullable keeps
+    # scheduled/legacy rows readable while they are migrated organically.
+    keywordId: Mapped[Optional[str]] = mapped_column(String, ForeignKey("Keyword.id", ondelete="SET NULL"), nullable=True)
     keywordText: Mapped[str] = mapped_column(String, nullable=False)
     location: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
@@ -713,6 +717,7 @@ class ProcessingJob(Base):
 
     __table_args__ = (
         Index("ProcessingJob_refreshJobId_idx", "refreshJobId"),
+        Index("ProcessingJob_keywordId_idx", "keywordId"),
         Index("ProcessingJob_status_idx", "status"),
         Index("ProcessingJob_refreshJobId_status_idx", "refreshJobId", "status"),
         Index("ProcessingJob_deduplicationKey_idx", "deduplicationKey"),

@@ -23,11 +23,14 @@ import {
   faArrowTrendUp,
   faChartSimple,
   faMoneyBill1Wave,
+  faDownload,
+  faFileCsv,
+  faFileExcel,
 } from '@fortawesome/free-solid-svg-icons';
 import ConfirmModal from '../components/ConfirmModal';
 import Modal from '../components/ui/Modal';
 import Alert from '../components/ui/Alert';
-import { getCountryCode } from '../data/locations';
+import { getCountryCode, KEYWORD_LOCATION_CATALOG, resolveKeywordLocation } from '../data/locations';
 import { formatDateTime } from '../utils/date';
 import {
   addKeywordToProject,
@@ -41,13 +44,15 @@ import {
   buildActiveProcessingJobsByKeyword,
   completeProcessingKeyword,
   completeProcessingKeywords,
+  reconcileProcessingJobsToServerTargets,
   getKeywordFieldDisplayState,
   reconcileBulkProcessingJobs,
   removeProcessingSubmission,
 } from '../features/keywords/processingState';
+import { keywordTargetKey } from '../features/keywords/keywordTargetIdentity';
 import { getComparisonIndicator } from '../features/keywords/comparisonState';
 import { fetchSubscriptionStatus } from '../features/subscription/subscriptionSlice';
-import { apiRequest, API_BASE_URL} from '../lib/api';
+import { apiRequest, API_BASE_URL, exportProjectKeywordsApi } from '../lib/api';
 import { Card } from '../components/ui';
 
 const rankOptions = [
@@ -82,12 +87,16 @@ function KeywordsPage() {
   const subscriptionLoading = useSelector((state) => state.subscription.loading);
   let projectCountry = 'India';
   let projectCountryCode = 2356;
+  let projectLocationState = '';
+  let projectLocationCity = '';
   if (selectedProject?.location) {
     try {
       const parsed = JSON.parse(selectedProject.location);
       if (parsed && typeof parsed === 'object') {
         projectCountry = parsed.country || 'India';
         projectCountryCode = parsed.locationCode || parsed.countryCode || selectedProject.locationCode || getCountryCode(projectCountry) || 2356;
+        projectLocationState = parsed.state || '';
+        projectLocationCity = parsed.city || '';
       }
     } catch {
       projectCountry = selectedProject.location || 'India';
@@ -102,6 +111,9 @@ function KeywordsPage() {
   const [isCsvSubmitting, setIsCsvSubmitting] = useState(false);
   const [keywordText, setKeywordText] = useState('');
   const [device, setDevice] = useState('desktop');
+  const [locationCountry, setLocationCountry] = useState(projectCountry);
+  const [locationState, setLocationState] = useState('');
+  const [locationCity, setLocationCity] = useState('');
   const [csvPreview, setCsvPreview] = useState([]);
   const [showCsvConfirm, setShowCsvConfirm] = useState(false);
   const [tableData, setTableData] = useState([]);
@@ -125,10 +137,50 @@ function KeywordsPage() {
   const [activatingId, setActivatingId] = useState(null);
   const [deactivatingId, setDeactivatingId] = useState(null);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [processingJobs, setProcessingJobs] = useState([]);
   const processingSubmissionIdRef = useRef(0);
   const [tableKey, setTableKey] = useState(0);
+
+  const countryOptions = useMemo(() => {
+    const options = [...KEYWORD_LOCATION_CATALOG];
+    if (!options.some((entry) => entry.name === projectCountry)) {
+      options.push({ name: projectCountry, locationCode: projectCountryCode, states: [] });
+    }
+    return options;
+  }, [projectCountry, projectCountryCode]);
+
+  const selectedCountryEntry = countryOptions.find((entry) => entry.name === locationCountry) || countryOptions[0];
+  const stateOptions = selectedCountryEntry?.states || [];
+  const selectedStateEntry = stateOptions.find((entry) => entry.name === locationState);
+  const cityOptions = selectedStateEntry?.cities || [];
+  const resolvedAddLocation = (() => {
+    try {
+      return resolveKeywordLocation({
+        country: selectedCountryEntry?.name,
+        state: locationState || null,
+        city: locationCity || null,
+        locationCode: selectedCountryEntry?.locationCode,
+      });
+    } catch {
+      return {
+        country: selectedCountryEntry?.name || projectCountry,
+        state: null,
+        city: null,
+        locationCode: selectedCountryEntry?.locationCode || projectCountryCode,
+        label: selectedCountryEntry?.name || projectCountry,
+      };
+    }
+  })();
+
+  useEffect(() => {
+    if (!isAddModalOpen) return;
+    setLocationCountry(projectCountry);
+    setLocationState(projectLocationState);
+    setLocationCity(projectLocationCity);
+  }, [isAddModalOpen, projectCountry, projectCountryCode, projectLocationState, projectLocationCity]);
 
   const fetchTableData = async () => {
     if (!selectedProjectId) return;
@@ -200,10 +252,6 @@ function KeywordsPage() {
 
       try {
         const payload = JSON.parse(event.data || '{}');
-        const updatedKeyword = String(payload.keyword || '')
-          .trim()
-          .toLowerCase();
-
         // Worker publishes this event only after the completed
         // keyword data has been committed to PostgreSQL.
         await fetchTableData();
@@ -211,9 +259,9 @@ function KeywordsPage() {
         // Remove only the keyword that actually completed.
         // This is important for bulk operations where other
         // keywords may still be processing.
-        if (updatedKeyword) {
+        if (payload.keyword_id || payload.keyword) {
           setProcessingJobs((current) =>
-            completeProcessingKeyword(current, updatedKeyword)
+            completeProcessingKeyword(current, payload)
           );
         }
 
@@ -254,7 +302,7 @@ function KeywordsPage() {
     );
 
     let rows = tableData.map((row) => {
-      const key = String(row.keyword || '').trim().toLowerCase();
+      const key = keywordTargetKey(row);
       const processingJob = processingByKeyword.get(key);
       const isProcessing = Boolean(processingJob);
 
@@ -265,22 +313,24 @@ function KeywordsPage() {
       };
     });
 
-    const existingKeywords = new Set(
-      rows.map((row) =>
-        String(row.keyword || '').trim().toLowerCase()
-      )
-    );
+    const existingKeywords = new Set(rows.map((row) => keywordTargetKey(row)));
 
     for (const job of processingByKeyword.values()) {
-      const key = String(job.keyword || '').trim().toLowerCase();
+      const key = keywordTargetKey(job);
 
       if (!key || existingKeywords.has(key)) {
         continue;
       }
 
+      existingKeywords.add(key);
+
       rows.push({
         id: job.id,
+        keywordId: job.keywordId,
         keyword: job.keyword,
+        locationCode: job.locationCode,
+        device: job.device,
+        location: job.location,
         position: job.position,
         check_url: job.check_url,
         hasAIOverview: job.ai_badge === 'AIO',
@@ -419,7 +469,11 @@ function KeywordsPage() {
 
     if (parsed.length === 0) return;
 
-    const optimisticKeywords = [...parsed];
+    const optimisticKeywords = parsed.map((keyword) => ({
+      keyword,
+      locationCode: resolvedAddLocation.locationCode,
+      device,
+    }));
     const submissionId = `add:${selectedProjectId}:${++processingSubmissionIdRef.current}`;
 
     // Close immediately after local validation.
@@ -445,9 +499,10 @@ function KeywordsPage() {
           addKeywordToProject({
             projectId: selectedProjectId,
             payload: {
-              keyword: optimisticKeywords[0],
-              location_code: projectCountryCode,
-              location: projectCountry,
+              keyword: optimisticKeywords[0].keyword,
+              location_code: resolvedAddLocation.locationCode,
+              location: resolvedAddLocation.label,
+              location_details: resolvedAddLocation,
               device,
             },
           })
@@ -456,9 +511,10 @@ function KeywordsPage() {
         resultAction = await dispatch(
           bulkAddKeywords({
             projectId: selectedProjectId,
-            keywords: optimisticKeywords,
-            location_code: projectCountryCode,
-            location: projectCountry,
+            keywords: optimisticKeywords.map((target) => target.keyword),
+            location_code: resolvedAddLocation.locationCode,
+            location: resolvedAddLocation.label,
+            location_details: resolvedAddLocation,
             device,
           })
         );
@@ -472,17 +528,23 @@ function KeywordsPage() {
       if (succeeded) {
         const resultData = resultAction.payload?.data;
         setProcessingJobs((current) => {
-          const reconciled = bulkAddKeywords.fulfilled.match(resultAction)
+          const reconciled = reconcileProcessingJobsToServerTargets(
+            bulkAddKeywords.fulfilled.match(resultAction)
             ? reconcileBulkProcessingJobs(
                 current,
                 submissionId,
                 resultData
               )
-            : current;
+            : current,
+            submissionId,
+            bulkAddKeywords.fulfilled.match(resultAction)
+              ? resultData?.accepted_targets
+              : resultData?.id ? [resultData] : []
+          );
 
           return completeProcessingKeywords(
             reconciled,
-            resultData?.completed_keywords
+            resultAction.payload?.data?.completed_keywords
           );
         });
 
@@ -532,37 +594,52 @@ function KeywordsPage() {
     if (!selectedProjectId || csvPreview.length === 0) return;
 
     const submissionId = `csv:${selectedProjectId}:${++processingSubmissionIdRef.current}`;
+    const optimisticTargets = csvPreview.map((keyword) => ({
+      keyword,
+      locationCode: resolvedAddLocation.locationCode,
+      device,
+    }));
+    setProcessingJobs((current) => addOptimisticProcessingJobs(
+      current,
+      optimisticTargets,
+      submissionId
+    ));
     setIsCsvSubmitting(true);
     try {
       const resultAction = await dispatch(
         bulkAddKeywords({
           projectId: selectedProjectId,
           keywords: csvPreview,
-          location_code: projectCountryCode,
-          location: projectCountry,
+          location_code: resolvedAddLocation.locationCode,
+          location: resolvedAddLocation.label,
+          location_details: resolvedAddLocation,
           device,
         })
       );
 
       if (bulkAddKeywords.fulfilled.match(resultAction)) {
-        setProcessingJobs((current) =>
-          completeProcessingKeywords(
-            reconcileBulkProcessingJobs(
-              addOptimisticProcessingJobs(
-                current,
-                csvPreview,
-                submissionId
-              ),
+        setProcessingJobs((current) => {
+          const responseData = resultAction.payload?.data;
+          const reconciled = reconcileBulkProcessingJobs(current, submissionId, responseData);
+          return completeProcessingKeywords(
+            reconcileProcessingJobsToServerTargets(
+              reconciled,
               submissionId,
-              resultAction.payload?.data
+              responseData?.accepted_targets
             ),
             resultAction.payload?.data?.completed_keywords
-          )
-        );
+          );
+        });
 
         setCsvPreview([]);
         setTimeout(fetchTableData, 500);
       }
+      else {
+        setProcessingJobs((current) => removeProcessingSubmission(current, submissionId));
+      }
+    } catch (error) {
+      setProcessingJobs((current) => removeProcessingSubmission(current, submissionId));
+      setTableError(error?.message || 'CSV upload failed');
     } finally {
       setIsCsvSubmitting(false);
     }
@@ -697,6 +774,29 @@ function KeywordsPage() {
       setTableError(err.message || 'Manual refresh failed');
     } finally {
       setBulkActionLoading(false);
+    }
+  };
+
+  const handleExport = async (format) => {
+    if (!selectedProjectId || exportLoading) return;
+    setExportLoading(true);
+    setTableError('');
+    try {
+      const selectedKeywordIds = selectedIds.map((row) => row.id).filter(Boolean);
+      const result = await exportProjectKeywordsApi(selectedProjectId, format, selectedKeywordIds);
+      const objectUrl = URL.createObjectURL(result.blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = result.filename || `project-${selectedProjectId}-keywords.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      setExportMenuOpen(false);
+    } catch (err) {
+      setTableError(err.message || 'Keyword export failed');
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -882,6 +982,7 @@ function KeywordsPage() {
   };
 
   const headerTemplate = () => {
+    const exportScopeLabel = selectedIds.length ? `(${selectedIds.length})` : 'All keywords';
     return (
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -905,6 +1006,38 @@ function KeywordsPage() {
             onClick={fetchTableData}
             loading={tableLoading}
           ><FontAwesomeIcon icon={faRefresh} /> Refresh</Button>
+          <div className="relative">
+            <Button
+              variant="outline"
+              onClick={() => setExportMenuOpen((open) => !open)}
+              loading={exportLoading}
+              disabled={exportLoading}
+              aria-label="Export keywords"
+              aria-expanded={exportMenuOpen}
+              title="Export keywords"
+              className="px-3"
+            >
+              <FontAwesomeIcon icon={faDownload} size='xl' />
+            </Button>
+            {exportMenuOpen && (
+              <div className="absolute right-0 z-20 mt-2 min-w-[14rem] rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => handleExport('csv')}
+                >
+                  <FontAwesomeIcon icon={faFileCsv} /> CSV {exportScopeLabel}
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                  onClick={() => handleExport('xlsx')}
+                >
+                  <FontAwesomeIcon icon={faFileExcel} /> XLSX {exportScopeLabel}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         {nextRefresh && (
           <div className="text-xs text-slate-400">
@@ -1028,6 +1161,7 @@ function KeywordsPage() {
             selection={selectedIds}
             onSelectionChange={(e) => setSelectedIds(e.value)}
             selectionMode="multiple"
+            selectionPageOnly={false}
             sortField="keyword"
             sortOrder={1}
             removableSort
@@ -1043,6 +1177,7 @@ function KeywordsPage() {
           >
             <Column selectionMode="multiple" headerStyle={{ width: '3rem' }} frozen style={{ width: '3rem' }} />
             <Column field="keyword" header="Keyword" sortable frozen style={{ fontWeight: 600, minWidth: '14rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} />
+            <Column field="location" header="Location" sortable style={{ minWidth: '12rem' }} />
             <Column header="Status" body={statusBodyTemplate} style={{ width: '8rem' }} />
             <Column
               field="volume"
@@ -1261,12 +1396,57 @@ function KeywordsPage() {
             {addCapacityExceeded && <p className="mt-1 text-sm font-medium text-rose-600">Keyword plan capacity exceeded. You have {remainingSlots} slot(s) remaining.</p>}
             {addCreditsInsufficient && <p className="mt-1 text-sm font-medium text-rose-600">Insufficient spendable credits. Automatic tracking credits cannot be used for keyword adds.</p>}
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 md:grid-cols-3">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Country</label>
-              <div className="rounded-xl border border-slate-200 px-3 py-2 text-sm bg-slate-50 text-slate-700">
-                {projectCountry} <span className="text-slate-400 text-xs ml-2">(from project)</span>
-              </div>
+              <select
+                value={locationCountry}
+                onChange={(e) => {
+                  setLocationCountry(e.target.value);
+                  setLocationState('');
+                  setLocationCity('');
+                }}
+                required
+                disabled={isSubmitting}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
+              >
+                {countryOptions.map((entry) => (
+                  <option key={entry.name} value={entry.name}>{entry.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">State / region <span className="text-slate-400">(optional)</span></label>
+              <select
+                value={locationState}
+                onChange={(e) => {
+                  setLocationState(e.target.value);
+                  setLocationCity('');
+                }}
+                disabled={isSubmitting}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
+              >
+                <option value="">Country only</option>
+                {stateOptions.map((entry) => (
+                  <option key={entry.name} value={entry.name}>{entry.name}</option>
+                ))}
+              </select>
+              {!stateOptions.length && <p className="mt-1 text-xs text-slate-400">No verified state codes are currently available.</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">City <span className="text-slate-400">(optional)</span></label>
+              <select
+                value={locationCity}
+                onChange={(e) => setLocationCity(e.target.value)}
+                disabled={isSubmitting || !selectedStateEntry || !cityOptions.length}
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none disabled:bg-slate-50 disabled:cursor-not-allowed"
+              >
+                <option value="">State only</option>
+                {cityOptions.map((entry) => (
+                  <option key={entry.name} value={entry.name}>{entry.name}</option>
+                ))}
+              </select>
+              {!cityOptions.length && <p className="mt-1 text-xs text-slate-400">No verified city codes are currently available.</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Device</label>

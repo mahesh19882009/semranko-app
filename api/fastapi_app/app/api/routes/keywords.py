@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import re
 import asyncio
+import json
 from redis.asyncio import Redis as AsyncRedis
 
 from app.api.deps import db_session, get_current_user
@@ -26,6 +27,9 @@ from app.services.plan_service import (
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.services.keyword_update_events import keyword_update_channel
+from app.services.location_catalog import location_label, resolve_keyword_location
+from app.services.keyword_identity import effective_location_code, normalize_device, normalize_keyword
+from app.utils.export import export_csv, export_xlsx
 
 import logging
 from datetime import datetime
@@ -35,6 +39,39 @@ settings = get_settings()
 router = APIRouter(prefix="/keywords", tags=["keywords"])
 
 KEYWORD_READD_COOLDOWN_DAYS = 30
+
+
+def _resolve_tracking_location(payload: dict) -> tuple[str, int]:
+    """Resolve optional hierarchy before entering the existing Tracking API."""
+
+    details = payload.get("location_details")
+    if details is None:
+        details = payload.get("location_selection")
+    if not isinstance(details, dict):
+        details = {}
+
+    country = details.get("country") or payload.get("location") or "India"
+    state = details.get("state")
+    city = details.get("city")
+    requested_code = details.get("location_code") or payload.get("location_code") or None
+    try:
+        resolved = resolve_keyword_location(country, state, city, requested_code)
+    except (TypeError, ValueError) as exc:
+        raise ApiError(400, str(exc))
+    return resolved["label"], resolved["location_code"]
+
+
+def _keyword_target_matches(keyword: Keyword, project: Project, location_code: int, device: str) -> bool:
+    stored_code = keyword.locationCode or effective_location_code(
+        location=keyword.location,
+        project_location_code=project.locationCode,
+        project_location=project.location,
+    )
+    try:
+        stored_device = normalize_device(keyword.device)
+    except ValueError:
+        stored_device = "desktop"
+    return int(stored_code) == int(location_code) and stored_device == device
 
 
 def _calculate_visibility(position):
@@ -202,6 +239,76 @@ def list_keywords(
     return {"success": True, "data": keywords}
 
 
+@router.post("/{project_id}/export")
+def export_project_keywords(
+    project_id: str,
+    payload: dict = Body(...),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(db_session),
+):
+    """Export project keywords without invoking tracking/provider work."""
+
+    project = db.scalar(
+        select(Project).where(Project.id == project_id, Project.userId == user["userId"])
+    )
+    if not project:
+        raise ApiError(404, "Project not found")
+
+    export_format = str(payload.get("format") or "csv").strip().lower()
+    if export_format not in {"csv", "xlsx"}:
+        raise ApiError(400, "format must be csv or xlsx")
+
+    requested_ids = payload.get("keyword_ids")
+    if requested_ids is None:
+        requested_ids = []
+    if not isinstance(requested_ids, list):
+        raise ApiError(400, "keyword_ids must be a list")
+
+    query = select(Keyword).where(
+        Keyword.projectId == project_id,
+        Keyword.userId == user["userId"],
+    )
+    if requested_ids:
+        keywords = db.scalars(query.where(Keyword.id.in_(requested_ids))).all()
+        found_ids = {keyword.id for keyword in keywords}
+        if found_ids != set(requested_ids):
+            raise ApiError(403, "One or more selected keywords are not authorized for this project")
+        requested_order = {keyword_id: index for index, keyword_id in enumerate(requested_ids)}
+        keywords.sort(key=lambda keyword: requested_order[keyword.id])
+    else:
+        # Export All is deliberately independent of the rendered/paginated UI.
+        keywords = db.scalars(query.order_by(Keyword.createdAt.asc(), Keyword.id.asc())).all()
+
+    project_location = project.location
+    if project_location and project_location.startswith("{"):
+        try:
+            parsed_location = json.loads(project_location)
+            if isinstance(parsed_location, dict):
+                project_location = ", ".join(
+                    part for part in (
+                        parsed_location.get("city"),
+                        parsed_location.get("state"),
+                        parsed_location.get("country"),
+                    ) if part
+                ) or parsed_location.get("country")
+        except (TypeError, ValueError):
+            pass
+
+    rows = [
+        (
+            keyword.keyword,
+            location_label(keyword.location, project_location),
+            keyword.device or project.device or "desktop",
+        )
+        for keyword in keywords
+    ]
+    columns = ("Keyword", "Location", "Device")
+    filename = f"project-{project_id}-keywords.{export_format}"
+    if export_format == "xlsx":
+        return export_xlsx(columns, rows, filename)
+    return export_csv(columns, rows, filename)
+
+
 @router.delete("/bulk")
 def bulk_remove_keywords(
     payload: dict = Body(...),
@@ -255,8 +362,11 @@ def create_keyword(
     db: Session = Depends(db_session),
 ) -> JSONResponse:
     keyword_text = payload.get("keyword")
-    location = payload.get("location") or "India"
-    location_code = payload.get("location_code") or LOCATION_MAP.get(location, 2840)
+    location, location_code = _resolve_tracking_location(payload)
+    try:
+        device = normalize_device(payload.get("device"))
+    except ValueError as exc:
+        raise ApiError(400, str(exc))
 
     if not keyword_text:
         raise ApiError(400, "Keyword is required")
@@ -269,34 +379,52 @@ def create_keyword(
     if not normalized_keyword:
         raise ApiError(400, "Keyword is required")
 
-    existing_active = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == True,
-        )
+    existing_active = next(
+        (
+            row for row in db.scalars(
+                select(Keyword).where(
+                    Keyword.projectId == project_id,
+                    Keyword.keyword == normalized_keyword,
+                    Keyword.isActive == True,
+                )
+            ).all()
+            if _keyword_target_matches(row, project, location_code, device)
+        ),
+        None,
     )
     if existing_active:
         raise ApiError(409, "Keyword already exists for this project")
 
-    existing_inactive = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == False,
-            Keyword.deletedAt.is_(None),
-        )
+    existing_inactive = next(
+        (
+            row for row in db.scalars(
+                select(Keyword).where(
+                    Keyword.projectId == project_id,
+                    Keyword.keyword == normalized_keyword,
+                    Keyword.isActive == False,
+                    Keyword.deletedAt.is_(None),
+                )
+            ).all()
+            if _keyword_target_matches(row, project, location_code, device)
+        ),
+        None,
     )
     if existing_inactive:
         raise ApiError(409, "Keyword already exists but is inactive. Activate it instead of adding it again.")
 
-    existing_deleted = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == False,
-            Keyword.deletedAt.isnot(None),
-        ).order_by(Keyword.deletedAt.desc())
+    existing_deleted = next(
+        (
+            row for row in db.scalars(
+                select(Keyword).where(
+                    Keyword.projectId == project_id,
+                    Keyword.keyword == normalized_keyword,
+                    Keyword.isActive == False,
+                    Keyword.deletedAt.isnot(None),
+                ).order_by(Keyword.deletedAt.desc())
+            ).all()
+            if _keyword_target_matches(row, project, location_code, device)
+        ),
+        None,
     )
     if existing_deleted:
         cooldown_days = 30
@@ -317,7 +445,8 @@ def create_keyword(
         userId=user["userId"],
         keyword=normalized_keyword,
         location=location,
-        device=(payload.get("device") or "desktop"),
+        device=device,
+        locationCode=location_code,
         volume=None,
         kd=None,
         cpc=None,
@@ -343,12 +472,20 @@ def create_keyword(
             db=db,
             user_id=user["userId"],
             project_id=project_id,
-            keywords=[{"keyword": normalized_keyword}],
+            keywords=[{
+                "keyword": normalized_keyword,
+                "keyword_id": keyword.id,
+                "location": location,
+                "location_code": location_code,
+                "device": device,
+                "project_id": project_id,
+                "user_id": user["userId"],
+            }],
             domain=project.domain,
             action="add_keyword",
             location_code=location_code,
             language_code="en",
-            device=payload.get("device") or "desktop",
+            device=device,
             depth=100,
             cost_per_keyword=single_cost,
         )
@@ -370,6 +507,7 @@ def create_keyword(
         "id": keyword.id,
         "keyword": keyword.keyword,
         "location": keyword.location,
+        "locationCode": keyword.locationCode,
         "device": keyword.device,
         "volume": keyword.volume,
         "kd": keyword.kd,
@@ -401,9 +539,11 @@ def bulk_create_keywords(
     db: Session = Depends(db_session),
 ) -> dict:
     keywords = payload.get("keywords", [])
-    location = payload.get("location") or "India"
-    location_code = payload.get("location_code") or LOCATION_MAP.get(location, 2840)
-    device = payload.get("device") or "desktop"
+    location, location_code = _resolve_tracking_location(payload)
+    try:
+        device = normalize_device(payload.get("device"))
+    except ValueError as exc:
+        raise ApiError(400, str(exc))
 
     if not keywords:
         raise ApiError(400, "keywords list is required")
@@ -422,7 +562,7 @@ def bulk_create_keywords(
         return {"success": True, "message": "No valid keywords provided", "data": {"added": 0, "skipped": 0, "keywords": []}}
 
     existing = db.scalars(
-        select(Keyword.keyword, Keyword.isActive, Keyword.deletedAt).where(
+        select(Keyword).where(
             Keyword.projectId == project_id,
             Keyword.keyword.in_(normalized_keywords),
         )
@@ -430,29 +570,42 @@ def bulk_create_keywords(
     existing_set = set()
     deleted_map = {}
 
-    for kw, is_active, deleted_at in existing:
-        if is_active or deleted_at is None:
-            existing_set.add(kw)
-        elif deleted_at:
-            deleted_map[kw] = deleted_at
+    for row in existing:
+        identity = (row.keyword, int(row.locationCode or effective_location_code(
+            location=row.location,
+            project_location_code=project.locationCode,
+            project_location=project.location,
+        )), normalize_device(row.device))
+        target = (row.keyword, location_code, device)
+        if row.isActive or row.deletedAt is None:
+            existing_set.add(identity)
+        elif row.deletedAt:
+            deleted_map[identity] = row.deletedAt
 
     added = []
+    added_targets = []
     skipped = []
     now = datetime.utcnow()
 
     for kw in normalized_keywords:
-        if kw in existing_set:
+        target = (kw, location_code, device)
+        if target in existing_set:
             skipped.append({"keyword": kw, "reason": "already_exists"})
             continue
 
-        if kw in deleted_map:
-            deleted_at = deleted_map[kw]
+        if target in deleted_map:
+            deleted_at = deleted_map[target]
             days_since_deletion = (now - deleted_at).days
             if days_since_deletion < KEYWORD_READD_COOLDOWN_DAYS:
                 remaining = KEYWORD_READD_COOLDOWN_DAYS - days_since_deletion
                 skipped.append({"keyword": kw, "reason": f"cooldown_active", "remaining_days": remaining})
                 continue
-            db.execute(delete(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw))
+            db.execute(delete(Keyword).where(
+                Keyword.projectId == project_id,
+                Keyword.keyword == kw,
+                Keyword.locationCode == location_code,
+                Keyword.device == device,
+            ))
             db.commit()
 
         keyword = Keyword(
@@ -461,6 +614,7 @@ def bulk_create_keywords(
             keyword=kw,
             location=location,
             device=device,
+            locationCode=location_code,
             volume=None,
             kd=None,
             cpc=None,
@@ -473,9 +627,21 @@ def bulk_create_keywords(
         )
         db.add(keyword)
         added.append(kw)
-        existing_set.add(kw)
+        added_targets.append({
+            "keyword": kw,
+            "_keyword_row": keyword,
+            "location": location,
+            "location_code": location_code,
+            "device": device,
+            "project_id": project_id,
+            "user_id": user["userId"],
+        })
+        existing_set.add(target)
 
     db.commit()
+
+    for target in added_targets:
+        target["keyword_id"] = target.pop("_keyword_row").id
 
     processed = 0
     failed_tracking = 0
@@ -490,7 +656,7 @@ def bulk_create_keywords(
                 db=db,
                 user_id=user["userId"],
                 project_id=project_id,
-                keywords=[{"keyword": kw} for kw in added],
+                keywords=added_targets,
                 domain=project.domain,
                 action="bulk_add",
                 location_code=location_code,
@@ -503,10 +669,16 @@ def bulk_create_keywords(
             completed_keywords = tracking.get("completed_keywords", [])
             failed_keywords = tracking.get("failed_keywords", [])
             if failed_keywords:
+                failed_ids = [
+                    target["keyword_id"]
+                    for target in added_targets
+                    if target["keyword"] in failed_keywords
+                ]
                 db.execute(
                     delete(Keyword).where(
-                        Keyword.projectId == project_id,
-                        Keyword.keyword.in_(failed_keywords),
+                        Keyword.id.in_(failed_ids)
+                        if failed_ids
+                        else False
                     )
                 )
                 db.commit()
@@ -520,8 +692,7 @@ def bulk_create_keywords(
             db.rollback()
             db.execute(
                 delete(Keyword).where(
-                    Keyword.projectId == project_id,
-                    Keyword.keyword.in_(added),
+                    Keyword.id.in_([target["keyword_id"] for target in added_targets]),
                 )
             )
             db.commit()
@@ -533,8 +704,7 @@ def bulk_create_keywords(
             db.rollback()
             db.execute(
                 delete(Keyword).where(
-                    Keyword.projectId == project_id,
-                    Keyword.keyword.in_(added),
+                    Keyword.id.in_([target["keyword_id"] for target in added_targets]),
                 )
             )
             db.commit()
@@ -553,6 +723,18 @@ def bulk_create_keywords(
             "skipped": len(normalized_keywords) - len(added),
             "skipped_details": skipped,
             "keywords": accepted_keywords,
+            "accepted_targets": [
+                {
+                    "id": target["keyword_id"],
+                    "keyword_id": target["keyword_id"],
+                    "keyword": target["keyword"],
+                    "location": target["location"],
+                    "location_code": target["location_code"],
+                    "device": target["device"],
+                }
+                for target in added_targets
+                if target["keyword"] in accepted_keywords
+            ],
             "completed_keywords": completed_keywords,
             "processed": processed,
             "failed_tracking": failed_tracking,
@@ -599,7 +781,18 @@ def refresh_project_keywords(
         return JSONResponse(status_code=200, content={"success": True, "data": {"updated": 0, "skipped": 0, "failed": 0}})
 
     keyword_texts = [kw.keyword for kw in requested_keywords]
-    keywords_payload = [{"keyword": kw.keyword} for kw in requested_keywords]
+    keywords_payload = [
+        {
+            "keyword": kw.keyword,
+            "keyword_id": kw.id,
+            "location": kw.location,
+            "location_code": kw.locationCode or project.locationCode,
+            "device": kw.device or "desktop",
+            "project_id": project_id,
+            "user_id": user["userId"],
+        }
+        for kw in requested_keywords
+    ]
 
     manual_cost = settings.plan_config.credit_costs.get("manual_refresh_per_keyword", 20)
     tracking = submit_user_tracking_job(

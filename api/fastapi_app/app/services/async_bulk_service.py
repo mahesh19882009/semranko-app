@@ -12,7 +12,6 @@ This service handles scheduled refresh with:
 
 import json
 import logging
-from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -42,6 +41,7 @@ from app.services.credit_service import (
 )
 from app.services.dataforseo_client import DataForSEOClient, get_serp_priority
 from app.services.async_tracking_service import _build_postback_url
+from app.services.keyword_identity import effective_location_code, normalize_device, normalize_keyword
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -57,6 +57,32 @@ REFRESH_JOB_BATCH_SIZE = 5000
 # Processing timeout: if a job is not completed within this time,
 # it becomes eligible for retry.
 PROCESSING_TIMEOUT_HOURS = 24
+
+
+def _keyword_target(keyword: Keyword, project: Optional[Project] = None) -> tuple[str, int, str]:
+    """Return the persisted provider target for a keyword row.
+
+    Modern rows carry locationCode/device directly.  Project metadata and the
+    established 2840/desktop defaults are retained only for legacy rows that
+    pre-date the target identity migration.
+    """
+    project = project or getattr(keyword, "project", None)
+    location_code = effective_location_code(
+        location_code=keyword.locationCode,
+        location=keyword.location,
+        project_location_code=getattr(project, "locationCode", None),
+        project_location=getattr(project, "location", None),
+    )
+    device = normalize_device(keyword.device or getattr(project, "device", None))
+    return normalize_keyword(keyword.keyword), int(location_code), device
+
+
+def _target_key(keyword: str, location_code: int, device: str) -> tuple[str, int, str]:
+    return normalize_keyword(keyword), int(location_code), normalize_device(device)
+
+
+def _monthly_result_key(keyword: str, location_code: int) -> str:
+    return f"{normalize_keyword(keyword)}|{int(location_code)}"
 
 
 def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[list[dict]]:
@@ -84,7 +110,7 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
     
     while True:
         query = (
-            select(Keyword)
+            select(Keyword, Project)
             .join(Project, Project.id == Keyword.projectId)
             .join(User, User.id == Project.userId)
             .where(Keyword.isActive == True)
@@ -116,26 +142,35 @@ def _paginate_eligible_keywords(db: Session, job_type: str = "weekly") -> list[l
             query = query.where(Keyword.id > last_id)
         
         query = query.limit(REFRESH_JOB_BATCH_SIZE)
-        batch = db.scalars(query).all()
+        batch = db.execute(query).all()
         
         if not batch:
             break
         
-        for kw in batch:
-            key = (kw.keyword.lower().strip(), kw.location or "India")
+        for kw, project in batch:
+            keyword_text, location_code, device = _keyword_target(kw, project)
+            key = (keyword_text, location_code, device)
             entry = entries.setdefault(
                 key,
-                {"keyword": key[0], "location": key[1], "eligible_rows": []},
+                {
+                    "keyword": keyword_text,
+                    "location": kw.location or project.location or "India",
+                    "location_code": location_code,
+                    "device": device,
+                    "eligible_rows": [],
+                },
             )
             entry["eligible_rows"].append({
                 "keyword_id": kw.id,
                 "project_id": kw.projectId,
                 "user_id": kw.userId,
-                "keyword": key[0],
-                "location": key[1],
+                "keyword": keyword_text,
+                "location": kw.location or project.location or "India",
+                "location_code": location_code,
+                "device": device,
             })
         
-        last_id = batch[-1].id
+        last_id = batch[-1][0].id
         
         if len(batch) < REFRESH_JOB_BATCH_SIZE:
             break
@@ -244,8 +279,6 @@ def mark_keywords_processing_atomic(
     timeout_at = now + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
     
     filters = [
-        Keyword.keyword.in_(keyword_texts),
-        Keyword.location == location,
         Keyword.isActive == True,
         (
             (Keyword.weeklyRefreshStatus == None) |
@@ -255,6 +288,11 @@ def mark_keywords_processing_atomic(
     ]
     if keyword_ids:
         filters.append(Keyword.id.in_(keyword_ids))
+    else:
+        filters.extend([
+            Keyword.keyword.in_(keyword_texts),
+            Keyword.location == location,
+        ])
 
     result = db.execute(
         update(Keyword)
@@ -356,11 +394,10 @@ def _submit_weekly_refresh(
     """
     Submit weekly SERP refresh to DataForSEO async endpoint.
     """
-    location_code = 2840
     has_exact_identity = bool(
         keyword_entries and any("eligible_rows" in entry for entry in keyword_entries)
     )
-    eligible_rows = []
+    eligible_rows: list[Keyword] = []
     if has_exact_identity:
         eligible_ids = [
             row.get("keyword_id")
@@ -385,26 +422,57 @@ def _submit_weekly_refresh(
                 Keyword.isActive == True,
             )
         ).all()
-    project_by_keyword_id = {}
-    user_by_id = {}
-    if has_exact_identity and eligible_rows:
-        for keyword_row, project, user in db.execute(
-            select(Keyword, Project, User)
+
+    project_by_keyword_id = {
+        row.id: project
+        for row, project in db.execute(
+            select(Keyword, Project)
             .join(Project, Project.id == Keyword.projectId)
-            .join(User, User.id == Keyword.userId)
-            .where(Keyword.id.in_([row.id for row in eligible_rows]))
-        ).all():
-            project_by_keyword_id[keyword_row.id] = project
-            user_by_id[user.id] = user
-    eligible_by_text = {}
+            .where(Keyword.id.in_([item.id for item in eligible_rows]))
+        ).all()
+    } if eligible_rows else {}
+    user_by_id = {
+        user.id: user
+        for user in db.scalars(
+            select(User).where(User.id.in_({row.userId for row in eligible_rows}))
+        ).all()
+    } if eligible_rows else {}
+
+    # A provider target is independent of the persistent Keyword.id.  Keep all
+    # exact rows for fan-out while submitting one task per shared target.
+    target_rows: dict[tuple[str, int, str], list[Keyword]] = {}
+    legacy_targets_by_keyword: dict[str, set[tuple[str, int, str]]] = {}
+    if not has_exact_identity:
+        for row in eligible_rows:
+            legacy_target = (
+                normalize_keyword(row.keyword),
+                int(row.locationCode or 2840),
+                normalize_device(row.device or "desktop"),
+            )
+            legacy_targets_by_keyword.setdefault(legacy_target[0], set()).add(legacy_target)
     for row in eligible_rows:
-        key = (row.keyword or "").strip().casefold(), row.location or "India"
-        eligible_by_text.setdefault(key[0], []).append(row)
+        if has_exact_identity:
+            target = _keyword_target(row, project_by_keyword_id.get(row.id))
+        else:
+            # Preserve the legacy caller contract when no persisted target
+            # metadata is supplied. Modern scheduled jobs always carry exact
+            # eligible-row identity and use _keyword_target above.
+            target = (
+                normalize_keyword(row.keyword),
+                int(row.locationCode or 2840),
+                normalize_device(row.device or "desktop"),
+            )
+            # A pre-Phase-3 job has no exact row identity. If the current
+            # database contains multiple target variants for that text, do
+            # not guess which one the legacy job intended.
+            if len(legacy_targets_by_keyword.get(target[0], ())) != 1:
+                continue
+        target_rows.setdefault(target, []).append(row)
 
     pingback_url = _build_postback_url()
     
-    aio_keyword_texts = set(
-        row.keyword
+    aio_keyword_texts = {
+        normalize_keyword(row.keyword)
         for row in db.scalars(
             select(TrackedKeyword).where(
                 TrackedKeyword.isActive == True,
@@ -412,34 +480,36 @@ def _submit_weekly_refresh(
                 TrackedKeyword.keyword.in_(keyword_texts),
             )
         ).all()
-    )
-    
-    uncached_keywords = []
-    cached_count = 0
-    for kw in keyword_texts:
+    }
+
+    uncached_targets: list[tuple[str, int, str]] = []
+    cached_targets: list[tuple[str, int, str]] = []
+    for target in target_rows:
+        kw, location_code, device = target
         aio_flag = kw in aio_keyword_texts
         from app.services.dataforseo_client import _build_serp_cache_key, _get_cached_serp
-        cache_key = _build_serp_cache_key(kw, location_code, "en", "desktop", "unknown", 10, aio_flag)
+        cache_key = _build_serp_cache_key(kw, location_code, "en", device, "unknown", 10, aio_flag)
         if _get_cached_serp(cache_key):
-            cached_count += 1
+            cached_targets.append(target)
         else:
-            uncached_keywords.append(kw)
+            uncached_targets.append(target)
+
+    cached_count = len(cached_targets)
     
     if cached_count > 0:
-        logger.info(f"RefreshJob {job.id}: {cached_count} keywords cached, {len(uncached_keywords)} need DFS")
+        logger.info(f"RefreshJob {job.id}: {cached_count} targets cached, {len(uncached_targets)} need DFS")
     
-    if not uncached_keywords:
+    if not uncached_targets:
         job.status = "success"
         job.completedAt = datetime.utcnow()
         job.resultSummary = json.dumps({"cached_count": cached_count, "skipped": True})
         db.add(job)
         db.commit()
         
-        for kw_text in keyword_texts:
-            for kw in eligible_by_text.get(kw_text.strip().casefold(), []):
-                project = project_by_keyword_id.get(kw.id) or db.scalar(
-                    select(Project).where(Project.id == kw.projectId)
-                )
+        for target in cached_targets:
+            kw_text, _, _ = target
+            for kw in target_rows.get(target, []):
+                project = project_by_keyword_id.get(kw.id)
                 if project:
                     user_id = project.userId
                     user = user_by_id.get(user_id) or db.scalar(
@@ -477,33 +547,28 @@ def _submit_weekly_refresh(
     from app.db.models import Keyword as KwModel
     weekly_priority = get_serp_priority("weekly")
     
-    keyword_user_map = {}
-    for kw_text in uncached_keywords:
-        key = kw_text.strip().casefold()
-        matching = eligible_by_text.get(key, [])
-        for kw in matching:
-            keyword_user_map.setdefault(kw.userId, []).append(kw_text)
+    keyword_user_map: dict[str, list[tuple[str, int, str]]] = {}
+    for target in uncached_targets:
+        for kw in target_rows.get(target, []):
+            keyword_user_map.setdefault(kw.userId, []).append(target)
     
     excluded_users = set()
     cost_per_keyword = 0.006
     for user_id, user_keywords in keyword_user_map.items():
-        estimated_cost = len(user_keywords) * cost_per_keyword
+        estimated_cost = len(set(user_keywords)) * cost_per_keyword
         try:
             check_dfs_cost_ceiling(db, user_id, estimated_cost)
         except HTTPException:
             excluded_users.add(user_id)
     
     if excluded_users:
-        uncached_keywords = [
-            kw_text for kw_text in uncached_keywords
-            if any(
-                row.userId not in excluded_users
-                for row in eligible_by_text.get(kw_text.strip().casefold(), [])
-            )
+        uncached_targets = [
+            target for target in uncached_targets
+            if any(row.userId not in excluded_users for row in target_rows.get(target, []))
         ]
         logger.info(f"RefreshJob {job.id}: excluded {len(excluded_users)} users due to DFS cost ceiling")
     
-    if not uncached_keywords:
+    if not uncached_targets:
         job.status = "success"
         job.completedAt = datetime.utcnow()
         job.resultSummary = json.dumps({"cached_count": cached_count, "skipped": True, "ceiling_excluded": True})
@@ -513,13 +578,16 @@ def _submit_weekly_refresh(
 
     refresh_cost = settings.plan_config.credit_costs.get("weekly_refresh_per_keyword", 10)
     reserved_users = set()
-    for user_id, user_keywords in keyword_user_map.items():
+    for user_id, user_targets in keyword_user_map.items():
         if user_id in excluded_users:
             continue
         reference = f"auto:weekly:{job.id}:{user_id}"
         try:
             reserve_automatic_credits(
-                db, user_id, len(user_keywords) * refresh_cost,
+                db, user_id, sum(
+                    len([row for row in target_rows.get(target, []) if row.userId == user_id])
+                    for target in set(user_targets)
+                ) * refresh_cost,
                 f"Weekly automatic tracking reservation for job {job.id}", reference,
                 task_id=job.id,
             )
@@ -536,28 +604,28 @@ def _submit_weekly_refresh(
         return False
     
     chunks = [
-        uncached_keywords[i:i + ASYNC_BULK_MAX_TASKS]
-        for i in range(0, len(uncached_keywords), ASYNC_BULK_MAX_TASKS)
+        uncached_targets[i:i + ASYNC_BULK_MAX_TASKS]
+        for i in range(0, len(uncached_targets), ASYNC_BULK_MAX_TASKS)
     ]
     
     auth = (settings.effective_serp_login, settings.effective_serp_key)
     all_task_ids = []
-    submitted_keywords = []
-    task_ids_by_keyword = {}
+    submitted_targets: list[tuple[str, int, str]] = []
+    task_ids_by_target: dict[tuple[str, int, str], list[str]] = {}
     failed_chunks = 0
     
     for chunk in chunks:
         serp_payload = []
-        for kw in chunk:
+        for kw, location_code, device in chunk:
             task_payload = {
                 "keyword": kw,
                 "location_code": location_code,
                 "language_code": "en",
-                "device": "desktop",
+                "device": device,
                 "depth": 10,
                 "pingback_url": pingback_url,
                 "priority": weekly_priority,
-                "expand_ai_overview": kw in aio_keyword_texts,
+                "expand_ai_overview": normalize_keyword(kw) in aio_keyword_texts,
             }
             serp_payload.append(task_payload)
         
@@ -579,22 +647,29 @@ def _submit_weekly_refresh(
             for index, t in enumerate(post_response["tasks"]):
                 if t.get("id"):
                     chunk_task_ids.append(t["id"])
-                    task_keyword = (t.get("data") or {}).get("keyword")
+                    task_data = t.get("data") or {}
+                    task_keyword = task_data.get("keyword")
                     if not task_keyword and index < len(chunk):
-                        task_keyword = chunk[index]
-                    elif task_keyword not in chunk:
-                        normalized_task_keyword = str(task_keyword).strip().casefold()
-                        task_keyword = next(
-                            (
-                                keyword
-                                for keyword in chunk
-                                if keyword.strip().casefold() == normalized_task_keyword
-                            ),
-                            task_keyword,
-                        )
+                        task_keyword = chunk[index][0]
                     if task_keyword:
-                        submitted_keywords.append(task_keyword)
-                        task_ids_by_keyword.setdefault(task_keyword, []).append(t["id"])
+                        normalized_task_keyword = str(task_keyword).strip().casefold()
+                        task_location_code = task_data.get("location_code")
+                        task_device = task_data.get("device")
+                        fallback_target = chunk[index] if index < len(chunk) else None
+                        if task_location_code is None and fallback_target:
+                            task_location_code = fallback_target[1]
+                        if not task_device and fallback_target:
+                            task_device = fallback_target[2]
+                        candidate = _target_key(
+                            normalized_task_keyword,
+                            task_location_code,
+                            task_device,
+                        )
+                        if candidate not in target_rows and fallback_target:
+                            candidate = fallback_target
+                        if candidate in target_rows:
+                            submitted_targets.append(candidate)
+                            task_ids_by_target.setdefault(candidate, []).append(t["id"])
         
         all_task_ids.extend(chunk_task_ids)
     
@@ -612,18 +687,16 @@ def _submit_weekly_refresh(
         db.commit()
         return False
 
-    submitted_counts = Counter(
-        keyword.strip().casefold() for keyword in submitted_keywords
-    )
     for user_id in reserved_users:
-        user_counts = Counter(
-            keyword.strip().casefold() for keyword in keyword_user_map.get(user_id, [])
+        reserved_count = sum(
+            len([row for row in target_rows.get(target, []) if row.userId == user_id])
+            for target in set(keyword_user_map.get(user_id, []))
         )
-        submitted_for_user = sum(
-            min(count, submitted_counts.get(keyword, 0))
-            for keyword, count in user_counts.items()
+        submitted_count = sum(
+            len([row for row in target_rows.get(target, []) if row.userId == user_id])
+            for target in set(submitted_targets)
         )
-        unused_count = sum(user_counts.values()) - submitted_for_user
+        unused_count = reserved_count - submitted_count
         if unused_count > 0:
             try:
                 refund_automatic_reserved(
@@ -637,12 +710,7 @@ def _submit_weekly_refresh(
                 logger.exception("Failed to refund partial automatic reservation for weekly job %s user %s", job.id, user_id)
 
     processing_timeout_at = datetime.utcnow() + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
-    task_ids_by_key = {
-        keyword.strip().casefold(): task_ids
-        for keyword, task_ids in task_ids_by_keyword.items()
-    }
-    accepted_keywords = list(task_ids_by_key)
-    if accepted_keywords:
+    if submitted_targets:
         existing_children_by_keyword_id = {}
         existing_children_by_deduplication_key = {}
         for existing_child in db.scalars(
@@ -673,15 +741,15 @@ def _submit_weekly_refresh(
                         Project.userId == KwModel.userId,
                     )
                 ).all()
-                if keyword_row.keyword.strip().casefold() in task_ids_by_key
+                if _keyword_target(keyword_row, project) in task_ids_by_target
+                and keyword_row.userId in reserved_users
             ] if exact_ids else []
         else:
             accepted_rows = db.execute(
                 select(KwModel, Project)
                 .join(Project, Project.id == KwModel.projectId)
                 .where(
-                    KwModel.keyword.in_(accepted_keywords),
-                    KwModel.location == "India",
+                    KwModel.keyword.in_([target[0] for target in submitted_targets]),
                     KwModel.isActive == True,
                     KwModel.userId.in_(reserved_users),
                     Project.userId == KwModel.userId,
@@ -696,7 +764,18 @@ def _submit_weekly_refresh(
                     child_deduplication_key
                 )
             )
-            task_ids = task_ids_by_key.get(keyword_row.keyword.strip().casefold(), [])
+            if has_exact_identity:
+                target = _keyword_target(keyword_row, project)
+            else:
+                target = (
+                    normalize_keyword(keyword_row.keyword),
+                    int(keyword_row.locationCode or 2840),
+                    normalize_device(keyword_row.device or "desktop"),
+                )
+            task_ids = task_ids_by_target.get(target, [])
+            if not task_ids:
+                continue
+            _, location_code, device = target
             child_payload = {
                 "action": "weekly_serp",
                 "credit_reference": f"auto:weekly:{job.id}:{project.userId}",
@@ -704,13 +783,13 @@ def _submit_weekly_refresh(
                 "task_ids": task_ids,
                 "location_code": location_code,
                 "language_code": "en",
-                "device": "desktop",
+                "device": device,
                 "depth": 10,
                 "domain": project.domain,
                 "user_id": project.userId,
                 "project_id": project.id,
                 "keyword_id": keyword_row.id,
-                "expand_ai_overview": keyword_row.keyword in aio_keyword_texts,
+                "expand_ai_overview": normalize_keyword(keyword_row.keyword) in aio_keyword_texts,
                 "awaiting_callback": True,
             }
 
@@ -761,7 +840,7 @@ def _submit_weekly_refresh(
             task_type="weekly_serp",
             endpoint="/serp/google/organic/task_post",
             method="POST",
-            keyword_count=len(uncached_keywords),
+            keyword_count=len(uncached_targets),
             priority=weekly_priority,
             depth=10,
             expand_ai_overview=True,
@@ -793,10 +872,8 @@ def _submit_monthly_refresh(
     from app.services.dataforseo_client import _build_kw_metrics_cache_key, _get_cached_kw_metrics, _log_dataforseo_cost
     from app.db.models import Keyword, Project, User
     
-    location_code = 2840
-    results = {}
-    missing_keywords = []
-    cached_keywords = []
+    results: dict[str, dict] = {}
+    results_by_target: dict[str, dict] = {}
     has_exact_identity = bool(
         keyword_entries and any("eligible_rows" in entry for entry in keyword_entries)
     )
@@ -822,10 +899,37 @@ def _submit_monthly_refresh(
                 Keyword.isActive == True,
             )
         ).all()
-    eligible_by_text = {}
+    project_by_keyword_id = {
+        row.id: project
+        for row, project in db.execute(
+            select(Keyword, Project)
+            .join(Project, Project.id == Keyword.projectId)
+            .where(Keyword.id.in_([item.id for item in eligible_rows]))
+        ).all()
+    } if eligible_rows else {}
+    target_rows: dict[tuple[str, int], list[Keyword]] = {}
+    legacy_targets_by_keyword: dict[str, set[tuple[str, int]]] = {}
+    if not has_exact_identity:
+        for row in eligible_rows:
+            legacy_target = (
+                normalize_keyword(row.keyword),
+                int(row.locationCode or 2840),
+            )
+            legacy_targets_by_keyword.setdefault(legacy_target[0], set()).add(legacy_target)
     for row in eligible_rows:
-        key = (row.keyword or "").strip().casefold(), row.location or "India"
-        eligible_by_text.setdefault(key[0], []).append(row)
+        if has_exact_identity:
+            keyword_text, location_code, _device = _keyword_target(
+                row, project_by_keyword_id.get(row.id)
+            )
+        else:
+            keyword_text, location_code, _device = (
+                normalize_keyword(row.keyword),
+                int(row.locationCode or 2840),
+                normalize_device(row.device or "desktop"),
+            )
+            if len(legacy_targets_by_keyword.get(keyword_text, ())) != 1:
+                continue
+        target_rows.setdefault((keyword_text, location_code), []).append(row)
 
     monthly_cost = settings.plan_config.credit_costs.get("monthly_refresh_per_keyword", 10)
     monthly_user_counts = {}
@@ -863,20 +967,23 @@ def _submit_monthly_refresh(
         db.commit()
         return False
     
-    for kw in keyword_texts:
+    missing_targets: list[tuple[str, int]] = []
+    for target in target_rows:
+        kw, location_code = target
         cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
         cached = _get_cached_kw_metrics(cache_key)
         if cached:
-            results[kw] = cached
-            cached_keywords.append(kw)
+            results_by_target[_monthly_result_key(kw, location_code)] = cached
+            results.setdefault(kw, cached)
         else:
-            missing_keywords.append(kw)
+            missing_targets.append(target)
     
-    if not missing_keywords:
+    if not missing_targets:
         job.status = "success"
         job.completedAt = datetime.utcnow()
         job.resultSummary = json.dumps({
             "results": results,
+            "results_by_target": results_by_target,
             "results_count": len(results),
             "chunks_processed": 0,
             "skipped": True,
@@ -889,36 +996,34 @@ def _submit_monthly_refresh(
     
     from app.services.dataforseo_client import check_dfs_cost_ceiling
     
-    keyword_user_map = {}
-    for kw_text in missing_keywords:
-        matching = eligible_by_text.get(kw_text.strip().casefold(), [])
+    keyword_user_map: dict[str, list[tuple[str, int]]] = {}
+    for target in missing_targets:
+        matching = target_rows.get(target, [])
         for kw in matching:
-            keyword_user_map.setdefault(kw.userId, []).append(kw_text)
+            keyword_user_map.setdefault(kw.userId, []).append(target)
     
     excluded_users = set()
     cost_per_keyword = 0.013
     for user_id, user_keywords in keyword_user_map.items():
-        estimated_cost = len(user_keywords) * cost_per_keyword
+        estimated_cost = len(set(user_keywords)) * cost_per_keyword
         try:
             check_dfs_cost_ceiling(db, user_id, estimated_cost)
         except HTTPException:
             excluded_users.add(user_id)
     
     if excluded_users:
-        missing_keywords = [
-            kw_text for kw_text in missing_keywords
-            if any(
-                row.userId not in excluded_users
-                for row in eligible_by_text.get(kw_text.strip().casefold(), [])
-            )
+        missing_targets = [
+            target for target in missing_targets
+            if any(row.userId not in excluded_users for row in target_rows.get(target, []))
         ]
         logger.info(f"Monthly RefreshJob {job.id}: excluded {len(excluded_users)} users due to DFS cost ceiling")
     
-    if not missing_keywords:
+    if not missing_targets:
         job.status = "success"
         job.completedAt = datetime.utcnow()
         job.resultSummary = json.dumps({
             "results": results,
+            "results_by_target": results_by_target,
             "results_count": len(results),
             "chunks_processed": 0,
             "skipped": True,
@@ -927,17 +1032,26 @@ def _submit_monthly_refresh(
         db.commit()
         return True
     
+    targets_by_location: dict[int, list[tuple[str, int]]] = {}
+    for target in missing_targets:
+        targets_by_location.setdefault(target[1], []).append(target)
     chunks = [
-        missing_keywords[i:i + 700]
-        for i in range(0, len(missing_keywords), 700)
+        chunk
+        for location_targets in targets_by_location.values()
+        for chunk in (
+            location_targets[i:i + 700]
+            for i in range(0, len(location_targets), 700)
+        )
     ]
     
     url = f"{getattr(settings, 'DATAFORSEO_BASE_URL', None) or 'https://api.dataforseo.com/v3'}/dataforseo_labs/google/keyword_overview/live"
     
     for chunk in chunks:
+        location_code = chunk[0][1]
         payload = [
             {
-                "keywords": chunk,
+                "keywords": [target[0] for target in chunk],
+                "location_code": location_code,
                 "language_code": "en",
                 "item_types": ["organic", "paid", "ai_overview_reference"],
             }
@@ -972,10 +1086,18 @@ def _submit_monthly_refresh(
             avg_backlinks_info = item.get("avg_backlinks_info", {}) or {}
             search_intent_info = item.get("search_intent_info", {}) or {}
             
-            kw = item.get("keyword") or (task.get("data") or {}).get("keyword")
+            task_data = task.get("data") or {}
+            kw = item.get("keyword") or task_data.get("keyword")
             if not kw:
                 continue
-            kw = kw.lower().strip()
+            kw = normalize_keyword(kw)
+            task_location_code = task_data.get("location_code") or item.get("location_code") or location_code
+            target = (kw, int(task_location_code))
+            if target not in target_rows:
+                target = next(
+                    (candidate for candidate in chunk if candidate[0] == kw),
+                    target,
+                )
             
             metric_entry = {
                 "volume": keyword_info.get("search_volume"),
@@ -987,8 +1109,9 @@ def _submit_monthly_refresh(
                 "intent": search_intent_info.get("main_intent"),
             }
             results[kw] = metric_entry
+            results_by_target[_monthly_result_key(kw, target[1])] = metric_entry
             
-            cache_key = _build_kw_metrics_cache_key(kw, location_code, "en")
+            cache_key = _build_kw_metrics_cache_key(kw, target[1], "en")
             from app.services.dataforseo_client import _set_cached_kw_metrics
             _set_cached_kw_metrics(cache_key, metric_entry, ttl=604800)
             
@@ -1011,6 +1134,7 @@ def _submit_monthly_refresh(
     job.completedAt = datetime.utcnow()
     job.resultSummary = json.dumps({
         "results": results,
+        "results_by_target": results_by_target,
         "results_count": len(results),
         "chunks_processed": len(chunks),
     })

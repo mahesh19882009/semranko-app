@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import and_, select, func
+from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -40,6 +40,8 @@ from app.services.dataforseo_client import (
 )
 from app.services.keyword_update_events import publish_keyword_update
 from app.core.config import get_settings
+from app.services.location_catalog import location_label_for_code
+from app.services.keyword_identity import normalize_device, normalize_keyword, target_identity
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -47,6 +49,32 @@ settings = get_settings()
 PROCESSING_TIMEOUT_HOURS = 24
 CALLBACK_RECOVERY_GRACE_MINUTES = 30
 CALLBACK_RECOVERY_RETRY_MINUTES = 15
+
+
+def _target_signature(item: dict, default_location_code: int, default_device: str):
+    """Return a durable target signature without changing provider payloads."""
+    keyword_id = item.get("keyword_id")
+    if keyword_id:
+        return ("id", str(keyword_id))
+    return (
+        "target",
+        *target_identity(
+            item.get("keyword", ""),
+            location_code=item.get("location_code", default_location_code),
+            device=item.get("device", default_device),
+        ),
+    )
+
+
+def _target_entries_by_keyword(keywords: list[dict]) -> dict[str, list[dict]]:
+    entries: dict[str, list[dict]] = {}
+    for item in keywords:
+        if not isinstance(item, dict):
+            continue
+        normalized = normalize_keyword(item.get("keyword"))
+        if normalized:
+            entries.setdefault(normalized, []).append(item)
+    return entries
 
 
 def _normalize_domain(domain: str) -> str:
@@ -121,6 +149,7 @@ def _enrich_keyword_metrics(
             location_name,
             db=db,
             user_id=user_id,
+            location_code=location_code,
         )
     except Exception as exc:
         logger.exception(
@@ -146,13 +175,27 @@ def _enrich_keyword_metrics(
             "missing": len(keyword_texts),
         }
 
+    normalized_keyword_texts = [
+        keyword.strip().lower()
+        for keyword in keyword_texts
+        if isinstance(keyword, str) and keyword.strip()
+    ]
+    keyword_filter = (
+        Keyword.projectId == project_id,
+        Keyword.userId == user_id,
+        func.lower(Keyword.keyword).in_(normalized_keyword_texts),
+        Keyword.isActive == True,
+    )
     keyword_rows = db.scalars(
         select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword.in_(keyword_texts),
-            Keyword.isActive == True,
+            *keyword_filter,
+            Keyword.locationCode == location_code,
         )
     ).all()
+    # Legacy rows may not have a location code. Preserve their existing
+    # enrichment behavior when no exact target row is available.
+    if not keyword_rows:
+        keyword_rows = db.scalars(select(Keyword).where(*keyword_filter)).all()
 
     rows_by_keyword = {
         row.keyword.strip().lower(): row
@@ -245,6 +288,26 @@ def submit_user_tracking_job(
     if not keywords:
         return {"refresh_job_id": None, "task_ids": [], "submitted": [], "failed_chunks": 0, "accepted": False, "accepted_keywords": [], "completed_keywords": [], "failed_keywords": []}
 
+    canonical_keywords = []
+    for item in keywords:
+        if not isinstance(item, dict):
+            continue
+        target = dict(item)
+        target["keyword"] = normalize_keyword(target.get("keyword"))
+        if not target["keyword"]:
+            continue
+        target["project_id"] = project_id
+        target["user_id"] = user_id
+        target["location_code"] = int(target.get("location_code", location_code))
+        target["device"] = normalize_device(target.get("device", device))
+        target["location"] = target.get("location") or CODE_TO_LOCATION.get(
+            target["location_code"], "India"
+        )
+        canonical_keywords.append(target)
+    keywords = canonical_keywords
+    if not keywords:
+        return {"refresh_job_id": None, "task_ids": [], "submitted": [], "failed_chunks": 0, "accepted": False, "accepted_keywords": [], "completed_keywords": [], "failed_keywords": []}
+
     priority = get_serp_priority(action)
     postback_url = _build_postback_url()
 
@@ -261,10 +324,10 @@ def submit_user_tracking_job(
         .limit(20)
     ).all()
 
-    requested_keywords = sorted(
-        kw.strip().lower()
-        for kw in keyword_texts
-        if kw.strip()
+    requested_targets = sorted(
+        _target_signature(item, location_code, device)
+        for item in keywords
+        if isinstance(item, dict) and normalize_keyword(item.get("keyword"))
     )
 
     for pending_job in pending_jobs:
@@ -287,13 +350,13 @@ def submit_user_tracking_job(
             pending_payload = []
 
         pending_keywords = sorted(
-            str(item.get("keyword", "")).strip().lower()
+            _target_signature(item, location_code, device)
             for item in pending_payload
-            if isinstance(item, dict) and item.get("keyword")
+            if isinstance(item, dict) and normalize_keyword(item.get("keyword"))
         )
 
         # Only reuse the job when this is the exact same in-flight request.
-        if pending_keywords != requested_keywords:
+        if pending_keywords != requested_targets:
             continue
 
         logger.info(
@@ -330,6 +393,7 @@ def submit_user_tracking_job(
             "failed_keywords": [],
         }
 
+    target_entries = _target_entries_by_keyword(keywords)
     aio_keyword_texts = set(
         row.keyword
         for row in db.scalars(
@@ -387,6 +451,16 @@ def submit_user_tracking_job(
             location_code=location_code,
         )
 
+    requested_location = next(
+        (
+            str(keyword.get("location")).strip()
+            for keyword in keywords
+            if isinstance(keyword, dict) and keyword.get("location")
+        ),
+        None,
+    )
+    canonical_location = location_label_for_code(location_code, requested_location)
+
     refresh_job = RefreshJob(
         jobType=action,
         status="queued",
@@ -402,6 +476,7 @@ def submit_user_tracking_job(
             "cached_count": len(cached_results),
             "domain": domain,
             "location_code": location_code,
+            "location": canonical_location,
             "language_code": language_code,
             "device": device,
             "depth": depth,
@@ -425,7 +500,8 @@ def submit_user_tracking_job(
             user_id,
             domain,
             cached_results,
-            refresh_job.id
+            refresh_job.id,
+            keyword_targets=keywords,
         )
         consume_reserved(
             db=db,
@@ -447,6 +523,7 @@ def submit_user_tracking_job(
             user_id,
             project_id,
             completed_cached_keywords,
+            keyword_targets=keywords,
         )
         return {
             "refresh_job_id": refresh_job.id,
@@ -573,22 +650,50 @@ def submit_user_tracking_job(
     refresh_job.processingTimeoutAt = datetime.utcnow() + timedelta(hours=PROCESSING_TIMEOUT_HOURS)
     db.add(refresh_job)
 
+    # DataForSEO returns task ids and submitted keywords in the same task
+    # order. Keep that internal correlation on each child; it is not sent in
+    # the provider payload and does not alter the callback contract.
+    task_ids_by_keyword: dict[str, list[str]] = {}
+    for submitted_keyword, task_id in zip(submitted_keywords, all_task_ids):
+        normalized = normalize_keyword(submitted_keyword)
+        if normalized and task_id:
+            task_ids_by_keyword.setdefault(normalized, []).append(task_id)
+
+    entry_by_keyword = _target_entries_by_keyword(keywords)
     for kw_text in accepted_uncached_keywords:
-        deduplication_key = f"pending:{refresh_job.id}:{kw_text}:{location_code}"
+        entries = entry_by_keyword.get(normalize_keyword(kw_text), [])
+        target = entries[0] if len(entries) == 1 else next(
+            (entry for entry in entries if entry.get("keyword_id")),
+            {},
+        )
+        keyword_id = target.get("keyword_id")
+        child_task_ids = task_ids_by_keyword.get(normalize_keyword(kw_text), [])
+        target_location_code = int(target.get("location_code", location_code))
+        target_device = normalize_device(target.get("device", device))
+        target_location = location_label_for_code(
+            target_location_code,
+            target.get("location") or canonical_location,
+        )
+        deduplication_key = (
+            f"pending:{refresh_job.id}:{keyword_id or normalize_keyword(kw_text)}:"
+            f"{target_location_code}:{target_device}"
+        )
         processing_job = ProcessingJob(
             refreshJobId=refresh_job.id,
+            keywordId=keyword_id,
             keywordText=kw_text,
-            location=CODE_TO_LOCATION.get(location_code, "India"),
+            location=target_location,
             status="pending",
             deduplicationKey=deduplication_key,
             payload=json.dumps({
                 "action": action,
                 "credit_reference": reference,
                 "cost_per_keyword": cost_per_keyword,
-                "task_ids": [],
-                "location_code": location_code,
+                "task_ids": child_task_ids,
+                "location_code": target_location_code,
+                "location": target_location,
                 "language_code": language_code,
-                "device": device,
+                "device": target_device,
                 "depth": depth,
                 "domain": domain,
                 "user_id": user_id,
@@ -600,13 +705,22 @@ def submit_user_tracking_job(
 
     db.flush()
 
-    keyword_rows = db.scalars(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword.in_(accepted_uncached_keywords),
-            Keyword.isActive == True,
-        )
-    ).all()
+    keyword_ids = [
+        target.get("keyword_id")
+        for kw_text in accepted_uncached_keywords
+        for target in entry_by_keyword.get(normalize_keyword(kw_text), [])
+        if target.get("keyword_id")
+    ]
+    keyword_query = select(Keyword).where(
+        Keyword.projectId == project_id,
+        Keyword.userId == user_id,
+        Keyword.isActive == True,
+    )
+    if keyword_ids:
+        keyword_query = keyword_query.where(Keyword.id.in_(keyword_ids))
+    else:
+        keyword_query = keyword_query.where(Keyword.keyword.in_(accepted_uncached_keywords))
+    keyword_rows = db.scalars(keyword_query).all()
     for keyword_row in keyword_rows:
         if keyword_row:
             if action in ("weekly_serp", "weekly", "automatic"):
@@ -622,6 +736,7 @@ def submit_user_tracking_job(
         user_id,
         project_id,
         completed_cached_keywords,
+        keyword_targets=keywords,
     )
 
     logger.info(
@@ -645,20 +760,48 @@ def _publish_cached_completion_events(
     user_id: str,
     project_id: str,
     completed_keywords: list[str],
+    *,
+    keyword_targets: list[dict] | None = None,
 ) -> None:
+    target_by_keyword = {}
+    for target in keyword_targets or []:
+        key = normalize_keyword(target.get("keyword"))
+        if key and key not in target_by_keyword:
+            target_by_keyword[key] = target
     for keyword in completed_keywords:
-        publish_keyword_update(
-            user_id=user_id,
-            project_id=project_id,
-            keyword=keyword,
-            status="success",
-        )
+        target = target_by_keyword.get(normalize_keyword(keyword), {})
+        event = {
+            "user_id": user_id,
+            "project_id": project_id,
+            "keyword": keyword,
+            "status": "success",
+        }
+        if target.get("keyword_id"):
+            event.update(
+                keyword_id=target.get("keyword_id"),
+                location_code=target.get("location_code"),
+                device=target.get("device"),
+            )
+        publish_keyword_update(**event)
 
 
-def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: str, cached_results: dict, refresh_job_id: str ) -> list[str]:
+def _apply_cached_results(
+    db: Session,
+    project_id: str,
+    user_id: str,
+    domain: str,
+    cached_results: dict,
+    refresh_job_id: str,
+    *,
+    keyword_targets: list[dict] | None = None,
+) -> list[str]:
     now = datetime.utcnow()
+    target_entries = _target_entries_by_keyword(keyword_targets or [])
     deduplication_keys = {
-        kw_text: f"cached:{refresh_job_id}:{kw_text}"
+        kw_text: (
+            f"cached:{refresh_job_id}:"
+            f"{(target_entries.get(normalize_keyword(kw_text)) or [{}])[0].get('keyword_id') or normalize_keyword(kw_text)}"
+        )
         for kw_text in cached_results
     }
     existing_deduplication_keys = set(
@@ -670,14 +813,26 @@ def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: s
             )
         ).all()
     )
-    keyword_rows = db.scalars(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword.in_(list(cached_results)),
-            Keyword.isActive == True,
-        )
-    ).all()
-    rows_by_keyword = {row.keyword: row for row in keyword_rows}
+    keyword_ids = [
+        entry.get("keyword_id")
+        for kw_text in cached_results
+        for entry in target_entries.get(normalize_keyword(kw_text), [])
+        if entry.get("keyword_id")
+    ]
+    keyword_query = select(Keyword).where(
+        Keyword.projectId == project_id,
+        Keyword.userId == user_id,
+        Keyword.isActive == True,
+    )
+    if keyword_ids:
+        keyword_query = keyword_query.where(Keyword.id.in_(keyword_ids))
+    else:
+        keyword_query = keyword_query.where(Keyword.keyword.in_(list(cached_results)))
+    keyword_rows = db.scalars(keyword_query).all()
+    rows_by_id = {row.id: row for row in keyword_rows}
+    rows_by_keyword = {}
+    for row in keyword_rows:
+        rows_by_keyword.setdefault(normalize_keyword(row.keyword), []).append(row)
     completed_keywords = []
 
     for kw_text, cached in cached_results.items():
@@ -686,7 +841,12 @@ def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: s
             completed_keywords.append(kw_text)
             continue
 
-        keyword_row = rows_by_keyword.get(kw_text)
+        entries = target_entries.get(normalize_keyword(kw_text), [])
+        keyword_row = None
+        if entries and entries[0].get("keyword_id"):
+            keyword_row = rows_by_id.get(entries[0]["keyword_id"])
+        elif len(rows_by_keyword.get(normalize_keyword(kw_text), [])) == 1:
+            keyword_row = rows_by_keyword[normalize_keyword(kw_text)][0]
         if not keyword_row:
             continue
 
@@ -772,7 +932,7 @@ def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: s
             keywordText=kw_text,
             position=position,
             url=url,
-            device="desktop",
+            device=keyword_row.device or "desktop",
             location=keyword_row.location or "India",
             checkedAt=now,
             keywordId=keyword_row.id,
@@ -781,6 +941,7 @@ def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: s
 
         processing_job = ProcessingJob(
             refreshJobId=refresh_job_id,
+            keywordId=keyword_row.id,
             keywordText=kw_text,
             location=keyword_row.location or "India",
             status="success",
@@ -791,6 +952,11 @@ def _apply_cached_results( db: Session, project_id: str, user_id: str, domain: s
                 "has_aio_badge": keyword_row.ai_badge,
                 "ai_description": keyword_row.ai_description,
                 "cached": True,
+                "keyword_id": keyword_row.id,
+                "project_id": project_id,
+                "user_id": user_id,
+                "location_code": keyword_row.locationCode,
+                "device": keyword_row.device or "desktop",
             }),
         )
         db.add(processing_job)
@@ -928,16 +1094,41 @@ def recover_missed_callback_results(
                         if isinstance(task_data, dict)
                         else None
                     )
+                    callback_target_matches = []
+                    task_bound_present = False
+                    for child in waiting_children:
+                        if normalize_keyword(child.keywordText) != normalize_keyword(result_keyword):
+                            continue
+                        try:
+                            child_payload = json.loads(child.payload or "{}")
+                        except Exception:
+                            child_payload = {}
+                        child_task_ids = child_payload.get("task_ids")
+                        if isinstance(child_task_ids, list) and child_task_ids:
+                            task_bound_present = True
+                            if task_id in child_task_ids:
+                                callback_target_matches.append(child)
+                        else:
+                            callback_target_matches.append(child)
+                    if task_bound_present and not any(
+                        isinstance(json.loads(child.payload or "{}").get("task_ids"), list)
+                        and task_id in json.loads(child.payload or "{}").get("task_ids", [])
+                        for child in callback_target_matches
+                    ):
+                        callback_target_matches = []
+                    if len(callback_target_matches) > 1 and not any(
+                        isinstance(json.loads(child.payload or "{}").get("task_ids"), list)
+                        and json.loads(child.payload or "{}").get("task_ids")
+                        for child in callback_target_matches
+                    ):
+                        callback_target_matches = []
                     if (
                         task_result.get("status_code", 20000) == 20000
                         and isinstance(result_list, list)
                         and result_list
                         and isinstance(result_list[0], dict)
                         and result_keyword
-                        and any(
-                            child.keywordText == result_keyword
-                            for child in waiting_children
-                        )
+                        and bool(callback_target_matches)
                     ):
                         outcome = "ready"
                     else:
@@ -1034,12 +1225,26 @@ def recover_stale_user_tracking_jobs(db: Session) -> dict:
 
         project_id = summary.get("project_id")
         if project_id:
-            keyword_rows = db.scalars(
-                select(Keyword).where(
-                    Keyword.projectId == project_id,
-                    Keyword.keyword.in_(waiting_keywords),
-                )
-            ).all()
+            waiting_keyword_ids = [
+                getattr(child, "keywordId", None)
+                for child in waiting_children
+                if getattr(child, "keywordId", None)
+            ]
+            keyword_query = select(Keyword).where(Keyword.projectId == project_id)
+            if waiting_keyword_ids:
+                keyword_query = keyword_query.where(Keyword.id.in_(waiting_keyword_ids))
+            else:
+                keyword_query = keyword_query.where(Keyword.keyword.in_(waiting_keywords))
+            keyword_rows = db.scalars(keyword_query).all()
+            if not waiting_keyword_ids:
+                rows_by_keyword: dict[str, list[Keyword]] = {}
+                for keyword_row in keyword_rows:
+                    rows_by_keyword.setdefault(normalize_keyword(keyword_row.keyword), []).append(keyword_row)
+                keyword_rows = [
+                    keyword_row
+                    for keyword_row in keyword_rows
+                    if len(rows_by_keyword.get(normalize_keyword(keyword_row.keyword), [])) == 1
+                ]
             for keyword_row in keyword_rows:
                 keyword_row.processingTimeoutAt = None
                 if keyword_row.weeklyRefreshStatus == "processing":
@@ -1099,12 +1304,21 @@ def get_user_processing_jobs(db: Session, user_id: str, project_id: str) -> list
         .join(RefreshJob, ProcessingJob.refreshJobId == RefreshJob.id)
         .join(
             Keyword,
-            and_(
-                Keyword.projectId == project_id,
-                Keyword.userId == user_id,
-                Keyword.isActive == True,
-                Keyword.keyword == ProcessingJob.keywordText,
-                func.coalesce(Keyword.location, "India") == ProcessingJob.location,
+            or_(
+                and_(
+                    ProcessingJob.keywordId == Keyword.id,
+                    Keyword.projectId == project_id,
+                    Keyword.userId == user_id,
+                    Keyword.isActive == True,
+                ),
+                and_(
+                    ProcessingJob.keywordId.is_(None),
+                    Keyword.projectId == project_id,
+                    Keyword.userId == user_id,
+                    Keyword.isActive == True,
+                    Keyword.keyword == ProcessingJob.keywordText,
+                    func.coalesce(Keyword.location, "India") == ProcessingJob.location,
+                ),
             ),
         )
         .where(RefreshJob.jobType.in_(["add_keyword", "bulk_add", "manual_refresh"]))
@@ -1113,7 +1327,15 @@ def get_user_processing_jobs(db: Session, user_id: str, project_id: str) -> list
     ).all()
 
     results = []
+    rows_by_job: dict[str, list[Keyword]] = {}
     for job, keyword_row in job_rows:
+        rows_by_job.setdefault(job.id, []).append(keyword_row)
+
+    for job, keyword_row in job_rows:
+        if job.keywordId is None and len(rows_by_job.get(job.id, [])) != 1:
+            # Legacy rows without a durable id are not safe to attribute when
+            # multiple targets share the old text/location identity.
+            continue
         try:
             payload = json.loads(job.payload or "{}")
         except Exception:

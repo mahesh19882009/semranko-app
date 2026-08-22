@@ -174,6 +174,22 @@ def test_unknown_project_is_rejected(db):
     _assert_project_not_found(db, owner.id, "missing-project")
 
 
+def test_location_column_formats_legacy_json_and_project_fallback(db):
+    owner = _user(db, "owner")
+    project = _project(db, owner.id, "location-project")
+    project.location = '{"country":"India","state":"Haryana","city":"Faridabad"}'
+    keyword_with_json_location = _keyword(db, project.id, owner.id, "json-location")
+    keyword_with_json_location.location = '{"country":"India","state":"Haryana","city":"Faridabad"}'
+    keyword_with_project_fallback = _keyword(db, project.id, owner.id, "project-location")
+    keyword_with_project_fallback.location = None
+    db.commit()
+
+    rows = get_enriched_keywords(db, owner.id, project.id)
+    locations = {row["keyword"]: row["location"] for row in rows}
+    assert locations["json-location"] == "Faridabad, Haryana, India"
+    assert locations["project-location"] == "Faridabad, Haryana, India"
+
+
 def test_keyword_user_constraint_is_defense_in_depth(db):
     owner = _user(db, "owner")
     other = _user(db, "other")

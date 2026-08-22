@@ -4,12 +4,13 @@ import json
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import AsyncTaskQueue, ProcessingJob, RefreshJob
 from app.queues.rank_check_queue import get_rank_check_queue
 from app.services.dataforseo_client import LOCATION_MAP
+from app.services.location_catalog import location_label_for_code
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,12 @@ def _make_processing_job_worker_ready(
     except Exception:
         existing_payload = {}
 
+    canonical_location = location_label_for_code(
+        location_code,
+        existing_payload.get("location") or processing_job.location or location_name,
+    )
+    processing_job.location = canonical_location
+
     target_domain = existing_payload.get("domain") or ""
     detected_position = None
     detected_url = None
@@ -174,14 +181,17 @@ def _make_processing_job_worker_ready(
         "ai_description": ai_description,
         "task_id": task_id,
         "location_code": location_code,
+        "location": canonical_location,
         "first_block": first_block,
         "awaiting_callback": False,
     })
+    if getattr(processing_job, "keywordId", None):
+        existing_payload["keyword_id"] = processing_job.keywordId
     processing_job.payload = json.dumps(existing_payload)
     processing_job.status = "pending"
-    processing_job.deduplicationKey = (
-        f"{task_id}:{current_keyword}:{location_name}:{processing_job.id}"
-    )
+    # The submission path already assigns the durable target identity
+    # (Keyword.id/location_code/device).  Keep it stable through callback and
+    # recovery ingestion; display labels are not canonical target identity.
 
 
 def ingest_dataforseo_task_result(
@@ -209,7 +219,7 @@ def ingest_dataforseo_task_result(
             continue
 
         task_info = task_data.get("data") or {}
-        current_keyword = task_info.get("keyword")
+        current_keyword = str(task_info.get("keyword") or "").strip()
         if not current_keyword:
             continue
 
@@ -225,18 +235,22 @@ def ingest_dataforseo_task_result(
                 ProcessingJob.refreshJobId == (
                     refresh_job.id if refresh_job else ""
                 ),
-                ProcessingJob.keywordText == current_keyword,
+                func.lower(ProcessingJob.keywordText) == current_keyword.lower(),
                 ProcessingJob.status.in_(["pending", "processing", "retry"]),
             )
         ).all()
 
         callback_waiting_jobs = []
+        legacy_candidates = []
+        task_bound_present = False
         for tracking_job in matching_tracking_jobs:
             try:
                 tracking_payload = json.loads(tracking_job.payload or "{}")
             except Exception:
                 tracking_payload = {}
             expected_task_ids = tracking_payload.get("task_ids")
+            if isinstance(expected_task_ids, list) and expected_task_ids:
+                task_bound_present = True
             if (
                 isinstance(expected_task_ids, list)
                 and expected_task_ids
@@ -244,6 +258,26 @@ def ingest_dataforseo_task_result(
             ):
                 continue
             callback_waiting_jobs.append(tracking_job)
+            if not (isinstance(expected_task_ids, list) and expected_task_ids):
+                legacy_candidates.append(tracking_job)
+
+        # A legacy child without task_ids can only be used when its old
+        # text/location identity is unambiguous. Never apply one callback to
+        # multiple same-text targets.
+        specific_candidates = [
+            job for job in callback_waiting_jobs if job not in legacy_candidates
+        ]
+        if specific_candidates:
+            callback_waiting_jobs = specific_candidates
+        elif task_bound_present:
+            callback_waiting_jobs = []
+        elif len(callback_waiting_jobs) > 1:
+            logger.warning(
+                "Ambiguous legacy callback target: task=%s keyword=%s",
+                task_id,
+                current_keyword,
+            )
+            callback_waiting_jobs = []
 
         if not callback_waiting_jobs:
             logger.warning(

@@ -455,6 +455,45 @@ export const apiRequest = async (endpoint, options = {}) => {
   return data;
 };
 
+export async function exportProjectKeywordsApi(projectId, format, keywordIds = []) {
+  const csrfToken = typeof document !== 'undefined'
+    ? document.cookie.split('; ').find((entry) => entry.startsWith('semranko_csrf='))?.split('=').slice(1).join('=')
+    : null;
+  const endpoint = `/keywords/${projectId}/export`;
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'X-CSRF-Token': decodeURIComponent(csrfToken) } : {}),
+      },
+      body: JSON.stringify({ format, keyword_ids: keywordIds }),
+    });
+  } catch (error) {
+    const normalized = normalizeApiError(error, 'Export failed');
+    throw new ApiRequestError(normalized.message, normalized);
+  }
+
+  if (!response.ok) {
+    const data = await parseJsonSafe(response);
+    const normalized = normalizeApiError({
+      status: response.status,
+      responseData: data,
+      message: getApiErrorMessage(data, 'Export failed'),
+      endpoint,
+    });
+    if (response.status === 401) handleUnauthenticated();
+    throw new ApiRequestError(normalized.message, normalized);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: response.headers.get('content-disposition')?.match(/filename="?([^";]+)"?/)?.[1] || null,
+  };
+}
+
 export async function logoutApi() {
   try {
     await apiRequest('/auth/logout', { method: 'POST' });

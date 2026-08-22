@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.errors import ApiError
 from app.db.models import Keyword, Project
 from app.services.plan_service import get_user_or_404, ensure_keyword_limit, get_user_plan_limits_by_id, count_user_keywords
-from app.services.dataforseo_client import DataForSEOClient, LOCATION_MAP
+from app.services.dataforseo_client import DataForSEOClient
+from app.services.keyword_identity import effective_location_code, normalize_device, normalize_keyword
 from app.services.credit_service import deduct_credits, reserve_credits, consume_reserved, refund_reserved
 from app.utils.serializers import model_to_dict
 from app.core.config import get_settings
@@ -108,7 +109,7 @@ def _apply_day_one_tracking(db: Session, user_id: str, keyword_text: str, locati
             keyword_id=keyword_id,
         )
 
-        keyword_row = db.scalar(
+        keyword_row = db.get(Keyword, keyword_id) if keyword_id else db.scalar(
             select(Keyword).where(Keyword.userId == user_id, Keyword.keyword == keyword_text)
         )
         if keyword_row:
@@ -134,27 +135,45 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
 
     ensure_keyword_limit(db, user_id)
 
-    normalized_keyword = keyword_text.strip().lower()
+    normalized_keyword = normalize_keyword(keyword_text)
     if not normalized_keyword:
         raise ApiError(400, "Keyword is required")
 
-    existing_active = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == True,
-        )
+    location = payload.get("location") or project.location or "India"
+    try:
+        device = normalize_device(payload.get("device"))
+    except ValueError as exc:
+        raise ApiError(400, str(exc))
+    location_code = effective_location_code(
+        location_code=payload.get("location_code"),
+        location=location,
+        project_location_code=project.locationCode,
+        project_location=project.location,
     )
+    candidates = db.scalars(select(Keyword).where(
+        Keyword.projectId == project_id,
+        Keyword.keyword == normalized_keyword,
+    )).all()
+    target_rows = [
+        row for row in candidates
+        if int(row.locationCode or effective_location_code(
+            location=row.location,
+            project_location_code=project.locationCode,
+            project_location=project.location,
+        )) == location_code
+        and normalize_device(row.device) == device
+    ]
+    existing_active = next((row for row in target_rows if row.isActive), None)
     if existing_active:
         raise ApiError(409, "Keyword already exists for this project")
 
-    existing_deleted = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == False,
-            Keyword.deletedAt.isnot(None),
-        ).order_by(Keyword.deletedAt.desc())
+    existing_deleted = next(
+        (row for row in sorted(
+            (row for row in target_rows if not row.isActive and row.deletedAt is not None),
+            key=lambda row: row.deletedAt,
+            reverse=True,
+        )),
+        None,
     )
     if existing_deleted:
         cooldown_days = 30
@@ -170,13 +189,9 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
         db.delete(existing_deleted)
         db.commit()
 
-    existing_deactivated = db.scalar(
-        select(Keyword).where(
-            Keyword.projectId == project_id,
-            Keyword.keyword == normalized_keyword,
-            Keyword.isActive == False,
-            Keyword.deletedAt.is_(None),
-        )
+    existing_deactivated = next(
+        (row for row in target_rows if not row.isActive and row.deletedAt is None),
+        None,
     )
     if existing_deactivated:
         existing_deactivated.isActive = True
@@ -184,7 +199,7 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
         db.add(existing_deactivated)
         db.commit()
         db.refresh(existing_deactivated)
-        _apply_day_one_tracking(db, user_id, normalized_keyword, LOCATION_MAP.get(existing_deactivated.location or "India", 2840), project.domain, project_id=project_id, keyword_id=existing_deactivated.id)
+        _apply_day_one_tracking(db, user_id, normalized_keyword, location_code, project.domain, project_id=project_id, keyword_id=existing_deactivated.id)
         db.refresh(existing_deactivated)
         return model_to_dict(existing_deactivated)
 
@@ -192,8 +207,9 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
         projectId=project_id,
         userId=user_id,
         keyword=normalized_keyword,
-        location=(payload.get("location") or "India"),
-        device=(payload.get("device") or "desktop"),
+        location=location,
+        device=device,
+        locationCode=location_code,
         volume=0,
         kd=0,
         cpc=0.0,
@@ -208,7 +224,7 @@ def add_keyword(db: Session, user_id: str, project_id: str, payload: dict) -> di
     db.commit()
     db.refresh(keyword)
 
-    _apply_day_one_tracking(db, user_id, normalized_keyword, LOCATION_MAP.get(keyword.location or "India", 2840), project.domain, project_id=project_id, keyword_id=keyword.id)
+    _apply_day_one_tracking(db, user_id, normalized_keyword, location_code, project.domain, project_id=project_id, keyword_id=keyword.id)
 
     db.refresh(keyword)
     return model_to_dict(keyword)
@@ -232,9 +248,19 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
 
     ensure_keyword_limit(db, user_id)
 
+    try:
+        device = normalize_device("desktop")
+    except ValueError as exc:
+        raise ApiError(400, str(exc))
+    location_code = effective_location_code(
+        location_code=location_code,
+        location=location,
+        project_location_code=project.locationCode,
+        project_location=project.location,
+    )
     normalized_keywords = []
     for kw in keywords:
-        kw = kw.strip().lower()
+        kw = normalize_keyword(kw)
         if kw:
             normalized_keywords.append(kw)
 
@@ -242,16 +268,25 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         return {"added": 0, "skipped": 0, "keywords": []}
 
     existing = db.scalars(
-        select(Keyword.keyword).where(
+        select(Keyword).where(
             Keyword.projectId == project_id,
             Keyword.keyword.in_(normalized_keywords),
         )
     ).all()
-    existing_set = set(existing)
+    existing_set = {
+        (row.keyword, int(row.locationCode or effective_location_code(
+            location=row.location,
+            project_location_code=project.locationCode,
+            project_location=project.location,
+        )), normalize_device(row.device))
+        for row in existing
+        if row.isActive or row.deletedAt is None
+    }
 
     added = []
     for kw in normalized_keywords:
-        if kw in existing_set:
+        target = (kw, location_code, device)
+        if target in existing_set:
             continue
 
         keyword = Keyword(
@@ -259,7 +294,8 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
             userId=user_id,
             keyword=kw,
             location=location,
-            device="desktop",
+            device=device,
+            locationCode=location_code,
             volume=0,
             kd=0,
             cpc=0.0,
@@ -272,7 +308,7 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
         )
         db.add(keyword)
         added.append(kw)
-        existing_set.add(kw)
+        existing_set.add(target)
 
     if added:
         limits = get_user_plan_limits_by_id(db, user_id)
@@ -311,7 +347,12 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
             except Exception as exc:
                 logger.error(f"Bulk day-one tracking credit reservation failed: {exc}")
                 for kw_text in keywords_to_fetch:
-                    failed = db.scalar(select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text))
+                    failed = db.scalar(select(Keyword).where(
+                        Keyword.projectId == project_id,
+                        Keyword.keyword == kw_text,
+                        Keyword.locationCode == location_code,
+                        Keyword.device == device,
+                    ))
                     if failed:
                         db.delete(failed)
                 db.commit()
@@ -350,7 +391,12 @@ def add_keywords_bulk(db: Session, user_id: str, project_id: str, keywords: list
             fetched_ok_count = 0
             for kw_text in keywords_to_fetch:
                 keyword = db.scalar(
-                    select(Keyword).where(Keyword.projectId == project_id, Keyword.keyword == kw_text)
+                    select(Keyword).where(
+                        Keyword.projectId == project_id,
+                        Keyword.keyword == kw_text,
+                        Keyword.locationCode == location_code,
+                        Keyword.device == device,
+                    )
                 )
                 row = row_map.get(kw_text.lower().strip())
                 if row and keyword:
