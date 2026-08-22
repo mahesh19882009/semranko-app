@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
@@ -182,29 +182,42 @@ function KeywordsPage() {
     setLocationCity(projectLocationCity);
   }, [isAddModalOpen, projectCountry, projectCountryCode, projectLocationState, projectLocationCity]);
 
-  const fetchTableData = async () => {
+  const fetchTableData = useCallback(async () => {
     if (!selectedProjectId) return;
-    if (!Array.isArray(projects) || !projects.some((p) => String(p.id) === String(selectedProjectId))) {
+
+    if (
+      !Array.isArray(projects) ||
+      !projects.some(
+        (p) => String(p.id) === String(selectedProjectId)
+      )
+    ) {
       return;
     }
 
     const requestId = Date.now();
     tableRequestIdRef.current = requestId;
+
     setTableLoading(true);
     setTableError('');
+
     try {
-      const json = await apiRequest(`/keywords/${selectedProjectId}/table`);
+      const json = await apiRequest(
+        `/keywords/${selectedProjectId}/table`
+      );
+
       if (tableRequestIdRef.current !== requestId) return;
+
       setTableData(json.data?.rows || []);
     } catch (err) {
       if (tableRequestIdRef.current !== requestId) return;
+
       setTableError(err.message);
     } finally {
       if (tableRequestIdRef.current === requestId) {
         setTableLoading(false);
       }
     }
-  };
+  }, [selectedProjectId, projects]);
 
   useEffect(() => {
     const fetchSchedule = async () => {
@@ -222,12 +235,14 @@ function KeywordsPage() {
 
   useEffect(() => {
     if (projectsLoading) return;
+
     if (!selectedProjectId) {
       setTableData([]);
       return;
     }
+
     fetchTableData();
-  }, [dispatch, selectedProjectId, projectsLoading]);
+  }, [selectedProjectId, projectsLoading, fetchTableData]);
 
   useEffect(() => {
     dispatch(fetchSubscriptionStatus());
@@ -294,7 +309,7 @@ function KeywordsPage() {
 
       eventSource.close();
     };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, fetchTableData]);
 
   const filteredData = useMemo(() => {
     const processingByKeyword = buildActiveProcessingJobsByKeyword(
